@@ -130,6 +130,10 @@
     .time-seg:focus { color: #0891b2; }
     .time-seg-sep { font-family: 'JetBrains Mono', monospace; font-size: 34px; font-weight: 700; color: #94a3b8; padding-bottom: 20px; }
     .time-seg-label { font-size: 10px; font-weight: 600; color: #64748b; letter-spacing: 0.06em; text-transform: uppercase; margin-top: 3px; }
+    /* compact time boxes used in race entry (many on one screen) */
+    .tb { font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; font-size: 21px; font-weight: 700; text-align: center; background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; outline: none; width: 40px; padding: 6px 2px; color: #0f172a; }
+    .tb:focus { border-color: #06b6d4; color: #0891b2; }
+    .tb-sep { font-family: 'JetBrains Mono', monospace; font-size: 16px; font-weight: 700; color: #94a3b8; }
     .clickable { cursor: pointer; }
     .clickable:active { background: #f1f5f9; }
     .toast {
@@ -956,11 +960,15 @@ const state = {
     targetSeconds: 120, name: '',
   },
   result: null, // last computed prediction
-  race: null,   // active race being analyzed
   splitView: '100', // distance events (400+): show '50' or '100' checkpoints
   saved: loadSaved(), // persisted split predictions, searchable by name
   search: '', // roster search query
   savedName: null, // selected swimmer name on the saved-events menu
+  // --- Race analysis ---
+  raceForm: { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 200, name: '', round: 'Prelim',
+              targetSeconds: 120, times: {} }, // times keyed by row/field -> seconds
+  race: null,       // the race object currently being analysed
+  compareIds: [],   // two saved-race ids to show side by side
 };
 
 function navigate(view, opts = {}) {
@@ -1025,7 +1033,9 @@ function render() {
     case 'swimmer-detail': html = renderSwimmerDetail(); break;
     case 'quick-calc': html = renderQuickCalc(); break;
     case 'predicted-splits': html = renderPredictedSplits(); break;
+    case 'race-entry': html = renderRaceEntry(); break;
     case 'race-analysis': html = renderRaceAnalysis(); break;
+    case 'race-compare': html = renderRaceCompare(); break;
     case 'squad-targets': html = renderSquadTargets(); break;
     default: html = '<div class="p-8 text-slate-500">Unknown view</div>';
   }
@@ -1082,6 +1092,29 @@ function render() {
       });
     });
   }
+  // Race-entry segmented time boxes (min:sec.hh) — one group per row, keyed into state.raceForm.times.
+  host.querySelectorAll('[data-tkey]').forEach((grp) => {
+    const key = grp.getAttribute('data-tkey');
+    const mi = grp.querySelector('.tb-min'), se = grp.querySelector('.tb-sec'), hh = grp.querySelector('.tb-hh');
+    if (!mi || !se || !hh) return;
+    const sync = () => {
+      const m = parseInt(mi.value || '0', 10) || 0, s = parseInt(se.value || '0', 10) || 0, h = parseInt(hh.value || '0', 10) || 0;
+      state.raceForm.times[key] = m * 60 + s + h / 100;
+    };
+    [mi, se, hh].forEach((el) => {
+      el.addEventListener('focus', () => el.select());
+      el.addEventListener('input', () => {
+        el.value = el.value.replace(/\D/g, '').slice(0, 2);
+        sync();
+        if (el === mi && el.value.length === 2) { se.focus(); se.select(); }
+        else if (el === se && el.value.length === 2) { hh.focus(); hh.select(); }
+      });
+      el.addEventListener('blur', () => {
+        if ((el === se || el === hh) && el.value !== '') el.value = el.value.padStart(2, '0');
+        sync();
+      });
+    });
+  });
   // Split-predictor name field: autocomplete from previously saved names (first/last prefix).
   const nameInput = host.querySelector('[data-name-input]');
   if (nameInput) {
@@ -1152,13 +1185,14 @@ function renderRoster() {
       <div class="text-[28px] font-bold tracking-tight leading-none">Pacer</div>
       <div class="text-xs text-muted mt-1">Race split predictor</div>
     </div>
-    <div class="px-5 pb-3">
-      <button class="w-full bg-gradient-to-br from-cyan-500 to-cyan-700 rounded-2xl px-5 py-4 flex items-center justify-between hover:from-cyan-600 hover:to-cyan-800 active:scale-[0.99] transition shadow-lg shadow-cyan-600/25" data-action="quick-calc">
-        <div class="text-left">
-          <div class="font-bold text-white text-[15px]">Split predictor</div>
-          <div class="text-xs text-cyan-50/90 mt-0.5">Predict splits from a goal time</div>
-        </div>
-        <span class="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center text-white text-xl leading-none">→</span>
+    <div class="px-5 pb-2 grid grid-cols-2 gap-2">
+      <button class="bg-gradient-to-br from-cyan-500 to-cyan-700 rounded-2xl px-4 py-4 text-left hover:from-cyan-600 hover:to-cyan-800 active:scale-[0.99] transition shadow-lg shadow-cyan-600/25" data-action="quick-calc">
+        <div class="font-bold text-white text-[15px]">Split predictor</div>
+        <div class="text-[11px] text-cyan-50/90 mt-0.5 leading-snug">Predict splits from a goal</div>
+      </button>
+      <button class="bg-white border border-slate-200 rounded-2xl px-4 py-4 text-left hover:border-cyan-300 hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm" data-action="new-race">
+        <div class="font-bold text-slate-800 text-[15px]">Analyze a race</div>
+        <div class="text-[11px] text-muted mt-0.5 leading-snug">Compare a swim to the plan</div>
       </button>
     </div>
     <div class="px-5 pb-1">
@@ -1178,29 +1212,65 @@ function renderRoster() {
 // ----- Screen: Saved swimmer — list of that name's saved events -----
 function renderSavedSwimmer() {
   const name = state.savedName;
-  const evs = name ? state.saved.filter(s => s.name === name) : [];
-  if (!evs.length) return renderRoster();
-  const rows = evs.slice().reverse().map(s => `
-    <div class="px-3 py-4 flex items-center gap-3 clickable rounded-xl border-b border-slate-100" data-saved="${s.id}" style="min-height: 60px;">
+  const all = name ? state.saved.filter(s => s.name === name) : [];
+  if (!all.length) return renderRoster();
+  const preds = all.filter(s => s.kind !== 'race');
+  const races = all.filter(s => s.kind === 'race');
+
+  const predRows = preds.slice().reverse().map(s => `
+    <div class="px-3 py-3.5 flex items-center gap-3 clickable rounded-xl border-b border-slate-100" data-saved="${s.id}" style="min-height: 56px;">
       <div class="flex-1 min-w-0">
-        <div class="font-semibold text-base">${s.distance} ${s.stroke} <span class="text-xs font-normal text-muted">${s.pool} · ${s.sex === 'M' ? 'Men' : 'Women'}</span></div>
+        <div class="font-semibold text-[15px]">${s.distance} ${s.stroke} <span class="text-xs font-normal text-muted">${s.pool} · ${s.sex === 'M' ? 'Men' : 'Women'}</span></div>
         <div class="text-xs text-muted mt-0.5">Target <span class="mono font-semibold text-slate-700">${formatTime(s.targetSeconds)}</span></div>
       </div>
       <span class="text-cyan-700 text-sm font-bold">Splits →</span>
     </div>`).join('');
+
+  const raceRowsHtml = races.slice().reverse().map(s => {
+    const c = buildRaceComparison(s);
+    const tot = c ? c.actualTotal : 0, d = c ? c.delta : 0;
+    const dc = d > 0 ? 'text-rose-600' : 'text-emerald-700';
+    return `
+    <div class="px-3 py-3.5 flex items-center gap-3 clickable rounded-xl border-b border-slate-100" data-saved="${s.id}" style="min-height: 56px;">
+      <span class="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded flex-shrink-0 ${s.round === 'Final' ? 'bg-cyan-100 text-cyan-800' : 'bg-slate-100 text-slate-600'}">${s.round}</span>
+      <div class="flex-1 min-w-0">
+        <div class="font-semibold text-[15px]">${s.distance} ${s.stroke} <span class="text-xs font-normal text-muted">${s.pool}${s.date ? ' · ' + s.date : ''}</span></div>
+        <div class="text-xs text-muted mt-0.5"><span class="mono font-semibold text-slate-700">${formatTime(tot)}</span> <span class="${dc} font-semibold">(${d >= 0 ? '+' : ''}${d.toFixed(2)})</span></div>
+      </div>
+      <span class="text-slate-300 text-2xl">›</span>
+    </div>`;
+  }).join('');
+
+  // Compare button when an event has ≥2 races (e.g. prelim + final).
+  let compareBtn = '';
+  const groups = {};
+  races.forEach(s => { const k = `${s.stroke}|${s.distance}|${s.pool}|${s.sex}`; (groups[k] = groups[k] || []).push(s); });
+  for (const k in groups) {
+    if (groups[k].length >= 2) {
+      const g = groups[k].slice(-2);
+      compareBtn = `<div class="px-5 pb-2"><button class="w-full bg-white border border-cyan-300 text-cyan-800 rounded-xl py-3 text-sm font-semibold hover:bg-cyan-50 active:scale-[0.99] transition" data-action="compare-races" data-ids="${g.map(x => x.id).join(',')}">Compare ${g[0].distance} ${g[0].stroke}: ${g[0].round} ↔ ${g[1].round}</button></div>`;
+      break;
+    }
+  }
+
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3">
       <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0">
         <div class="text-lg font-semibold truncate">${name}</div>
-        <div class="text-xs text-muted">${evs.length} saved ${evs.length === 1 ? 'event' : 'events'}</div>
+        <div class="text-xs text-muted">${preds.length} plan${preds.length === 1 ? '' : 's'} · ${races.length} race${races.length === 1 ? '' : 's'}</div>
       </div>
     </div>
-    <div class="px-5 pb-3">
-      <button class="w-full bg-cyan-600 text-white rounded-xl py-3 text-sm font-semibold hover:bg-cyan-700 active:scale-[0.99] transition shadow-md shadow-cyan-600/20" data-action="add-event">+ Add an event</button>
+    <div class="px-5 pb-2 grid grid-cols-2 gap-2">
+      <button class="bg-white border border-slate-200 rounded-xl py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-event">+ Pace plan</button>
+      <button class="bg-cyan-600 text-white rounded-xl py-3 text-sm font-semibold hover:bg-cyan-700 active:scale-[0.99] transition shadow-md shadow-cyan-600/20" data-action="add-race">+ Race</button>
     </div>
-    <div class="scrollable px-3 pb-2 bg-slate-50">${rows}</div>
+    ${compareBtn}
+    <div class="scrollable px-3 pb-2 bg-slate-50">
+      ${races.length ? `<div class="px-2 pt-2 pb-1"><span class="label-cap">Races</span></div>${raceRowsHtml}` : ''}
+      ${preds.length ? `<div class="px-2 pt-3 pb-1"><span class="label-cap">Pace plans</span></div>${predRows}` : ''}
+    </div>
   `;
 }
 
@@ -1642,8 +1712,8 @@ function ordinal(n) {
   return n + (s[(v - 20) % 10] || s[v] || s[0]);
 }
 
-// ----- Screen 4: Race analysis -----
-function renderRaceAnalysis() {
+// ----- (legacy mock race analysis — unused in v2, superseded below) -----
+function _legacyRaceAnalysis() {
   const race = state.race || sampleRace;
   const swimmer = swimmers.find(s => s.id === race.swimmerId);
   const prediction = predict(race.stroke, race.sex, race.pool, race.distance, race.targetSeconds);
@@ -1770,6 +1840,409 @@ function renderRaceAnalysis() {
   `;
 }
 
+// ============================================================
+// RACE ANALYSIS
+// ============================================================
+// Row structure for an event's comparison (predicted vs actual).
+function raceRowDefs(stroke, distance) {
+  if (stroke === 'IM') {
+    const labels = distance === 400 ? ['Fly 100', 'Back 100', 'Breast 100', 'Free 100']
+                 : distance === 100 ? ['Fly 25', 'Back 25', 'Breast 25', 'Free 25']
+                 : ['Fly', 'Back', 'Breast', 'Free'];
+    return labels.map((l, i) => ({ key: 'r' + i, label: l, kind: distance === 400 ? 'hundo' : 'seg', idx: i }));
+  }
+  if (distance >= 400) {
+    return [
+      { key: 'first', label: 'First 50', kind: 'seg', idx: 0 },
+      { key: 'mid', label: 'Middle 50 (avg)', kind: 'mid' },
+      { key: 'last', label: 'Last 50', kind: 'seg', idxFromEnd: 0 },
+    ];
+  }
+  if (distance === 50) return [{ key: 'total', label: 'Time', kind: 'total' }];
+  const n = distance / 50;
+  return Array.from({ length: n }, (_, i) => ({ key: 'r' + i, label: `${(i + 1) * 50} m`, kind: 'seg', idx: i }));
+}
+
+// Fields the coach actually types (400+ free: first/last/total; middle is derived).
+function raceEntryFields(stroke, distance) {
+  if (stroke !== 'IM' && distance >= 400) {
+    return [{ key: 'first', label: 'First 50' }, { key: 'last', label: 'Last 50' }, { key: 'total', label: 'Total time' }];
+  }
+  return raceRowDefs(stroke, distance).map(r => ({ key: r.key, label: r.label }));
+}
+
+// Pre-fill the actual-split boxes with the predicted splits for the target (coach edits to real).
+function seedRaceTimes() {
+  const f = state.form;
+  const tgt = state.raceForm.times.target ?? f.targetSeconds ?? 120;
+  const p = predict(f.stroke, f.sex, f.pool, f.distance, tgt);
+  const times = { target: tgt };
+  if (p) {
+    if (f.stroke !== 'IM' && f.distance >= 400) {
+      times.first = p.splits[0];
+      times.last = p.splits[p.splits.length - 1];
+      times.total = tgt;
+    } else {
+      raceRowDefs(f.stroke, f.distance).forEach(def => {
+        if (def.kind === 'hundo') { const j = def.idx; times[def.key] = p.splits[2 * j] + p.splits[2 * j + 1]; }
+        else if (def.kind === 'seg') { const i = def.idxFromEnd != null ? p.splits.length - 1 - def.idxFromEnd : def.idx; times[def.key] = p.splits[i]; }
+        else if (def.kind === 'total') { times.total = tgt; }
+      });
+    }
+  }
+  state.raceForm.times = times;
+}
+
+function buildRaceComparison(race) {
+  const t = race.times || {};
+  const distFree = race.stroke !== 'IM' && race.distance >= 400;
+  const defs = raceRowDefs(race.stroke, race.distance);
+  // Actual total first — the shape bands are scaled to what they ACTUALLY swam,
+  // so hitting/beating the goal doesn't get mislabelled "too fast".
+  let actualTotal;
+  if (distFree || race.distance === 50) actualTotal = t.total;
+  else actualTotal = defs.reduce((s, def) => s + (def.kind === 'mid' ? 0 : (t[def.key] || 0)), 0);
+  const p = predict(race.stroke, race.sex, race.pool, race.distance, actualTotal);
+  if (!p) return null;
+  const nmid = p.splits.length - 2;
+  const rows = defs.map(def => {
+    let pred, lo = null, hi = null;
+    if (def.kind === 'total') { pred = actualTotal; }
+    else if (def.kind === 'mid') { pred = p.splits[1]; lo = p.lo[1]; hi = p.hi[1]; }
+    else if (def.kind === 'hundo') {
+      const j = def.idx; pred = p.splits[2 * j] + p.splits[2 * j + 1];
+      lo = p.hundoLo ? p.hundoLo[j] : p.lo[2 * j] + p.lo[2 * j + 1];
+      hi = p.hundoHi ? p.hundoHi[j] : p.hi[2 * j] + p.hi[2 * j + 1];
+    } else {
+      const i = def.idxFromEnd != null ? p.splits.length - 1 - def.idxFromEnd : def.idx;
+      pred = p.splits[i]; lo = p.lo[i]; hi = p.hi[i];
+    }
+    let actual;
+    if (def.kind === 'mid') actual = (t.total - t.first - t.last) / nmid;
+    else actual = t[def.key];
+    const cls = (lo != null && hi != null && actual != null) ? classifySplit(actual, lo, hi) : 'in-range';
+    return { label: def.label, pred, lo, hi, actual, cls, delta: actual != null ? actual - pred : 0 };
+  });
+  const delta = actualTotal - race.targetSeconds;
+  const hit = actualTotal <= race.targetSeconds + 0.05; // hit or beat the goal
+  return { p, rows, actualTotal, target: race.targetSeconds, delta, hit,
+           insights: raceInsights(rows, actualTotal, race.targetSeconds, hit) };
+}
+
+// Outcome-aware verdict: if they hit/beat the goal we celebrate first and coach the
+// shape as an OPPORTUNITY; if they missed, we use the cautionary "it cost you" framing.
+function raceInsights(rows, actualTotal, target, hit) {
+  const out = [];
+  const first = rows[0], last = rows[rows.length - 1];
+  const firstFast = first && first.cls === 'too-fast';
+  const firstSlow = first && first.cls === 'too-slow';
+  const lastSlow = last && last.cls === 'too-slow';
+  const lastFast = last && last.cls === 'too-fast';
+  const anyLaterSlow = rows.slice(1).some(r => r.cls === 'too-slow');
+  const anyLaterFast = rows.slice(1).some(r => r.cls === 'too-fast');
+  const allIn = rows.length > 1 && rows.every(r => r.cls === 'in-range');
+  const overBy = actualTotal - target;
+
+  if (hit) {
+    out.push({ tone: 'emerald', icon: '🎉', title: 'Nicely done hitting your target time!',
+      body: overBy < -0.05 ? `Came in ${Math.abs(overBy).toFixed(2)}s under the goal — strong swim.` : `Right on the goal — strong swim.` });
+    if (allIn) {
+      out.push({ tone: 'emerald', icon: '✓', title: 'Textbook distribution',
+        body: `Every split sat inside the elite range for that time — pacing was spot on. Bank this pattern.` });
+    } else if (firstFast && (anyLaterSlow || lastSlow)) {
+      const over = Math.abs(first.pred - first.actual);
+      out.push({ tone: 'cyan', icon: '↗', title: 'Aggressive front half — and it worked',
+        body: `Opened ~${over.toFixed(2)}s under the elite range and gave a little back late, but still made the time. There may be more there with a slightly more controlled opening.`,
+        finals: `Next time: open ~${Math.max(0.2, over).toFixed(1)}s easier and hold the back half — you could go quicker.` });
+    } else if (firstSlow && (anyLaterFast || lastFast)) {
+      const under = Math.abs(first.actual - first.pred);
+      out.push({ tone: 'cyan', icon: '↘', title: 'Saved it for the back — go out faster',
+        body: `Opened ~${under.toFixed(2)}s over the elite range, then closed fast (under the range) and still made the time. You left speed on the table at the front.`,
+        finals: `Next time: go out ~${Math.max(0.2, under).toFixed(1)}s quicker — you've shown the back-half speed to back it up, so a faster swim is right there.` });
+    } else {
+      out.push({ tone: 'cyan', icon: '•', title: 'Got the job done',
+        body: `A few splits drifted outside the elite range but it didn't cost the result — smoothing those could find a touch more next time.` });
+    }
+  } else {
+    if (firstFast && anyLaterSlow) {
+      const over = Math.abs(first.pred - first.actual);
+      out.push({ tone: 'amber', icon: '⚡', title: 'Went out too hard',
+        body: `Opened ~${over.toFixed(2)}s under the elite range, then faded — and finished +${overBy.toFixed(2)}s over goal. The fast start cost the back half.`,
+        finals: `Tonight: open about ${Math.max(0.2, over).toFixed(1)}s easier and protect the close.` });
+    } else if (firstSlow && (anyLaterFast || lastFast)) {
+      const under = Math.abs(first.actual - first.pred);
+      out.push({ tone: 'amber', icon: '↘', title: 'Went out too easy',
+        body: `Opened ~${under.toFixed(2)}s over the elite range and closed fast — that conservative start left +${overBy.toFixed(2)}s on the table. The back-half speed says the time is there.`,
+        finals: `Tonight: go out ~${Math.max(0.2, under).toFixed(1)}s quicker — you've got the close to support it.` });
+    } else if (lastSlow) {
+      const fade = last.actual - last.pred;
+      out.push({ tone: 'rose', icon: '🔻', title: 'Faded at the end',
+        body: `The closing split ran +${fade.toFixed(2)}s over the elite range; finished +${overBy.toFixed(2)}s over goal — the time leaked late.`,
+        finals: `Tonight: control the middle so the final split holds in range.` });
+    } else if (allIn) {
+      out.push({ tone: 'slate', icon: '•', title: 'Even race, just short of the time',
+        body: `Distribution matched the elite shape — the +${overBy.toFixed(2)}s gap is speed/fitness, not pacing.` });
+    } else {
+      out.push({ tone: 'slate', icon: '•', title: `Missed goal by +${overBy.toFixed(2)}s`,
+        body: `Mixed splits without one clear story — scan the chart to see where the time went.` });
+    }
+  }
+  return out;
+}
+
+// 3-box time entry (min : sec . hundredths) bound by key into state.raceForm.times.
+function timeBoxes(key, seconds) {
+  const t = Math.max(0, seconds || 0);
+  const m = Math.floor(t / 60), s = Math.floor(t % 60), h = Math.round((t - Math.floor(t)) * 100);
+  return `<div class="flex items-center gap-1" data-tkey="${key}">
+      <input class="tb tb-min" inputmode="numeric" maxlength="2" value="${m}" aria-label="minutes" />
+      <span class="tb-sep">:</span>
+      <input class="tb tb-sec" inputmode="numeric" maxlength="2" value="${String(s).padStart(2, '0')}" aria-label="seconds" />
+      <span class="tb-sep">.</span>
+      <input class="tb tb-hh" inputmode="numeric" maxlength="2" value="${String(h).padStart(2, '0')}" aria-label="hundredths" />
+    </div>`;
+}
+
+// ----- Screen: Race entry -----
+function renderRaceEntry() {
+  const f = state.form;
+  const rf = state.raceForm;
+  if (rf.times.target == null) rf.times.target = f.targetSeconds || 120;
+  const strokes = ['Free', 'Back', 'Breast', 'Fly', 'IM'];
+  const distances = [50, 100, 200, 400, 800, 1500];
+  const fields = raceEntryFields(f.stroke, f.distance);
+  const distFree = f.stroke !== 'IM' && f.distance >= 400;
+  const fieldRows = fields.map(fl => `
+    <div class="flex items-center justify-between gap-3 py-2 border-b border-slate-100">
+      <div class="text-sm font-semibold text-slate-700">${fl.label}</div>
+      ${timeBoxes(fl.key, rf.times[fl.key] ?? 0)}
+    </div>`).join('');
+  return `
+    <div class="statusbar"></div>
+    <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <div class="flex-1 min-w-0">
+        <div class="text-lg font-semibold">Analyze a race</div>
+        <div class="text-xs text-muted truncate">${f.name ? f.name : 'Enter the goal, then what they swam'}</div>
+      </div>
+    </div>
+    <div class="scrollable px-5 py-4 space-y-5">
+      <div>
+        <div class="label-cap mb-2">Swimmer name <span class="text-faint" style="text-transform:none;letter-spacing:0;font-weight:400;">(optional)</span></div>
+        <div class="relative">
+          <input type="text" data-name-input autocomplete="off" value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="e.g. Tegan O'Neill"
+            class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-base outline-none focus:ring-2 focus:ring-cyan-300" />
+          <div data-name-suggest class="hidden" style="position:absolute;left:0;right:0;top:100%;margin-top:4px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 8px 24px rgba(15,23,42,.12);z-index:60;max-height:200px;overflow-y:auto;"></div>
+        </div>
+      </div>
+      <div>
+        <div class="label-cap mb-2">Stroke</div>
+        <div class="flex gap-2 flex-wrap">
+          ${strokes.map(s => `<span class="pill ${f.stroke === s ? 'active' : ''}" data-stroke="${s}">${s}</span>`).join('')}
+        </div>
+      </div>
+      <div class="flex gap-3">
+        <div class="flex-1">
+          <div class="label-cap mb-2">Sex</div>
+          <div class="seg-group">
+            <div class="seg ${f.sex === 'M' ? 'active' : ''}" data-sex="M">Men</div>
+            <div class="seg ${f.sex === 'F' ? 'active' : ''}" data-sex="F">Women</div>
+          </div>
+        </div>
+        <div class="flex-1">
+          <div class="label-cap mb-2">Pool</div>
+          <div class="seg-group">
+            <div class="seg ${f.pool === 'LCM' ? 'active' : ''}" data-pool="LCM">LCM</div>
+            <div class="seg ${f.pool === 'SCM' ? 'active' : ''}" data-pool="SCM">SCM</div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="label-cap mb-2">Distance</div>
+        <div class="flex gap-2 flex-wrap">
+          ${distances.map(d => `<span class="pill ${f.distance === d ? 'active' : ''}" data-distance="${d}">${d}</span>`).join('')}
+        </div>
+      </div>
+      <div>
+        <div class="label-cap mb-2">Round</div>
+        <div class="seg-group" style="max-width:240px;">
+          <div class="seg ${rf.round === 'Prelim' ? 'active' : ''}" data-round="Prelim">Prelim</div>
+          <div class="seg ${rf.round === 'Final' ? 'active' : ''}" data-round="Final">Final</div>
+        </div>
+      </div>
+      <div class="bg-gradient-to-br from-cyan-50 to-white border border-cyan-100 rounded-2xl px-4 py-3">
+        <div class="flex items-center justify-between gap-3">
+          <div class="label-cap text-cyan-800">Goal / target</div>
+          ${timeBoxes('target', rf.times.target)}
+        </div>
+      </div>
+      <div>
+        <div class="label-cap mb-2">What they swam ${distFree ? '<span class="text-faint" style="text-transform:none;letter-spacing:0;font-weight:400;">· middle 50s averaged automatically</span>' : ''}</div>
+        <div class="bg-white border border-slate-200 rounded-2xl px-4 py-1">${fieldRows}</div>
+      </div>
+    </div>
+    <div class="border-t border-slate-200 px-5 py-4 pb-5 bg-white flex-shrink-0">
+      <button class="w-full bg-cyan-600 text-white font-semibold rounded-xl py-4 text-base hover:bg-cyan-700 active:scale-[0.98] transition shadow-lg shadow-cyan-600/20" data-action="analyze-race">
+        Analyze race →
+      </button>
+    </div>
+  `;
+}
+
+// ----- Screen: Race analysis -----
+function renderRaceAnalysis() {
+  const race = state.race;
+  if (!race) return renderRoster();
+  const c = buildRaceComparison(race);
+  if (!c) return `<div class="statusbar"></div><div class="p-8 text-center text-slate-500 text-sm">No pacing data for this event.</div>`;
+  const deltaColor = c.hit ? 'text-emerald-700' : 'text-rose-600';
+  const deltaBg = c.hit ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100';
+
+  const splitRows = c.rows.map((r, i) => {
+    if (r.lo == null) {
+      return `<div class="px-4 py-3 ${i < c.rows.length - 1 ? 'border-b border-slate-100' : ''} flex items-center justify-between">
+        <div class="text-sm font-semibold text-slate-700">${r.label}</div>
+        <div class="hero-time text-xl">${formatTime(r.actual)}</div></div>`;
+    }
+    const aColor = r.cls === 'too-fast' ? 'text-amber-700' : (r.cls === 'too-slow' ? 'text-rose-600' : 'text-slate-900');
+    const dColor = r.cls === 'too-fast' ? 'text-amber-700' : (r.cls === 'too-slow' ? 'text-rose-600' : 'text-emerald-700');
+    const iqr = r.hi - r.lo;
+    const winLo = r.lo - iqr, winHi = r.hi + iqr;
+    const pct = (v) => Math.max(0, Math.min(100, ((v - winLo) / (winHi - winLo)) * 100));
+    return `
+      <div class="px-4 py-3.5 ${i < c.rows.length - 1 ? 'border-b border-slate-100' : ''}">
+        <div class="flex items-baseline justify-between gap-2 mb-2.5">
+          <div class="text-sm font-semibold text-slate-700">${r.label}</div>
+          <div class="flex items-baseline gap-3">
+            <div class="hero-time text-xl ${aColor}">${formatTime(r.actual)}</div>
+            <div class="text-xs ${dColor} font-semibold tnum" style="width:52px;text-align:right;">${r.delta >= 0 ? '+' : ''}${r.delta.toFixed(2)}</div>
+          </div>
+        </div>
+        <div class="relative pb-1">
+          <div class="range-track">
+            <div class="range-fill" style="left: ${pct(r.lo).toFixed(1)}%; right: ${(100 - pct(r.hi)).toFixed(1)}%;"></div>
+            <div class="range-tick" style="left: ${pct(r.pred).toFixed(1)}%;"></div>
+            <div class="range-actual ${r.cls}" style="left: ${pct(r.actual).toFixed(1)}%;"></div>
+          </div>
+          <div class="flex justify-between text-[10px] text-faint mt-1.5 mono">
+            <span>${formatTime(r.lo)}</span><span class="text-faint">predicted ${formatTime(r.pred)}</span><span>${formatTime(r.hi)}</span>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+
+  const toneStyles = {
+    amber: { wrap: 'bg-amber-50 border-amber-200', title: 'text-amber-900', body: 'text-amber-800', icon: 'text-amber-600', tag: 'text-amber-900 bg-amber-100' },
+    rose: { wrap: 'bg-rose-50 border-rose-200', title: 'text-rose-900', body: 'text-rose-800', icon: 'text-rose-600', tag: 'text-rose-900 bg-rose-100' },
+    emerald: { wrap: 'bg-emerald-50 border-emerald-200', title: 'text-emerald-900', body: 'text-emerald-800', icon: 'text-emerald-600', tag: 'text-emerald-900 bg-emerald-100' },
+    cyan: { wrap: 'bg-cyan-50 border-cyan-200', title: 'text-cyan-900', body: 'text-cyan-800', icon: 'text-cyan-600', tag: 'text-cyan-900 bg-cyan-100' },
+    slate: { wrap: 'bg-slate-100 border-slate-200', title: 'text-slate-900', body: 'text-slate-700', icon: 'text-slate-500', tag: 'text-slate-700 bg-slate-200' },
+  };
+  const insightCards = c.insights.map(ins => {
+    const t = toneStyles[ins.tone] || toneStyles.slate;
+    return `
+      <div class="${t.wrap} border rounded-xl px-4 py-3.5 flex gap-3">
+        <span class="${t.icon} text-lg leading-none mt-0.5 flex-shrink-0">${ins.icon}</span>
+        <div class="flex-1">
+          <div class="font-semibold text-sm ${t.title}">${ins.title}</div>
+          <div class="text-xs mt-1 leading-relaxed ${t.body}">${ins.body}</div>
+          ${ins.finals ? `<div class="mt-2 inline-block px-2.5 py-1 rounded-md text-[11px] font-semibold ${t.tag}">${ins.finals}</div>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+
+  return `
+    <div class="statusbar"></div>
+    <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <div class="flex-1 min-w-0">
+        <div class="text-base font-semibold">${race.name || 'Race analysis'}</div>
+        <div class="text-xs text-muted truncate">${race.distance} ${race.stroke} ${race.pool} · ${race.round}${race.date ? ' · ' + race.date : ''}</div>
+      </div>
+      <button class="px-3.5 py-2 rounded-full bg-cyan-50 text-cyan-800 text-xs font-semibold hover:bg-cyan-100 transition" data-action="save-race">Save</button>
+    </div>
+    <div class="px-5 py-3 bg-white border-b border-slate-100">
+      <div class="${deltaBg} border rounded-2xl p-4">
+        <div class="grid grid-cols-3 gap-2">
+          <div><div class="label-cap text-muted">Goal</div><div class="hero-time text-xl mt-1">${formatTime(c.target)}</div></div>
+          <div class="text-center border-l border-r border-slate-200/60"><div class="label-cap text-muted">Swam</div><div class="hero-time text-xl mt-1">${formatTime(c.actualTotal)}</div></div>
+          <div class="text-right"><div class="label-cap ${deltaColor}">Delta</div><div class="hero-time text-xl mt-1 ${deltaColor}">${c.delta >= 0 ? '+' : ''}${c.delta.toFixed(2)}</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="scrollable px-5 py-3 space-y-4 bg-slate-50">
+      <div class="flex items-center justify-center gap-4 text-[11px] text-muted">
+        <span><span class="status-dot too-fast"></span>Too fast</span>
+        <span><span class="status-dot in-range"></span>On range</span>
+        <span><span class="status-dot too-slow"></span>Too slow</span>
+      </div>
+      <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+          <div class="label-cap text-muted">Splits</div>
+          <div class="label-cap text-faint">Actual · Δ vs predicted</div>
+        </div>
+        ${splitRows}
+      </div>
+      <div class="space-y-3">
+        <div class="label-cap text-muted px-1">What it says</div>
+        ${insightCards}
+      </div>
+      <div class="bg-slate-50 border border-dashed border-slate-200 rounded-xl px-4 py-3 text-[11px] text-faint text-center">Training suggestions coming in a later version.</div>
+    </div>
+  `;
+}
+
+// ----- Screen: Race compare (e.g. Prelim vs Final) -----
+function renderRaceCompare() {
+  const A = state.saved.find(s => s.id === state.compareIds[0]);
+  const B = state.saved.find(s => s.id === state.compareIds[1]);
+  if (!A || !B) return renderRoster();
+  const ca = buildRaceComparison(A), cb = buildRaceComparison(B);
+  const tA = ca.actualTotal, tB = cb.actualTotal;
+  const totalDelta = tB - tA;
+  const rowsHtml = ca.rows.map((r, i) => {
+    const rb = cb.rows[i];
+    const a = r.actual, b = rb ? rb.actual : null;
+    const d = (b != null && a != null) ? b - a : null;
+    const dColor = d == null ? 'text-faint' : (d < -0.005 ? 'text-emerald-700' : d > 0.005 ? 'text-rose-600' : 'text-faint');
+    return `
+      <div class="px-4 py-3 ${i < ca.rows.length - 1 ? 'border-b border-slate-100' : ''}">
+        <div class="text-xs label-cap text-faint mb-1">${r.label}</div>
+        <div class="grid grid-cols-3 items-baseline">
+          <div class="hero-time text-lg">${formatTime(a)}</div>
+          <div class="hero-time text-lg text-center">${formatTime(b)}</div>
+          <div class="text-sm font-semibold text-right ${dColor} tnum">${d == null ? '—' : (d >= 0 ? '+' : '') + d.toFixed(2)}</div>
+        </div>
+      </div>`;
+  }).join('');
+  return `
+    <div class="statusbar"></div>
+    <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <div class="flex-1 min-w-0">
+        <div class="text-base font-semibold">${A.name || 'Compare'}</div>
+        <div class="text-xs text-muted truncate">${A.distance} ${A.stroke} ${A.pool} · ${A.round} vs ${B.round}</div>
+      </div>
+    </div>
+    <div class="px-5 py-3 bg-white border-b border-slate-100">
+      <div class="grid grid-cols-3 items-end gap-2">
+        <div><div class="label-cap text-muted">${A.round}</div><div class="hero-time text-xl mt-1">${formatTime(tA)}</div></div>
+        <div class="text-center"><div class="label-cap text-muted">${B.round}</div><div class="hero-time text-xl mt-1">${formatTime(tB)}</div></div>
+        <div class="text-right"><div class="label-cap ${totalDelta < 0 ? 'text-emerald-700' : 'text-rose-600'}">Change</div><div class="hero-time text-xl mt-1 ${totalDelta < 0 ? 'text-emerald-700' : 'text-rose-600'}">${totalDelta >= 0 ? '+' : ''}${totalDelta.toFixed(2)}</div></div>
+      </div>
+    </div>
+    <div class="scrollable px-5 py-3 space-y-4 bg-slate-50">
+      <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+        <div class="grid grid-cols-3 px-4 py-2.5 border-b border-slate-100 label-cap text-faint">
+          <span>${A.round}</span><span class="text-center">${B.round}</span><span class="text-right">Δ</span>
+        </div>
+        ${rowsHtml}
+      </div>
+      <div class="text-[11px] text-faint text-center px-4">Green = faster in ${B.round} than ${A.round}. Negative split shape shows where the final was better or worse.</div>
+    </div>
+  `;
+}
+
 // ----- Screen 5: Squad targets -----
 function renderSquadTargets() {
   // Build per-swimmer 200 fly targets from their best events; fall back to a default for swimmers
@@ -1863,16 +2336,27 @@ document.addEventListener('click', (e) => {
     if (sv) {
       const entry = state.saved.find(x => x.id === sv.getAttribute('data-saved'));
       if (entry) {
-        state.swimmer = null;
-        state.form = { stroke: entry.stroke, sex: entry.sex, pool: entry.pool, distance: entry.distance, targetSeconds: entry.targetSeconds, name: entry.name };
-        state.result = predict(entry.stroke, entry.sex, entry.pool, entry.distance, entry.targetSeconds);
-        navigate('predicted-splits');
+        if (entry.kind === 'race') {
+          state.race = entry;
+          navigate('race-analysis');
+        } else {
+          state.swimmer = null;
+          state.form = { stroke: entry.stroke, sex: entry.sex, pool: entry.pool, distance: entry.distance, targetSeconds: entry.targetSeconds, name: entry.name };
+          state.result = predict(entry.stroke, entry.sex, entry.pool, entry.distance, entry.targetSeconds);
+          navigate('predicted-splits');
+        }
       }
       return;
+    }
+    const round = e.target.closest('[data-round]');
+    if (round) {
+      state.raceForm.round = round.getAttribute('data-round');
+      render(); return;
     }
     const stroke = e.target.closest('[data-stroke]');
     if (stroke) {
       state.form.stroke = stroke.getAttribute('data-stroke');
+      if (state.view === 'race-entry') seedRaceTimes();
       render(); return;
     }
     const sex = e.target.closest('[data-sex]');
@@ -1888,6 +2372,7 @@ document.addEventListener('click', (e) => {
     const dist = e.target.closest('[data-distance]');
     if (dist) {
       state.form.distance = parseInt(dist.getAttribute('data-distance'), 10);
+      if (state.view === 'race-entry') seedRaceTimes();
       render(); return;
     }
     const action = e.target.closest('[data-action]');
@@ -1929,6 +2414,52 @@ function handleAction(action, el) {
         name: state.savedName || '',
       };
       navigate('quick-calc');
+      break;
+    }
+    case 'new-race':
+      state.swimmer = null;
+      state.form = { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 200, targetSeconds: 120, name: '' };
+      state.raceForm = { round: 'Prelim', times: {} };
+      seedRaceTimes();
+      navigate('race-entry');
+      break;
+    case 'add-race': {
+      const evs = state.saved.filter(s => s.name === state.savedName);
+      const last = evs[evs.length - 1];
+      state.swimmer = null;
+      state.form = {
+        stroke: last ? last.stroke : 'Free', sex: last ? last.sex : 'M', pool: last ? last.pool : 'LCM',
+        distance: last ? last.distance : 200, targetSeconds: (last && last.targetSeconds) || 120,
+        name: state.savedName || '',
+      };
+      state.raceForm = { round: 'Prelim', times: {} };
+      seedRaceTimes();
+      navigate('race-entry');
+      break;
+    }
+    case 'analyze-race': {
+      const f = state.form, rf = state.raceForm;
+      state.race = {
+        id: 'rc' + Date.now().toString(36), kind: 'race', name: (f.name || '').trim(),
+        stroke: f.stroke, sex: f.sex, pool: f.pool, distance: f.distance,
+        targetSeconds: rf.times.target ?? f.targetSeconds,
+        times: { ...rf.times }, round: rf.round || 'Prelim',
+        date: new Date().toISOString().slice(5, 10).replace('-', '/'),
+      };
+      navigate('race-analysis');
+      break;
+    }
+    case 'save-race': {
+      const r = state.race;
+      if (!r) break;
+      if (!(r.name || '').trim()) { showToast('Add a swimmer name to save this race'); break; }
+      if (!state.saved.find(x => x.id === r.id)) { state.saved.push(r); persistSaved(); }
+      showToast(`Saved ${r.name} · ${r.round} ${r.distance} ${r.stroke}`);
+      break;
+    }
+    case 'compare-races': {
+      const ids = (el && el.getAttribute('data-ids') || '').split(',').filter(Boolean);
+      if (ids.length === 2) { state.compareIds = ids; navigate('race-compare'); }
       break;
     }
     case 'predict':
