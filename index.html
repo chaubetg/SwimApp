@@ -133,80 +133,34 @@
       from { opacity: 0; transform: translate(-50%, 12px); }
       to { opacity: 1; transform: translate(-50%, 0); }
     }
+    /* ---- App shell ---- */
+    .app-body { margin: 0; min-height: 100vh; color: #0f172a;
+      background: radial-gradient(1100px 620px at 50% -8%, #d8f1fb 0%, #eef4f8 46%, #e9eef3 100%); }
+    .stage { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 18px; padding: 28px 16px; }
+    .wordmark { text-align: center; }
+    .wm-title { font-weight: 700; font-size: 19px; letter-spacing: -0.02em; color: #0e7490; }
+    .wm-sub { font-size: 11.5px; color: #64748b; margin-top: 1px; letter-spacing: 0.01em; }
+    .phone { transition: box-shadow .2s; }
+    @media (max-width: 480px) {
+      .stage { padding: 0; gap: 0; }
+      .wordmark { display: none; }
+      .phone { width: 100vw; height: 100vh; height: 100dvh; border-radius: 0; border: none; box-shadow: none; }
+      .phone::after { display: none; }
+    }
   </style>
 </head>
-<body class="bg-slate-100 text-slate-900 min-h-screen">
+<body class="app-body">
 
-<header class="px-8 pt-10 pb-4 max-w-screen-xl mx-auto">
-  <h1 class="text-2xl font-bold tracking-tight">Pacer — v1 (real pacing data)</h1>
-  <p class="text-slate-600 mt-1 text-sm max-w-2xl">
-    Designed for use poolside — large hero numbers, 44pt+ touch targets, tabular figures, status communicated through icon + color + position (never color alone). Works for a coach on deck with their athlete or for an athlete planning their own race.
-  </p>
-</header>
-
-<main class="px-8 pb-16 max-w-screen-xl mx-auto">
-  <div class="flex gap-8 items-start">
-
-    <!-- Left rail: screen jumper -->
-    <aside class="w-56 flex-shrink-0 sticky top-8">
-      <div class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Jump to screen</div>
-      <nav id="jumper" class="space-y-1">
-        <!-- populated by JS -->
-      </nav>
-
-      <div class="text-xs font-semibold text-slate-500 uppercase tracking-wider mt-8 mb-3">Demo flows</div>
-      <div class="space-y-2">
-        <button data-flow="quick200" class="w-full text-left px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg hover:border-cyan-300 hover:bg-cyan-50 transition">
-          <div class="font-semibold">200 free @ 2:00</div>
-          <div class="text-xs text-slate-500">Quick calc → result</div>
-        </button>
-        <button data-flow="ben" class="w-full text-left px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg hover:border-cyan-300 hover:bg-cyan-50 transition">
-          <div class="font-semibold">Ben → 100 fly 1:54.8</div>
-          <div class="text-xs text-slate-500">Top-end speed limiter case</div>
-        </button>
-        <button data-flow="quinn" class="w-full text-left px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg hover:border-cyan-300 hover:bg-cyan-50 transition">
-          <div class="font-semibold">Quinn 400 race</div>
-          <div class="text-xs text-slate-500">Race analysis with insights</div>
-        </button>
-        <button data-flow="reset" class="w-full text-left px-3 py-2 text-sm text-slate-500 hover:text-slate-900 transition">
-          ↺ Reset to roster
-        </button>
-      </div>
-    </aside>
-
-    <!-- Phone -->
-    <div class="phone" id="phone">
-      <div class="screen" id="screen-container"></div>
-    </div>
-
-    <!-- Right side: notes -->
-    <aside class="w-72 flex-shrink-0 text-sm text-slate-600 space-y-4 sticky top-8">
-      <div class="bg-white border border-slate-200 rounded-xl p-4">
-        <div class="font-semibold text-slate-900 mb-2">What to try</div>
-        <ul class="space-y-1.5 text-xs leading-relaxed">
-          <li>• On Predicted Splits, <span class="font-semibold">tap the target time to type</span> a new goal, or nudge with <span class="font-semibold">−1 / −.1 / +.1 / +1</span></li>
-          <li>• Open a distance event (e.g. <span class="font-semibold">800 free</span>) and switch <span class="font-semibold">Per 50 / Per 100</span> checkpoints</li>
-          <li>• Each split shows the median centered with a <span class="font-semibold">front-end / back-end</span> range</li>
-          <li>• <span class="font-semibold">Copy</span> exports the split sheet; run the Ben fly demo for the speed-limiter callout</li>
-        </ul>
-      </div>
-      <div class="bg-white border border-slate-200 rounded-xl p-4">
-        <div class="font-semibold text-slate-900 mb-2">Design principles applied</div>
-        <ul class="space-y-1.5 text-xs leading-relaxed text-slate-600">
-          <li>• <span class="font-semibold">Glanceable hero numbers</span> — split times are the largest type on screen</li>
-          <li>• <span class="font-semibold">Tabular figures</span> — digits align vertically</li>
-          <li>• <span class="font-semibold">44pt+ touch targets</span> for pool-deck use</li>
-          <li>• <span class="font-semibold">Color + shape</span> — every status has icon + color + position</li>
-          <li>• <span class="font-semibold">Plain language</span> — coaching insights speak to the athlete</li>
-        </ul>
-      </div>
-      <div class="bg-white border border-slate-200 rounded-xl p-4">
-        <div class="font-semibold text-slate-900 mb-2">Real pacing data</div>
-        <p class="text-xs leading-relaxed">Split ratios are the <span class="font-semibold">median + IQR</span> of ~24 elite swims per event (Olympics &amp; World Champs), from your World Aquatics dataset. The 200 splits each 50 individually by stroke/sex; coverage: free 50–1500, back/breast/fly 50/100/200, IM 200/400 — Men &amp; Women, LCM &amp; SCM. Swimmers/races below are still sample data.</p>
-      </div>
-    </aside>
+<div class="stage">
+  <div class="wordmark">
+    <div class="wm-title">Pacer</div>
+    <div class="wm-sub">Race split predictor · elite pacing data</div>
   </div>
-</main>
+  <div class="phone" id="phone">
+    <div class="screen" id="screen-container"></div>
+  </div>
+</div>
 
 <div id="toast-host"></div>
 
@@ -735,7 +689,9 @@ const ratios = {
           median: [0.105314, 0.120547, 0.128129, 0.125689, 0.143622, 0.146811, 0.116832, 0.113056],
           q25: [0.104321, 0.119083, 0.126942, 0.123978, 0.141855, 0.144683, 0.11534, 0.111024],
           q75: [0.106483, 0.121518, 0.129427, 0.127154, 0.145627, 0.147844, 0.118556, 0.114463],
-          n: 24
+          n: 24,
+          hundoLo: [0.224303, 0.251512, 0.287444, 0.228125],
+          hundoHi: [0.227353, 0.256159, 0.293078, 0.231231]
         }
       },
       SCM: {
@@ -749,7 +705,15 @@ const ratios = {
           median: [0.106534, 0.12202, 0.128454, 0.126471, 0.141436, 0.143661, 0.117992, 0.113432],
           q25: [0.105706, 0.120366, 0.127042, 0.125471, 0.138747, 0.142594, 0.116079, 0.110928],
           q75: [0.107677, 0.122845, 0.130156, 0.127421, 0.143212, 0.145273, 0.119723, 0.115413],
-          n: 24
+          n: 24,
+          hundoLo: [0.226772, 0.253557, 0.281716, 0.229222],
+          hundoHi: [0.229995, 0.256776, 0.286932, 0.233924]
+        },
+        "100": {
+          median: [0.205033, 0.250937, 0.297256, 0.246774],
+          q25: [0.202861, 0.245938, 0.293075, 0.245559],
+          q75: [0.207127, 0.253093, 0.299875, 0.249567],
+          n: 25
         }
       }
     },
@@ -765,7 +729,9 @@ const ratios = {
           median: [0.104004, 0.120125, 0.129992, 0.128094, 0.141034, 0.143339, 0.118908, 0.114504],
           q25: [0.102615, 0.118721, 0.128613, 0.126693, 0.139522, 0.142137, 0.117084, 0.112056],
           q75: [0.105533, 0.121367, 0.131381, 0.129504, 0.142021, 0.144704, 0.120412, 0.116399],
-          n: 24
+          n: 24,
+          hundoLo: [0.222767, 0.256514, 0.282496, 0.231296],
+          hundoHi: [0.225101, 0.260018, 0.286026, 0.234994]
         }
       },
       SCM: {
@@ -779,6 +745,14 @@ const ratios = {
           median: [0.105665, 0.121507, 0.128502, 0.126486, 0.140717, 0.143051, 0.1194, 0.114672],
           q25: [0.104648, 0.119892, 0.127506, 0.125449, 0.138969, 0.141942, 0.117953, 0.112474],
           q75: [0.106461, 0.122094, 0.129586, 0.127896, 0.142007, 0.145054, 0.121442, 0.11625],
+          n: 24,
+          hundoLo: [0.22554, 0.253402, 0.282305, 0.23189],
+          hundoHi: [0.227956, 0.256592, 0.285724, 0.236392]
+        },
+        "100": {
+          median: [0.203711, 0.247831, 0.295904, 0.252553],
+          q25: [0.202918, 0.245688, 0.290139, 0.249945],
+          q75: [0.205596, 0.250896, 0.300119, 0.255562],
           n: 24
         }
       }
@@ -788,6 +762,7 @@ const ratios = {
 
 // IM segment labels (200/400 IM)
 const imLabels = {
+  100: ['Fly', 'Back', 'Breast', 'Free'],
   200: ['Fly', 'Back', 'Breast', 'Free'],
   400: ['Fly · 1st 50', 'Fly · 2nd 50', 'Back · 1st 50', 'Back · 2nd 50', 'Breast · 1st 50', 'Breast · 2nd 50', 'Free · 1st 50', 'Free · 2nd 50'],
 };
@@ -872,6 +847,8 @@ function predict(stroke, sex, pool, distance, targetSeconds) {
     pb50: r.pb50Ratio ? r.pb50Ratio * targetSeconds : null,
     pb50Lo: r.pb50Q25 ? r.pb50Q25 * targetSeconds : null,
     pb50Hi: r.pb50Q75 ? r.pb50Q75 * targetSeconds : null,
+    hundoLo: r.hundoLo ? r.hundoLo.map(x => x * k * targetSeconds) : null,
+    hundoHi: r.hundoHi ? r.hundoHi.map(x => x * k * targetSeconds) : null,
     n: r.n ?? null,
     segLen: distance === 50 ? 25 : 50,
     targetSeconds,
@@ -938,17 +915,41 @@ function generateInsights(prediction, actualSplits, swimmer) {
 // STATE
 // ============================================================
 
+// Saved predictions persist in the browser (localStorage) so a coach can search a
+// swimmer later and pull their splits. Multiple entries per name are allowed.
+const SAVED_KEY = 'pacer_saved_v1';
+function loadSaved() {
+  try { return JSON.parse(localStorage.getItem(SAVED_KEY) || '[]'); } catch (e) { return []; }
+}
+function persistSaved() {
+  try { localStorage.setItem(SAVED_KEY, JSON.stringify(state.saved)); } catch (e) {}
+}
+// match if any name token (first or last) starts with the typed query
+function nameMatches(name, q) {
+  if (!q) return true;
+  q = q.trim().toLowerCase();
+  return name.toLowerCase().split(/\s+/).some(t => t.startsWith(q));
+}
+function initialsOf(name) {
+  const p = (name || '').trim().split(/\s+/);
+  const i = ((p[0] || '')[0] || '') + ((p[1] || '')[0] || '');
+  return (i || (name || '?')[0] || '?').toUpperCase();
+}
+
 const state = {
   view: 'roster',
   history: [],
   swimmer: null, // active swimmer if any
   form: {
     stroke: 'Free', sex: 'M', pool: 'LCM', distance: 200,
-    targetSeconds: 120,
+    targetSeconds: 120, name: '',
   },
   result: null, // last computed prediction
   race: null,   // active race being analyzed
   splitView: '100', // distance events (400+): show '50' or '100' checkpoints
+  saved: loadSaved(), // persisted split predictions, searchable by name
+  search: '', // roster search query
+  savedName: null, // selected swimmer name on the saved-events menu
 };
 
 function navigate(view, opts = {}) {
@@ -979,7 +980,7 @@ function showToast(msg) {
 
 const screenLabels = {
   roster: { num: 1, label: 'Roster' },
-  'quick-calc': { num: 2, label: 'Calculator input' },
+  'quick-calc': { num: 2, label: 'Split predictor' },
   'predicted-splits': { num: 3, label: 'Predicted splits' },
   'race-analysis': { num: 4, label: 'Race analysis' },
   'squad-targets': { num: 5, label: 'Squad targets' },
@@ -988,9 +989,10 @@ const screenLabels = {
 
 function renderJumper() {
   const host = document.getElementById('jumper');
+  if (!host) return; // jumper rail removed in the clean coach build
   const items = [
     ['roster', 'Roster'],
-    ['quick-calc', 'Calculator'],
+    ['quick-calc', 'Split predictor'],
     ['predicted-splits', 'Predicted splits'],
     ['race-analysis', 'Race analysis'],
     ['squad-targets', 'Squad targets'],
@@ -1008,6 +1010,7 @@ function render() {
   let html = '';
   switch (state.view) {
     case 'roster': html = renderRoster(); break;
+    case 'saved-swimmer': html = renderSavedSwimmer(); break;
     case 'swimmer-detail': html = renderSwimmerDetail(); break;
     case 'quick-calc': html = renderQuickCalc(); break;
     case 'predicted-splits': html = renderPredictedSplits(); break;
@@ -1043,70 +1046,124 @@ function render() {
     tedit.addEventListener('blur', commit);
     tedit.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); tedit.blur(); } });
   }
+  // Split-predictor name field: autocomplete from previously saved names (first/last prefix).
+  const nameInput = host.querySelector('[data-name-input]');
+  if (nameInput) {
+    const box = host.querySelector('[data-name-suggest]');
+    const showSuggest = () => {
+      state.form.name = nameInput.value;
+      if (!box) return;
+      const q = nameInput.value.trim();
+      const names = [...new Set(state.saved.map(s => s.name).filter(Boolean))];
+      const matches = q ? names.filter(n => nameMatches(n, q)) : [];
+      if (!matches.length) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+      box.innerHTML = matches.slice(0, 8).map(n =>
+        `<div data-suggest="${n.replace(/"/g, '&quot;')}" class="px-3.5 py-2.5 text-sm clickable hover:bg-slate-50">${n}</div>`).join('');
+      box.classList.remove('hidden');
+    };
+    nameInput.addEventListener('input', showSuggest);
+    nameInput.addEventListener('focus', showSuggest);
+    nameInput.addEventListener('blur', () => setTimeout(() => box && box.classList.add('hidden'), 150));
+    if (box) box.addEventListener('mousedown', (e) => {
+      const opt = e.target.closest('[data-suggest]');
+      if (opt) { e.preventDefault(); nameInput.value = opt.getAttribute('data-suggest'); state.form.name = nameInput.value; box.classList.add('hidden'); }
+    });
+  }
+  // Roster search: live-filter rows by name (token prefix), no full re-render so focus is kept.
+  const search = host.querySelector('[data-search]');
+  if (search) {
+    search.addEventListener('input', () => {
+      state.search = search.value;
+      const q = search.value.trim();
+      host.querySelectorAll('.roster-row').forEach(row => {
+        row.style.display = nameMatches(row.getAttribute('data-name') || '', q) ? '' : 'none';
+      });
+    });
+  }
 }
 
 // ----- Screen 1: Roster -----
 function renderRoster() {
-  const rows = swimmers.map(s => `
-    <div class="px-3 py-4 flex items-center gap-3 clickable rounded-xl" data-swimmer="${s.id}" style="min-height: 64px;">
-      <div class="w-11 h-11 rounded-full bg-cyan-50 text-cyan-800 font-bold flex items-center justify-center text-sm flex-shrink-0">${s.initials}</div>
+  // Saved split predictions — one row per unique name (most recently saved first).
+  // Tapping a name opens that swimmer's list of saved events.
+  const seen = new Set(); const orderedNames = [];
+  state.saved.slice().reverse().forEach(s => { if (!seen.has(s.name)) { seen.add(s.name); orderedNames.push(s.name); } });
+  const savedRows = orderedNames.map(name => {
+    const evs = state.saved.filter(s => s.name === name);
+    const nm = name.replace(/"/g, '&quot;');
+    return `
+    <div class="roster-row px-3 py-3.5 flex items-center gap-3 clickable rounded-xl" data-savedname="${nm}" data-name="${nm}" style="min-height: 60px;">
+      <div class="w-11 h-11 rounded-full bg-cyan-100 text-cyan-800 font-bold flex items-center justify-center text-sm flex-shrink-0">${initialsOf(name)}</div>
       <div class="flex-1 min-w-0">
-        <div class="flex items-center gap-2">
-          <span class="font-semibold text-base">${s.name}</span>
-          <span class="text-[10px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">${s.sex}</span>
-        </div>
-        <div class="text-xs text-muted mt-0.5">${s.bestEvent.distance} ${s.bestEvent.stroke} ${s.bestEvent.pool} · <span class="mono font-semibold text-slate-700">${formatTime(s.bestEvent.time)}</span></div>
+        <div class="font-semibold text-base truncate">${name}</div>
+        <div class="text-xs text-muted mt-0.5">${evs.length} saved ${evs.length === 1 ? 'event' : 'events'}</div>
       </div>
       <span class="text-slate-300 text-2xl">›</span>
-    </div>
-  `).join('<div class="border-t border-slate-100 mx-3"></div>');
+    </div>`;
+  }).join('<div class="border-t border-slate-100 mx-3"></div>');
+
+  const hasSaved = state.saved.length > 0;
+  const emptyState = `
+    <div class="flex flex-col items-center justify-center text-center px-8 py-20 text-slate-400">
+      <div class="w-14 h-14 rounded-2xl bg-cyan-50 flex items-center justify-center text-2xl mb-3">🏊</div>
+      <div class="text-sm font-semibold text-slate-600">No swimmers yet</div>
+      <div class="text-xs mt-1.5 leading-relaxed max-w-[220px]">Tap <span class="font-semibold text-cyan-700">Split predictor</span>, enter a goal time and a name, then <span class="font-semibold">Save</span> to build your roster.</div>
+    </div>`;
 
   return `
     <div class="statusbar"></div>
-    <div class="px-5 pt-3 pb-3 flex items-center justify-between">
-      <div>
-        <div class="text-3xl font-bold tracking-tight">Pacer</div>
-        <div class="text-sm text-muted mt-0.5">Roster</div>
-      </div>
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 transition" data-action="settings" aria-label="Settings">⚙</button>
+    <div class="px-5 pt-2 pb-4">
+      <div class="text-[28px] font-bold tracking-tight leading-none">Pacer</div>
+      <div class="text-xs text-muted mt-1">Race split predictor</div>
     </div>
-    <div class="px-5 pt-2 pb-3">
-      <button class="w-full bg-gradient-to-br from-cyan-600 to-cyan-700 rounded-2xl px-4 py-4 flex items-center justify-between hover:from-cyan-700 hover:to-cyan-800 transition shadow-md shadow-cyan-600/20" data-action="quick-calc">
+    <div class="px-5 pb-3">
+      <button class="w-full bg-gradient-to-br from-cyan-500 to-cyan-700 rounded-2xl px-5 py-4 flex items-center justify-between hover:from-cyan-600 hover:to-cyan-800 active:scale-[0.99] transition shadow-lg shadow-cyan-600/25" data-action="quick-calc">
         <div class="text-left">
-          <div class="font-bold text-white text-base">Quick calc</div>
-          <div class="text-xs text-cyan-100 mt-0.5">Predict splits without picking a swimmer</div>
+          <div class="font-bold text-white text-[15px]">Split predictor</div>
+          <div class="text-xs text-cyan-50/90 mt-0.5">Predict splits from a goal time</div>
         </div>
-        <span class="text-white text-2xl">→</span>
+        <span class="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center text-white text-xl leading-none">→</span>
       </button>
     </div>
-    <div class="px-5 pb-2">
+    <div class="px-5 pb-1">
       <div class="bg-slate-100 rounded-xl px-3.5 py-3 flex items-center gap-2">
         <span class="text-muted">⌕</span>
-        <span class="text-sm text-muted">Search swimmers</span>
+        <input type="text" data-search value="${state.search || ''}" placeholder="Search saved swimmers" class="bg-transparent outline-none text-sm w-full placeholder:text-muted" />
       </div>
     </div>
-    <div class="px-5 py-3 flex items-center justify-between">
-      <span class="label-cap">${swimmers.length} swimmers</span>
-      <span class="text-xs text-muted">Sort: Name</span>
+    ${hasSaved ? '<div class="px-5 pt-3 pb-1"><span class="label-cap">Saved swimmers</span></div>' : ''}
+    <div class="scrollable px-3 pb-4">
+      ${hasSaved ? `<div>${savedRows}</div>` : emptyState}
     </div>
-    <div class="scrollable px-3 pb-2">
-      <div>${rows}</div>
+  `;
+}
+
+// ----- Screen: Saved swimmer — list of that name's saved events -----
+function renderSavedSwimmer() {
+  const name = state.savedName;
+  const evs = name ? state.saved.filter(s => s.name === name) : [];
+  if (!evs.length) return renderRoster();
+  const rows = evs.slice().reverse().map(s => `
+    <div class="px-3 py-4 flex items-center gap-3 clickable rounded-xl border-b border-slate-100" data-saved="${s.id}" style="min-height: 60px;">
+      <div class="flex-1 min-w-0">
+        <div class="font-semibold text-base">${s.distance} ${s.stroke} <span class="text-xs font-normal text-muted">${s.pool} · ${s.sex === 'M' ? 'Men' : 'Women'}</span></div>
+        <div class="text-xs text-muted mt-0.5">Target <span class="mono font-semibold text-slate-700">${formatTime(s.targetSeconds)}</span></div>
+      </div>
+      <span class="text-cyan-700 text-sm font-bold">Splits →</span>
+    </div>`).join('');
+  return `
+    <div class="statusbar"></div>
+    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <div class="flex-1 min-w-0">
+        <div class="text-lg font-semibold truncate">${name}</div>
+        <div class="text-xs text-muted">${evs.length} saved ${evs.length === 1 ? 'event' : 'events'}</div>
+      </div>
     </div>
-    <button class="absolute right-5 bottom-28 w-14 h-14 rounded-full bg-cyan-600 text-white text-3xl shadow-lg shadow-cyan-600/30 flex items-center justify-center font-light hover:bg-cyan-700 transition" data-action="add-swimmer">+</button>
-    <div class="border-t border-slate-200 bg-white flex items-center justify-around py-3 pb-6 flex-shrink-0">
-      <div class="flex flex-col items-center gap-1">
-        <span class="text-cyan-600">●</span>
-        <span class="text-[11px] font-semibold text-cyan-700">Roster</span>
-      </div>
-      <div class="flex flex-col items-center gap-1 clickable px-4 py-1 rounded" data-action="squad">
-        <span class="text-slate-300">●</span>
-        <span class="text-[11px] text-slate-500">Squad</span>
-      </div>
-      <div class="flex flex-col items-center gap-1 clickable px-4 py-1 rounded" data-action="settings">
-        <span class="text-slate-300">●</span>
-        <span class="text-[11px] text-slate-500">Settings</span>
-      </div>
+    <div class="px-5 pb-3">
+      <button class="w-full bg-cyan-600 text-white rounded-xl py-3 text-sm font-semibold hover:bg-cyan-700 active:scale-[0.99] transition shadow-md shadow-cyan-600/20" data-action="add-event">+ Add an event</button>
     </div>
+    <div class="scrollable px-3 pb-2 bg-slate-50">${rows}</div>
   `;
 }
 
@@ -1189,11 +1246,19 @@ function renderQuickCalc() {
     <div class="px-5 pt-3 pb-3 flex items-center gap-3">
       <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0">
-        <div class="text-lg font-semibold">${state.swimmer ? 'Pace plan' : 'Quick calc'}</div>
+        <div class="text-lg font-semibold">${state.swimmer ? 'Pace plan' : 'Split predictor'}</div>
         <div class="text-xs text-muted truncate">${ctxLine}</div>
       </div>
     </div>
     <div class="scrollable px-5 py-4 space-y-6">
+      <div>
+        <div class="label-cap mb-2">Swimmer name <span class="text-faint" style="text-transform:none;letter-spacing:0;font-weight:400;">(optional — enables save &amp; search)</span></div>
+        <div class="relative">
+          <input type="text" data-name-input autocomplete="off" value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="e.g. Tegan O'Neill"
+            class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-base outline-none focus:ring-2 focus:ring-cyan-300" />
+          <div data-name-suggest class="hidden" style="position:absolute;left:0;right:0;top:100%;margin-top:4px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 8px 24px rgba(15,23,42,.12);z-index:60;max-height:200px;overflow-y:auto;"></div>
+        </div>
+      </div>
       <div>
         <div class="label-cap mb-2">Stroke</div>
         <div class="flex gap-2 flex-wrap">
@@ -1246,23 +1311,84 @@ function buildDisplaySegments(r) {
   const isIM = r.stroke === 'IM';
   const per100 = !isIM && r.distance >= 400 && state.splitView === '100' && r.splits.length % 2 === 0;
   if (per100) {
-    const rows = [];
+    const all = [];
     for (let k = 0; k * 2 < r.splits.length; k++) {
       const a = 2 * k, b = 2 * k + 1;
-      rows.push({
-        time: r.splits[a] + r.splits[b],
-        lo: r.lo[a] + r.lo[b],
-        hi: r.hi[a] + r.hi[b],
-        label: `${(k + 1) * 100} m`,
-      });
+      all.push({ time: r.splits[a] + r.splits[b], lo: r.lo[a] + r.lo[b], hi: r.hi[a] + r.hi[b] });
     }
-    return rows;
+    const n = all.length;
+    // The middle 100s are identical (flat-middle model) — collapse them into one row.
+    if (n >= 3) {
+      const mid = all[1];
+      return [
+        { ...all[0], label: 'First 100', count: 1 },
+        { time: mid.time, lo: mid.lo, hi: mid.hi, label: `Middle 100s · 2–${n - 1}`, count: n - 2 },
+        { ...all[n - 1], label: 'Last 100', count: 1 },
+      ];
+    }
+    return all.map((row, k) => ({ ...row, label: `${(k + 1) * 100} m`, count: 1 }));
+  }
+  // Per-50 view for distance free: First 50, one combined Middle 50s row, Last 50.
+  if (!isIM && r.distance >= 400 && state.splitView === '50' && r.splits.length >= 3) {
+    const n = r.splits.length;
+    let midSum = 0;
+    for (let i = 1; i < n - 1; i++) midSum += r.splits[i];
+    const midCount = n - 2;
+    return [
+      { time: r.splits[0], lo: r.lo[0], hi: r.hi[0], label: 'First 50', count: 1 },
+      { time: midSum / midCount, lo: r.lo[1], hi: r.hi[1], label: `Middle 50s · 2–${n - 1}`, count: midCount },
+      { time: r.splits[n - 1], lo: r.lo[n - 1], hi: r.hi[n - 1], label: 'Last 50', count: 1 },
+    ];
   }
   const imL = isIM ? imLabels[r.distance] : null;
   return r.splits.map((t, i) => ({
     time: t, lo: r.lo[i], hi: r.hi[i],
     label: imL ? imL[i] : `${(i + 1) * r.segLen} m`,
   }));
+}
+
+// A centered range bar (q25 left, median tick centre, q75 right).
+function rangeBar(lo, hi, mid) {
+  const w = Math.min(100, ((hi - lo) / mid) * 100);
+  const pad = (100 - w) / 2;
+  return `<div class="range-track"><div class="range-fill" style="left: ${pad.toFixed(1)}%; right: ${pad.toFixed(1)}%;"></div><div class="range-tick" style="left: 50%;"></div></div>`;
+}
+
+// 400 IM: grouped by stroke — each stroke's 100 (headline, dedicated IQR) with its two 50s below.
+function renderIM400Splits(r) {
+  const strokes = ['Fly', 'Back', 'Breast', 'Free'];
+  const cap = 'text-[9px] uppercase tracking-wide text-faint';
+  return strokes.map((stk, j) => {
+    const a = 2 * j, b = 2 * j + 1;
+    const h = r.splits[a] + r.splits[b];                              // 100 median = sum of its 50s
+    const hlo = r.hundoLo ? r.hundoLo[j] : (r.lo[a] + r.lo[b]);       // dedicated 100 IQR
+    const hhi = r.hundoHi ? r.hundoHi[j] : (r.hi[a] + r.hi[b]);
+    const lg = stk.toLowerCase();
+    const sub = [a, b].map((idx, si) => `
+      <div class="px-4 py-2.5 flex items-center gap-3">
+        <span class="label-cap text-faint flex-shrink-0" style="width:46px;">${si === 0 ? '1st 50' : '2nd 50'}</span>
+        <div class="flex-1">
+          ${rangeBar(r.lo[idx], r.hi[idx], r.splits[idx])}
+          <div class="flex justify-between text-[10px] text-faint mt-1 mono"><span>${formatTime(r.lo[idx])}</span><span>${formatTime(r.hi[idx])}</span></div>
+        </div>
+        <span class="hero-time text-lg text-right flex-shrink-0" style="width:62px;">${formatTime(r.splits[idx])}</span>
+      </div>`).join('');
+    return `
+      <div class="${j < 3 ? 'border-b border-slate-100' : ''}">
+        <div class="px-4 pt-3.5 pb-2.5">
+          <div class="text-center mb-1.5">
+            <span class="label-cap text-cyan-700">${stk} · 100</span>
+            <div class="hero-time text-2xl leading-tight">${formatTime(h)}</div>
+          </div>
+          ${rangeBar(hlo, hhi, h)}
+          <div class="flex justify-between items-baseline text-[11px] text-muted mt-1.5">
+            <span><span class="mono">${formatTime(hlo)}</span> <span class="${cap}">better ${lg}</span></span>
+            <span><span class="${cap}">worse ${lg}</span> <span class="mono">${formatTime(hhi)}</span></span>
+          </div>
+        </div>
+        <div class="bg-slate-50/70">${sub}</div>
+      </div>`;
+  }).join('');
 }
 
 function renderPredictedSplits() {
@@ -1285,21 +1411,24 @@ function renderPredictedSplits() {
 
   const isIM = r.stroke === 'IM';
   const rows = buildDisplaySegments(r);
-  const showEven = !isIM; // show front-end / back-end labels on the range (not for IM legs)
-
   const splitRows = rows.map((row, i) => {
     const rangeWidth = Math.min(100, ((row.hi - row.lo) / row.time) * 100);
     const padding = (100 - rangeWidth) / 2;
-    // faster end (q25, lower time) sits left = a front-end swimmer; slower end right = back-end.
-    const ends = showEven
-      ? `<span><span class="mono">${row.lo.toFixed(2)}</span> <span class="text-[9px] uppercase tracking-wide text-faint">front-end</span></span>
-         <span><span class="text-[9px] uppercase tracking-wide text-faint">back-end</span> <span class="mono">${row.hi.toFixed(2)}</span></span>`
-      : `<span class="mono">${row.lo.toFixed(2)}</span><span class="mono">${row.hi.toFixed(2)}</span>`;
+    // faster end (q25, lower time) sits left, slower end (q75) right.
+    // Non-IM: front-end / back-end. IM: "better <leg>" / "softer <leg>" using the leg's stroke.
+    let leftCap = 'front-end', rightCap = 'back-end';
+    if (isIM) {
+      const leg = row.label.split(' · ')[0].toLowerCase();
+      leftCap = `better ${leg}`; rightCap = `worse ${leg}`;
+    }
+    const cap = 'text-[9px] uppercase tracking-wide text-faint';
+    const ends = `<span><span class="mono">${formatTime(row.lo)}</span> <span class="${cap}">${leftCap}</span></span>
+         <span><span class="${cap}">${rightCap}</span> <span class="mono">${formatTime(row.hi)}</span></span>`;
     return `
       <div class="px-4 py-3.5 ${i < rows.length - 1 ? 'border-b border-slate-100' : ''}">
         <div class="text-center mb-1.5">
           <span class="label-cap text-faint">${row.label}</span>
-          <div class="hero-time text-2xl leading-tight">${row.time.toFixed(2)}</div>
+          <div class="hero-time text-2xl leading-tight">${formatTime(row.time)}</div>
         </div>
         <div class="relative">
           <div class="range-track">
@@ -1363,11 +1492,11 @@ function renderPredictedSplits() {
             <div class="range-fill" style="left: ${pbPad.toFixed(1)}%; right: ${pbPad.toFixed(1)}%;"></div>
             <div class="range-tick" style="left: 50%;"></div>
           </div>
-          <div class="flex justify-between text-[11px] text-muted mt-1.5 mono">
-            <span>${r.pb50Lo.toFixed(2)}</span><span>${r.pb50Hi.toFixed(2)}</span>
+          <div class="flex justify-between items-baseline text-[11px] text-muted mt-1.5">
+            <span><span class="mono">${r.pb50Lo.toFixed(2)}</span> <span class="text-[9px] uppercase tracking-wide text-faint">front-end</span></span>
+            <span><span class="text-[9px] uppercase tracking-wide text-faint">back-end</span> <span class="mono">${r.pb50Hi.toFixed(2)}</span></span>
           </div>
         </div>` : ''}
-        <div class="text-xs text-muted mt-2 text-center">Opening 50 to make ${formatTime(r.targetSeconds, { precision: 0 })} feasible</div>
         ${knownPB ? `
           <div class="${t.wrap} border rounded-xl px-3.5 py-2.5 mt-3 flex items-center justify-between">
             <div class="text-[10px] font-bold uppercase tracking-wide ${t.label}">${state.swimmer.name.split(' ')[0]}'s 50 PB</div>
@@ -1386,7 +1515,7 @@ function renderPredictedSplits() {
     <div class="px-5 pt-3 pb-2 flex items-center gap-3 bg-white">
       <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0">
-        <div class="text-base font-semibold">${state.swimmer ? state.swimmer.name : 'Pace plan'}</div>
+        <div class="text-base font-semibold">${state.swimmer ? state.swimmer.name : (state.form.name || 'Pace plan')}</div>
         <div class="text-xs text-muted truncate">${r.distance} ${r.stroke} · ${r.pool} · ${r.sex === 'M' ? 'Men' : 'Women'}</div>
       </div>
       <button class="px-3.5 py-2 rounded-full bg-cyan-50 text-cyan-800 text-xs font-semibold hover:bg-cyan-100 transition" data-action="save">Save</button>
@@ -1399,11 +1528,15 @@ function renderPredictedSplits() {
         <div class="flex items-center justify-between gap-2">
           <input type="text" inputmode="decimal" data-target-edit value="${formatTime(r.targetSeconds)}"
                  class="hero-time text-4xl text-cyan-900 bg-transparent outline-none w-[150px]" aria-label="Target time" />
-          <div class="flex items-center gap-1.5">
-            <button class="w-10 h-11 rounded-l-xl bg-white border border-cyan-200 text-cyan-800 text-sm font-bold hover:bg-cyan-100 active:scale-95 transition" data-action="nudge-target" data-delta="-1" title="Faster by 1.0s" aria-label="Faster by 1 second">−1</button>
-            <button class="w-10 h-11 bg-white border border-cyan-200 text-cyan-800 text-sm font-bold hover:bg-cyan-100 active:scale-95 transition" data-action="nudge-target" data-delta="-0.1" title="Faster by 0.1s" aria-label="Faster by 0.1 seconds">−.1</button>
-            <button class="w-10 h-11 bg-white border border-cyan-200 text-cyan-800 text-sm font-bold hover:bg-cyan-100 active:scale-95 transition" data-action="nudge-target" data-delta="0.1" title="Slower by 0.1s" aria-label="Slower by 0.1 seconds">+.1</button>
-            <button class="w-10 h-11 rounded-r-xl bg-white border border-cyan-200 text-cyan-800 text-sm font-bold hover:bg-cyan-100 active:scale-95 transition" data-action="nudge-target" data-delta="1" title="Slower by 1.0s" aria-label="Slower by 1 second">+1</button>
+          <div class="flex items-center gap-2">
+            <div class="flex">
+              <button class="w-10 h-11 rounded-l-xl bg-white border border-cyan-200 text-cyan-800 text-sm font-bold hover:bg-cyan-100 active:scale-95 transition" data-action="nudge-target" data-delta="-1" title="Faster by 1.0s" aria-label="Faster by 1 second">−1</button>
+              <button class="w-10 h-11 rounded-r-xl bg-white border border-l-0 border-cyan-200 text-cyan-800 text-sm font-bold hover:bg-cyan-100 active:scale-95 transition" data-action="nudge-target" data-delta="1" title="Slower by 1.0s" aria-label="Slower by 1 second">+1</button>
+            </div>
+            <div class="flex">
+              <button class="w-10 h-11 rounded-l-xl bg-white border border-cyan-200 text-cyan-800 text-sm font-bold hover:bg-cyan-100 active:scale-95 transition" data-action="nudge-target" data-delta="-0.1" title="Faster by 0.1s" aria-label="Faster by 0.1 seconds">−.1</button>
+              <button class="w-10 h-11 rounded-r-xl bg-white border border-l-0 border-cyan-200 text-cyan-800 text-sm font-bold hover:bg-cyan-100 active:scale-95 transition" data-action="nudge-target" data-delta="0.1" title="Slower by 0.1s" aria-label="Slower by 0.1 seconds">+.1</button>
+            </div>
           </div>
         </div>
         <div class="flex gap-1.5 mt-3 text-xs flex-wrap">
@@ -1411,7 +1544,7 @@ function renderPredictedSplits() {
             <button class="px-2.5 py-1.5 rounded-full bg-white border border-slate-200 text-slate-700 font-semibold hover:bg-slate-50 transition" data-action="target-preset" data-mode="pb">PB</button>
           ` : ''}
           <button class="px-2.5 py-1.5 rounded-full bg-white border border-slate-200 text-slate-700 font-semibold hover:bg-slate-50 transition" data-action="target-preset" data-mode="minus1">−1%</button>
-          <button class="px-2.5 py-1.5 rounded-full bg-white border border-slate-200 text-slate-700 font-semibold hover:bg-slate-50 transition" data-action="target-preset" data-mode="minus2">−2%</button>
+          <button class="px-2.5 py-1.5 rounded-full bg-white border border-slate-200 text-slate-700 font-semibold hover:bg-slate-50 transition" data-action="target-preset" data-mode="plus1">+1%</button>
         </div>
       </div>
     </div>
@@ -1426,7 +1559,7 @@ function renderPredictedSplits() {
             <button class="px-3 py-2 rounded-lg bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 transition" data-action="copy-splits" title="Copy splits">Copy</button>
           </div>
         </div>
-        ${splitRows}
+        ${(isIM && r.distance === 400) ? renderIM400Splits(r) : splitRows}
       </div>
       ${pb50Card}
       ${state.swimmer ? `
@@ -1664,6 +1797,23 @@ document.addEventListener('click', (e) => {
       navigate('swimmer-detail', { swimmer: s });
       return;
     }
+    const svn = e.target.closest('[data-savedname]');
+    if (svn) {
+      state.savedName = svn.getAttribute('data-savedname');
+      navigate('saved-swimmer');
+      return;
+    }
+    const sv = e.target.closest('[data-saved]');
+    if (sv) {
+      const entry = state.saved.find(x => x.id === sv.getAttribute('data-saved'));
+      if (entry) {
+        state.swimmer = null;
+        state.form = { stroke: entry.stroke, sex: entry.sex, pool: entry.pool, distance: entry.distance, targetSeconds: entry.targetSeconds, name: entry.name };
+        state.result = predict(entry.stroke, entry.sex, entry.pool, entry.distance, entry.targetSeconds);
+        navigate('predicted-splits');
+      }
+      return;
+    }
     const stroke = e.target.closest('[data-stroke]');
     if (stroke) {
       state.form.stroke = stroke.getAttribute('data-stroke');
@@ -1709,9 +1859,22 @@ function handleAction(action, el) {
   switch (action) {
     case 'quick-calc':
       state.swimmer = null;
-      state.form = { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 200, targetSeconds: 120 };
+      state.form = { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 200, targetSeconds: 120, name: '' };
       navigate('quick-calc');
       break;
+    case 'add-event': {
+      // From a saved swimmer's menu: open the predictor with their name (and sex/pool from their latest event).
+      const evs = state.saved.filter(s => s.name === state.savedName);
+      const last = evs[evs.length - 1];
+      state.swimmer = null;
+      state.form = {
+        stroke: 'Free', distance: 200, targetSeconds: 120,
+        sex: last ? last.sex : 'M', pool: last ? last.pool : 'LCM',
+        name: state.savedName || '',
+      };
+      navigate('quick-calc');
+      break;
+    }
     case 'predict':
       // Navigate either way: a valid result shows splits, null shows the helpful no-data screen.
       state.result = predict(state.form.stroke, state.form.sex, state.form.pool, state.form.distance, state.form.targetSeconds);
@@ -1721,7 +1884,17 @@ function handleAction(action, el) {
     case 'squad': navigate('squad-targets'); break;
     case 'settings': showToast('Settings — not in v1 mock'); break;
     case 'add-swimmer': showToast('Add swimmer — not in v1 mock'); break;
-    case 'save': showToast('Saved as race target'); break;
+    case 'save': {
+      const nm = (state.form.name || '').trim();
+      if (!nm) { showToast('Add a swimmer name to save'); break; }
+      if (!state.result) { showToast('Nothing to save'); break; }
+      const r = state.result;
+      state.saved.push({ id: 'sv' + Date.now().toString(36), name: nm,
+        stroke: r.stroke, sex: r.sex, pool: r.pool, distance: r.distance, targetSeconds: r.targetSeconds });
+      persistSaved();
+      showToast(`Saved ${nm} · ${r.distance} ${r.stroke}`);
+      break;
+    }
     case 'set-as-target': showToast(`Saved to ${state.swimmer.name}'s next race`); break;
     case 'plan-from-pb':
       state.form = {
@@ -1761,7 +1934,7 @@ function handleAction(action, el) {
       let next = state.result.targetSeconds;
       if (mode === 'pb') next = base;
       else if (mode === 'minus1') next = base * 0.99;
-      else if (mode === 'minus2') next = base * 0.98;
+      else if (mode === 'plus1') next = base * 1.01;
       state.form.targetSeconds = next;
       state.result = predict(state.result.stroke, state.result.sex, state.result.pool, state.result.distance, next);
       render();
@@ -1778,7 +1951,7 @@ function handleAction(action, el) {
       const rows = buildDisplaySegments(r);
       let cum = 0;
       const header = `${r.distance} ${r.stroke} ${r.pool} ${r.sex === 'M' ? 'Men' : 'Women'} — target ${formatTime(r.targetSeconds)}`;
-      const lines = rows.map(row => { cum += row.time; return `${row.label}\t${row.time.toFixed(2)}\tcum ${formatTime(cum)}`; });
+      const lines = rows.map(row => { const c = row.count || 1; cum += row.time * c; return `${row.label}\t${formatTime(row.time)}${c > 1 ? ` (×${c})` : ''}\tcum ${formatTime(cum)}`; });
       const text = header + '\n' + lines.join('\n');
       const done = () => showToast('Splits copied');
       if (navigator.clipboard && navigator.clipboard.writeText) {
