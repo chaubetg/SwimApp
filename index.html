@@ -113,6 +113,15 @@
       font-feature-settings: "tnum";
     }
     .time-input:focus { color: #0891b2; }
+    /* Segmented time entry (min : sec . hundredths) */
+    .time-seg {
+      font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums;
+      font-size: 40px; font-weight: 700; letter-spacing: -1px; text-align: center;
+      background: transparent; border: none; outline: none; width: 72px; color: #0f172a;
+    }
+    .time-seg:focus { color: #0891b2; }
+    .time-seg-sep { font-family: 'JetBrains Mono', monospace; font-size: 34px; font-weight: 700; color: #94a3b8; padding-bottom: 20px; }
+    .time-seg-label { font-size: 10px; font-weight: 600; color: #64748b; letter-spacing: 0.06em; text-transform: uppercase; margin-top: 3px; }
     .clickable { cursor: pointer; }
     .clickable:active { background: #f1f5f9; }
     .toast {
@@ -1040,6 +1049,31 @@ function render() {
     tedit.addEventListener('blur', commit);
     tedit.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); tedit.blur(); } });
   }
+  // Segmented target time (min : sec . hundredths) on the Split predictor form.
+  const tmin = host.querySelector('[data-tmin]');
+  const tsec = host.querySelector('[data-tsec]');
+  const thh = host.querySelector('[data-thh]');
+  if (tmin && tsec && thh) {
+    const sync = () => {
+      const m = parseInt(tmin.value || '0', 10) || 0;
+      const s = parseInt(tsec.value || '0', 10) || 0;
+      const h = parseInt(thh.value || '0', 10) || 0;
+      state.form.targetSeconds = m * 60 + s + h / 100;
+    };
+    [tmin, tsec, thh].forEach((el) => {
+      el.addEventListener('focus', () => el.select());
+      el.addEventListener('input', () => {
+        el.value = el.value.replace(/\D/g, '').slice(0, 2); // digits only, max 2
+        sync();
+        if (el === tmin && el.value.length === 2) { tsec.focus(); tsec.select(); }
+        else if (el === tsec && el.value.length === 2) { thh.focus(); thh.select(); }
+      });
+      el.addEventListener('blur', () => {
+        if ((el === tsec || el === thh) && el.value !== '') el.value = el.value.padStart(2, '0');
+        sync();
+      });
+    });
+  }
   // Split-predictor name field: autocomplete from previously saved names (first/last prefix).
   const nameInput = host.querySelector('[data-name-input]');
   if (nameInput) {
@@ -1234,6 +1268,10 @@ function renderQuickCalc() {
   const ctxLine = state.swimmer
     ? `${state.swimmer.name}`
     : 'No swimmer required';
+  const tt = Math.max(0, f.targetSeconds || 0);
+  const tmin = Math.floor(tt / 60);
+  const tsec = Math.floor(tt % 60);
+  const thh = Math.round((tt - Math.floor(tt)) * 100);
 
   return `
     <div class="statusbar"></div>
@@ -1284,10 +1322,25 @@ function renderQuickCalc() {
       </div>
       <div>
         <div class="label-cap mb-2">Target time</div>
-        <div class="bg-gradient-to-br from-cyan-50 to-white border-2 border-cyan-200 rounded-2xl px-5 py-6 focus-within:border-cyan-500 transition">
-          <input type="text" inputmode="decimal" data-time-input value="${formatTime(f.targetSeconds)}" class="time-input" aria-label="Target time" />
+        <div class="bg-gradient-to-br from-cyan-50 to-white border-2 border-cyan-200 rounded-2xl px-4 py-5 focus-within:border-cyan-500 transition">
+          <div class="flex items-end justify-center gap-1">
+            <div class="text-center">
+              <input data-tmin inputmode="numeric" maxlength="2" value="${tmin}" class="time-seg" aria-label="Minutes" />
+              <div class="time-seg-label">min</div>
+            </div>
+            <div class="time-seg-sep">:</div>
+            <div class="text-center">
+              <input data-tsec inputmode="numeric" maxlength="2" value="${String(tsec).padStart(2, '0')}" class="time-seg" aria-label="Seconds" />
+              <div class="time-seg-label">sec</div>
+            </div>
+            <div class="time-seg-sep">.</div>
+            <div class="text-center">
+              <input data-thh inputmode="numeric" maxlength="2" value="${String(thh).padStart(2, '0')}" class="time-seg" aria-label="Hundredths" />
+              <div class="time-seg-label">hund.</div>
+            </div>
+          </div>
         </div>
-        <div class="text-center text-xs text-muted mt-2">Tap to edit · format MM:SS.ss</div>
+        <div class="text-center text-xs text-muted mt-2">Tap a box and type · minutes : seconds . hundredths</div>
       </div>
     </div>
     <div class="border-t border-slate-200 px-5 py-4 pb-5 bg-white flex-shrink-0">
