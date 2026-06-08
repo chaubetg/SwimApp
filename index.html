@@ -1,0 +1,1854 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pacer — v1 (real pacing data)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; font-feature-settings: "tnum", "ss01"; }
+    .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; font-feature-settings: "tnum"; font-variant-numeric: tabular-nums; }
+    .tnum { font-variant-numeric: tabular-nums; }
+    /* Hero numbers — split times, target times, deltas */
+    .hero-time { font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; font-weight: 700; letter-spacing: -0.02em; }
+    /* Higher-contrast muted text for outdoor / deck visibility */
+    .text-muted { color: #475569; }
+    .text-faint { color: #64748b; }
+    .phone {
+      width: 390px; height: 844px;
+      border-radius: 44px;
+      background: white;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 24px 60px rgba(15,23,42,0.18);
+      position: relative;
+      overflow: hidden;
+      border: 1px solid #e2e8f0;
+    }
+    .phone::after {
+      content: ""; position: absolute;
+      top: 8px; left: 50%; transform: translateX(-50%);
+      width: 120px; height: 32px;
+      background: #0f172a; border-radius: 999px;
+      z-index: 50;
+    }
+    .screen {
+      width: 100%; height: 100%;
+      overflow: hidden;
+      position: relative;
+      display: flex; flex-direction: column;
+      animation: fadeIn 0.2s ease-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .scrollable { overflow-y: auto; flex: 1; }
+    .scrollable::-webkit-scrollbar { display: none; }
+    .statusbar { height: 44px; flex-shrink: 0; }
+    /* Bigger pills for deck use (wet fingers, glances) */
+    .pill {
+      display: inline-flex; align-items: center; padding: 11px 16px;
+      border-radius: 999px; font-size: 14px; font-weight: 600;
+      background: #f1f5f9; color: #0f172a; white-space: nowrap;
+      cursor: pointer; user-select: none;
+      transition: background 0.1s, transform 0.05s;
+      min-height: 44px;
+    }
+    .pill:hover { background: #e2e8f0; }
+    .pill:active { transform: scale(0.97); }
+    .pill.active { background: #0e7490; color: white; }
+    .pill.active:hover { background: #155e75; }
+    .seg-group {
+      display: flex; padding: 4px; background: #f1f5f9;
+      border-radius: 12px; gap: 4px;
+    }
+    .seg {
+      flex: 1; text-align: center; padding: 10px 14px;
+      font-size: 14px; font-weight: 600; color: #475569;
+      border-radius: 9px; cursor: pointer; user-select: none;
+      min-height: 40px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .seg.active {
+      background: white; color: #0f172a;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .label-cap {
+      font-size: 11px; font-weight: 600; color: #64748b;
+      letter-spacing: 0.06em; text-transform: uppercase;
+    }
+    .range-track {
+      position: relative; height: 10px; background: #f1f5f9;
+      border-radius: 999px;
+    }
+    .range-fill {
+      position: absolute; top: 0; bottom: 0;
+      background: #cffafe; border-radius: 999px;
+    }
+    .range-tick {
+      position: absolute; top: -3px; width: 2px; height: 16px;
+      background: #0e7490; border-radius: 1px;
+    }
+    .range-actual {
+      position: absolute; top: -5px; width: 20px; height: 20px;
+      background: white; border-radius: 999px;
+      transform: translateX(-10px);
+      box-shadow: 0 1px 4px rgba(0,0,0,0.18);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 700;
+    }
+    .range-actual.too-fast { border: 3px solid #d97706; color: #d97706; }
+    .range-actual.too-slow { border: 3px solid #dc2626; color: #dc2626; }
+    .range-actual.in-range { border: 3px solid #059669; color: #059669; }
+    /* Status badges */
+    .status-dot {
+      display: inline-block; width: 8px; height: 8px;
+      border-radius: 999px; margin-right: 6px; vertical-align: middle;
+    }
+    .status-dot.too-fast { background: #d97706; }
+    .status-dot.too-slow { background: #dc2626; }
+    .status-dot.in-range { background: #059669; }
+    .time-input {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 44px; font-weight: 700; letter-spacing: -1px;
+      text-align: center; background: transparent;
+      border: none; outline: none; width: 100%;
+      color: #0f172a;
+      font-feature-settings: "tnum";
+    }
+    .time-input:focus { color: #0891b2; }
+    .clickable { cursor: pointer; }
+    .clickable:active { background: #f1f5f9; }
+    .toast {
+      position: fixed; bottom: 32px; left: 50%; transform: translateX(-50%);
+      background: #0f172a; color: white;
+      padding: 12px 20px; border-radius: 12px;
+      font-size: 14px; z-index: 1000;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+      animation: slideUp 0.3s ease-out;
+    }
+    @keyframes slideUp {
+      from { opacity: 0; transform: translate(-50%, 12px); }
+      to { opacity: 1; transform: translate(-50%, 0); }
+    }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-900 min-h-screen">
+
+<header class="px-8 pt-10 pb-4 max-w-screen-xl mx-auto">
+  <h1 class="text-2xl font-bold tracking-tight">Pacer — v1 (real pacing data)</h1>
+  <p class="text-slate-600 mt-1 text-sm max-w-2xl">
+    Designed for use poolside — large hero numbers, 44pt+ touch targets, tabular figures, status communicated through icon + color + position (never color alone). Works for a coach on deck with their athlete or for an athlete planning their own race.
+  </p>
+</header>
+
+<main class="px-8 pb-16 max-w-screen-xl mx-auto">
+  <div class="flex gap-8 items-start">
+
+    <!-- Left rail: screen jumper -->
+    <aside class="w-56 flex-shrink-0 sticky top-8">
+      <div class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Jump to screen</div>
+      <nav id="jumper" class="space-y-1">
+        <!-- populated by JS -->
+      </nav>
+
+      <div class="text-xs font-semibold text-slate-500 uppercase tracking-wider mt-8 mb-3">Demo flows</div>
+      <div class="space-y-2">
+        <button data-flow="quick200" class="w-full text-left px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg hover:border-cyan-300 hover:bg-cyan-50 transition">
+          <div class="font-semibold">200 free @ 2:00</div>
+          <div class="text-xs text-slate-500">Quick calc → result</div>
+        </button>
+        <button data-flow="ben" class="w-full text-left px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg hover:border-cyan-300 hover:bg-cyan-50 transition">
+          <div class="font-semibold">Ben → 100 fly 1:54.8</div>
+          <div class="text-xs text-slate-500">Top-end speed limiter case</div>
+        </button>
+        <button data-flow="quinn" class="w-full text-left px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg hover:border-cyan-300 hover:bg-cyan-50 transition">
+          <div class="font-semibold">Quinn 400 race</div>
+          <div class="text-xs text-slate-500">Race analysis with insights</div>
+        </button>
+        <button data-flow="reset" class="w-full text-left px-3 py-2 text-sm text-slate-500 hover:text-slate-900 transition">
+          ↺ Reset to roster
+        </button>
+      </div>
+    </aside>
+
+    <!-- Phone -->
+    <div class="phone" id="phone">
+      <div class="screen" id="screen-container"></div>
+    </div>
+
+    <!-- Right side: notes -->
+    <aside class="w-72 flex-shrink-0 text-sm text-slate-600 space-y-4 sticky top-8">
+      <div class="bg-white border border-slate-200 rounded-xl p-4">
+        <div class="font-semibold text-slate-900 mb-2">What to try</div>
+        <ul class="space-y-1.5 text-xs leading-relaxed">
+          <li>• On Predicted Splits, <span class="font-semibold">tap the target time to type</span> a new goal, or nudge with <span class="font-semibold">−1 / −.1 / +.1 / +1</span></li>
+          <li>• Open a distance event (e.g. <span class="font-semibold">800 free</span>) and switch <span class="font-semibold">Per 50 / Per 100</span> checkpoints</li>
+          <li>• Read the <span class="font-semibold">vs even</span> tag on each split and the pacing-shape note up top</li>
+          <li>• <span class="font-semibold">Copy</span> exports the split sheet; run the Ben fly demo for the speed-limiter callout</li>
+        </ul>
+      </div>
+      <div class="bg-white border border-slate-200 rounded-xl p-4">
+        <div class="font-semibold text-slate-900 mb-2">Design principles applied</div>
+        <ul class="space-y-1.5 text-xs leading-relaxed text-slate-600">
+          <li>• <span class="font-semibold">Glanceable hero numbers</span> — split times are the largest type on screen</li>
+          <li>• <span class="font-semibold">Tabular figures</span> — digits align vertically</li>
+          <li>• <span class="font-semibold">44pt+ touch targets</span> for pool-deck use</li>
+          <li>• <span class="font-semibold">Color + shape</span> — every status has icon + color + position</li>
+          <li>• <span class="font-semibold">Plain language</span> — coaching insights speak to the athlete</li>
+        </ul>
+      </div>
+      <div class="bg-white border border-slate-200 rounded-xl p-4">
+        <div class="font-semibold text-slate-900 mb-2">Real pacing data</div>
+        <p class="text-xs leading-relaxed">Split ratios are the <span class="font-semibold">median + IQR</span> of ~24 elite swims per event (Olympics & World Champs), derived from your World Aquatics dataset. Coverage: free 50–1500, back/breast/fly 50/100/200, IM 200/400 — Men &amp; Women, LCM &amp; SCM. Swimmers/races below are still sample data.</p>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<div id="toast-host"></div>
+
+<script>
+// ============================================================
+// DATA
+// ============================================================
+
+// Real elite-pacing ratios derived from World Aquatics competition data
+// (Olympics + World Championships, ~24 elite swims per event).
+// Built by build_ratios.py from the ratio CSVs in swimming_raw_data_scrappingApril2026.
+// Shape: ratios[stroke][sex][pool][distance] = { median, q25, q75, n, pb50Ratio? }
+//   median[] = each segment's share of total race time (per 50m; per 25m for the 50)
+//              medians sum to 1.0. q25/q75 = the IQR band for that segment.
+//   n = number of elite swims behind the medians. pb50Ratio x target = the 50 PB the
+//       target implicitly demands (used for the top-end-speed limiter check).
+// To refresh with new data, re-run build_ratios.py and paste its ratios.js output here.
+const ratios = {
+  Back: {
+    F: {
+      SCM: {
+        "50": {
+          median: [0.492857, 0.507143],
+          q25: [0.489481, 0.50376],
+          q75: [0.49624, 0.510519],
+          n: 24
+        },
+        "100": {
+          median: [0.483407, 0.516593],
+          q25: [0.480795, 0.514084],
+          q75: [0.485916, 0.519205],
+          n: 24,
+          pb50Ratio: 0.463594,
+          pb50Q25: 0.457149,
+          pb50Q75: 0.466606
+        },
+        "200": {
+          median: [0.234941, 0.253079, 0.256767, 0.255212],
+          q25: [0.233156, 0.251085, 0.255589, 0.253086],
+          q75: [0.236748, 0.254512, 0.258143, 0.257482],
+          n: 24,
+          pb50Ratio: 0.215046,
+          pb50Q25: 0.212538,
+          pb50Q75: 0.216433
+        }
+      },
+      LCM: {
+        "100": {
+          median: [0.483471, 0.516529],
+          q25: [0.481372, 0.514973],
+          q75: [0.485027, 0.518628],
+          n: 24,
+          pb50Ratio: 0.459634,
+          pb50Q25: 0.445283,
+          pb50Q75: 0.469264
+        },
+        "200": {
+          median: [0.234534, 0.251375, 0.255658, 0.258434],
+          q25: [0.232089, 0.249738, 0.253768, 0.254273],
+          q75: [0.236509, 0.252511, 0.257255, 0.261412],
+          n: 24,
+          pb50Ratio: 0.218378,
+          pb50Q25: 0.216286,
+          pb50Q75: 0.223973
+        }
+      }
+    },
+    M: {
+      SCM: {
+        "50": {
+          median: [0.49011, 0.50989],
+          q25: [0.487554, 0.507108],
+          q75: [0.492892, 0.512446],
+          n: 24
+        },
+        "100": {
+          median: [0.48179, 0.51821],
+          q25: [0.479404, 0.516627],
+          q75: [0.483373, 0.520596],
+          n: 24,
+          pb50Ratio: 0.461956,
+          pb50Q25: 0.457004,
+          pb50Q75: 0.466775
+        },
+        "200": {
+          median: [0.234598, 0.254189, 0.256308, 0.254905],
+          q25: [0.23268, 0.252768, 0.254265, 0.251942],
+          q75: [0.236965, 0.255737, 0.257931, 0.258102],
+          n: 24,
+          pb50Ratio: 0.213125,
+          pb50Q25: 0.209835,
+          pb50Q75: 0.215904
+        }
+      },
+      LCM: {
+        "100": {
+          median: [0.481828, 0.518172],
+          q25: [0.478538, 0.514788],
+          q75: [0.485212, 0.521462],
+          n: 24,
+          pb50Ratio: 0.4529,
+          pb50Q25: 0.445292,
+          pb50Q75: 0.461767
+        },
+        "200": {
+          median: [0.233923, 0.252862, 0.257078, 0.256137],
+          q25: [0.231883, 0.251549, 0.255486, 0.253855],
+          q75: [0.236337, 0.254346, 0.258839, 0.259435],
+          n: 24,
+          pb50Ratio: 0.211582,
+          pb50Q25: 0.208135,
+          pb50Q75: 0.215863
+        }
+      }
+    }
+  },
+  Breast: {
+    F: {
+      SCM: {
+        "50": {
+          median: [0.457587, 0.542413],
+          q25: [0.45453, 0.539942],
+          q75: [0.460058, 0.54547],
+          n: 24
+        },
+        "100": {
+          median: [0.470321, 0.529679],
+          q25: [0.46827, 0.527952],
+          q75: [0.472048, 0.53173],
+          n: 23,
+          pb50Ratio: 0.464137,
+          pb50Q25: 0.460215,
+          pb50Q75: 0.467324
+        },
+        "200": {
+          median: [0.227475, 0.252794, 0.257995, 0.261736],
+          q25: [0.226166, 0.251834, 0.257423, 0.260983],
+          q75: [0.228267, 0.253621, 0.258654, 0.263447],
+          n: 24,
+          pb50Ratio: 0.218521,
+          pb50Q25: 0.214785,
+          pb50Q75: 0.220882
+        }
+      },
+      LCM: {
+        "100": {
+          median: [0.466271, 0.533729],
+          q25: [0.464545, 0.530885],
+          q75: [0.469115, 0.535455],
+          n: 24,
+          pb50Ratio: 0.453153,
+          pb50Q25: 0.44956,
+          pb50Q75: 0.457159
+        },
+        "200": {
+          median: [0.227321, 0.253849, 0.257009, 0.261821],
+          q25: [0.225489, 0.252231, 0.256024, 0.260978],
+          q75: [0.228229, 0.25489, 0.257594, 0.26384],
+          n: 24,
+          pb50Ratio: 0.214084,
+          pb50Q25: 0.210881,
+          pb50Q75: 0.21764
+        }
+      }
+    },
+    M: {
+      SCM: {
+        "50": {
+          median: [0.452046, 0.547954],
+          q25: [0.450235, 0.545886],
+          q75: [0.454114, 0.549765],
+          n: 24
+        },
+        "100": {
+          median: [0.466848, 0.533152],
+          q25: [0.465657, 0.53052],
+          q75: [0.46948, 0.534343],
+          n: 24,
+          pb50Ratio: 0.457345,
+          pb50Q25: 0.45372,
+          pb50Q75: 0.460456
+        },
+        "200": {
+          median: [0.225157, 0.252924, 0.258947, 0.262971],
+          q25: [0.223113, 0.251198, 0.257811, 0.261473],
+          q75: [0.227334, 0.254256, 0.259987, 0.265427],
+          n: 24,
+          pb50Ratio: 0.214919,
+          pb50Q25: 0.209058,
+          pb50Q75: 0.219375
+        }
+      },
+      LCM: {
+        "100": {
+          median: [0.464237, 0.535763],
+          q25: [0.4626, 0.532848],
+          q75: [0.467152, 0.5374],
+          n: 24,
+          pb50Ratio: 0.449041,
+          pb50Q25: 0.440059,
+          pb50Q75: 0.454387
+        },
+        "200": {
+          median: [0.225746, 0.25422, 0.258622, 0.261411],
+          q25: [0.223857, 0.250735, 0.256738, 0.25964],
+          q75: [0.227519, 0.256567, 0.260633, 0.265291],
+          n: 24,
+          pb50Ratio: 0.213142,
+          pb50Q25: 0.209889,
+          pb50Q75: 0.217443
+        }
+      }
+    }
+  },
+  Fly: {
+    F: {
+      SCM: {
+        "50": {
+          median: [0.458264, 0.541736],
+          q25: [0.457119, 0.538298],
+          q75: [0.461702, 0.542881],
+          n: 24
+        },
+        "100": {
+          median: [0.46463, 0.53537],
+          q25: [0.461174, 0.531856],
+          q75: [0.468144, 0.538826],
+          n: 24,
+          pb50Ratio: 0.449541,
+          pb50Q25: 0.445813,
+          pb50Q75: 0.455133
+        },
+        "200": {
+          median: [0.224559, 0.251786, 0.25807, 0.265584],
+          q25: [0.222174, 0.25015, 0.256895, 0.260511],
+          q75: [0.226909, 0.254324, 0.25947, 0.267395],
+          n: 24,
+          pb50Ratio: 0.213426,
+          pb50Q25: 0.208306,
+          pb50Q75: 0.217404
+        }
+      },
+      LCM: {
+        "100": {
+          median: [0.461781, 0.538219],
+          q25: [0.459517, 0.535997],
+          q75: [0.464003, 0.540483],
+          n: 24,
+          pb50Ratio: 0.448304,
+          pb50Q25: 0.443705,
+          pb50Q75: 0.451986
+        },
+        "200": {
+          median: [0.223401, 0.252192, 0.2588, 0.265607],
+          q25: [0.222192, 0.25159, 0.256717, 0.261854],
+          q75: [0.226216, 0.25518, 0.261296, 0.268358],
+          n: 24,
+          pb50Ratio: 0.209831,
+          pb50Q25: 0.206078,
+          pb50Q75: 0.213351
+        }
+      }
+    },
+    M: {
+      SCM: {
+        "50": {
+          median: [0.455649, 0.544351],
+          q25: [0.450824, 0.540705],
+          q75: [0.459295, 0.549176],
+          n: 24
+        },
+        "100": {
+          median: [0.464287, 0.535713],
+          q25: [0.462208, 0.533625],
+          q75: [0.466375, 0.537792],
+          n: 24,
+          pb50Ratio: 0.454498,
+          pb50Q25: 0.448101,
+          pb50Q75: 0.456548
+        },
+        "200": {
+          median: [0.224104, 0.253952, 0.258732, 0.263212],
+          q25: [0.222813, 0.252346, 0.257521, 0.26182],
+          q75: [0.225394, 0.255165, 0.260148, 0.266691],
+          n: 24,
+          pb50Ratio: 0.209918,
+          pb50Q25: 0.202336,
+          pb50Q75: 0.21753
+        }
+      },
+      LCM: {
+        "100": {
+          median: [0.46541, 0.53459],
+          q25: [0.463038, 0.530958],
+          q75: [0.469042, 0.536962],
+          n: 24,
+          pb50Ratio: 0.449893,
+          pb50Q25: 0.44065,
+          pb50Q75: 0.456432
+        },
+        "200": {
+          median: [0.221923, 0.252566, 0.259022, 0.266489],
+          q25: [0.219873, 0.250666, 0.258237, 0.263232],
+          q75: [0.223752, 0.255242, 0.260565, 0.269296],
+          n: 24,
+          pb50Ratio: 0.209095,
+          pb50Q25: 0.203864,
+          pb50Q75: 0.215665
+        }
+      }
+    }
+  },
+  Free: {
+    F: {
+      SCM: {
+        "50": {
+          median: [0.485082, 0.514918],
+          q25: [0.483021, 0.512802],
+          q75: [0.487198, 0.516979],
+          n: 24
+        },
+        "100": {
+          median: [0.479933, 0.520067],
+          q25: [0.477484, 0.518324],
+          q75: [0.481676, 0.522516],
+          n: 24,
+          pb50Ratio: 0.459492,
+          pb50Q25: 0.454228,
+          pb50Q75: 0.464667
+        },
+        "200": {
+          median: [0.234141, 0.253615, 0.256825, 0.255419],
+          q25: [0.233148, 0.252567, 0.255573, 0.254744],
+          q75: [0.23603, 0.254579, 0.257426, 0.258596],
+          n: 24,
+          pb50Ratio: 0.220372,
+          pb50Q25: 0.214612,
+          pb50Q75: 0.228374
+        },
+        "400": {
+          median: [0.115235, 0.126689, 0.126689, 0.126689, 0.126689, 0.126689, 0.126689, 0.124634],
+          q25: [0.114253, 0.126521, 0.126521, 0.126521, 0.126521, 0.126521, 0.126521, 0.123668],
+          q75: [0.11646, 0.126846, 0.126846, 0.126846, 0.126846, 0.126846, 0.126846, 0.125702],
+          n: 23,
+          pb50Ratio: 0.107778,
+          pb50Q25: 0.10523,
+          pb50Q75: 0.109411
+        },
+        "800": {
+          median: [0.057154, 0.062958, 0.062958, 0.062958, 0.062958, 0.062958, 0.062958, 0.062958, 0.062958, 0.062958, 0.062958, 0.062958, 0.062958, 0.062958, 0.062197, 0.062197],
+          q25: [0.056681, 0.062899, 0.062899, 0.062899, 0.062899, 0.062899, 0.062899, 0.062899, 0.062899, 0.062899, 0.062899, 0.062899, 0.062899, 0.062899, 0.061508, 0.061508],
+          q75: [0.057616, 0.06307, 0.06307, 0.06307, 0.06307, 0.06307, 0.06307, 0.06307, 0.06307, 0.06307, 0.06307, 0.06307, 0.06307, 0.06307, 0.062802, 0.062802],
+          n: 23,
+          pb50Ratio: 0.052898,
+          pb50Q25: 0.052459,
+          pb50Q75: 0.053394
+        },
+        "1500": {
+          median: [0.030538, 0.03346, 0.03346, 0.03346, 0.03346, 0.03346, 0.03346, 0.03346, 0.03346, 0.03346, 0.03346, 0.03346, 0.03346, 0.03346, 0.03346, 0.03346, 0.03346, 0.03346, 0.03346, 0.03346, 0.03346, 0.03346, 0.03346, 0.03346, 0.03346, 0.03346, 0.03346, 0.03346, 0.033014, 0.033014],
+          q25: [0.030241, 0.03344, 0.03344, 0.03344, 0.03344, 0.03344, 0.03344, 0.03344, 0.03344, 0.03344, 0.03344, 0.03344, 0.03344, 0.03344, 0.03344, 0.03344, 0.03344, 0.03344, 0.03344, 0.03344, 0.03344, 0.03344, 0.03344, 0.03344, 0.03344, 0.03344, 0.03344, 0.03344, 0.032722, 0.032722],
+          q75: [0.031067, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033356, 0.033356],
+          n: 16,
+          pb50Ratio: 0.028013,
+          pb50Q25: 0.027821,
+          pb50Q75: 0.02792
+        }
+      },
+      LCM: {
+        "100": {
+          median: [0.480169, 0.519831],
+          q25: [0.478504, 0.51766],
+          q75: [0.48234, 0.521496],
+          n: 24,
+          pb50Ratio: 0.455307,
+          pb50Q25: 0.451029,
+          pb50Q75: 0.463642
+        },
+        "200": {
+          median: [0.236165, 0.253215, 0.255915, 0.254705],
+          q25: [0.233433, 0.252634, 0.254595, 0.251491],
+          q75: [0.237613, 0.254345, 0.25726, 0.256463],
+          n: 24,
+          pb50Ratio: 0.218658,
+          pb50Q25: 0.211743,
+          pb50Q75: 0.226365
+        },
+        "400": {
+          median: [0.115224, 0.126656, 0.126656, 0.126656, 0.126656, 0.126656, 0.126656, 0.124839],
+          q25: [0.114816, 0.126355, 0.126355, 0.126355, 0.126355, 0.126355, 0.126355, 0.123035],
+          q75: [0.115834, 0.126997, 0.126997, 0.126997, 0.126997, 0.126997, 0.126997, 0.126601],
+          n: 24,
+          pb50Ratio: 0.107532,
+          pb50Q25: 0.106248,
+          pb50Q75: 0.109316
+        },
+        "800": {
+          median: [0.057277, 0.062984, 0.062984, 0.062984, 0.062984, 0.062984, 0.062984, 0.062984, 0.062984, 0.062984, 0.062984, 0.062984, 0.062984, 0.062984, 0.061966, 0.061966],
+          q25: [0.056719, 0.062859, 0.062859, 0.062859, 0.062859, 0.062859, 0.062859, 0.062859, 0.062859, 0.062859, 0.062859, 0.062859, 0.062859, 0.062859, 0.061536, 0.061536],
+          q75: [0.057898, 0.063098, 0.063098, 0.063098, 0.063098, 0.063098, 0.063098, 0.063098, 0.063098, 0.063098, 0.063098, 0.063098, 0.063098, 0.063098, 0.06245, 0.06245],
+          n: 24,
+          pb50Ratio: 0.052438,
+          pb50Q25: 0.051872,
+          pb50Q75: 0.052986
+        },
+        "1500": {
+          median: [0.030521, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.033476, 0.032809, 0.032809],
+          q25: [0.030269, 0.033457, 0.033457, 0.033457, 0.033457, 0.033457, 0.033457, 0.033457, 0.033457, 0.033457, 0.033457, 0.033457, 0.033457, 0.033457, 0.033457, 0.033457, 0.033457, 0.033457, 0.033457, 0.033457, 0.033457, 0.033457, 0.033457, 0.033457, 0.033457, 0.033457, 0.033457, 0.033457, 0.03256, 0.03256],
+          q75: [0.030756, 0.03349, 0.03349, 0.03349, 0.03349, 0.03349, 0.03349, 0.03349, 0.03349, 0.03349, 0.03349, 0.03349, 0.03349, 0.03349, 0.03349, 0.03349, 0.03349, 0.03349, 0.03349, 0.03349, 0.03349, 0.03349, 0.03349, 0.03349, 0.03349, 0.03349, 0.03349, 0.03349, 0.033082, 0.033082],
+          n: 24,
+          pb50Ratio: 0.027832,
+          pb50Q25: 0.027123,
+          pb50Q75: 0.028531
+        }
+      }
+    },
+    M: {
+      SCM: {
+        "50": {
+          median: [0.480298, 0.519702],
+          q25: [0.47718, 0.51627],
+          q75: [0.48373, 0.52282],
+          n: 24
+        },
+        "100": {
+          median: [0.477534, 0.522466],
+          q25: [0.476102, 0.51934],
+          q75: [0.48066, 0.523898],
+          n: 24,
+          pb50Ratio: 0.460519,
+          pb50Q25: 0.452428,
+          pb50Q75: 0.462675
+        },
+        "200": {
+          median: [0.23244, 0.253262, 0.257594, 0.256704],
+          q25: [0.231516, 0.25262, 0.256108, 0.255425],
+          q75: [0.233472, 0.254069, 0.257995, 0.257958],
+          n: 24,
+          pb50Ratio: 0.219029,
+          pb50Q25: 0.214307,
+          pb50Q75: 0.225603
+        },
+        "400": {
+          median: [0.114375, 0.126854, 0.126854, 0.126854, 0.126854, 0.126854, 0.126854, 0.124501],
+          q25: [0.113841, 0.126583, 0.126583, 0.126583, 0.126583, 0.126583, 0.126583, 0.122673],
+          q75: [0.11504, 0.127072, 0.127072, 0.127072, 0.127072, 0.127072, 0.127072, 0.126],
+          n: 24,
+          pb50Ratio: 0.105308,
+          pb50Q25: 0.102749,
+          pb50Q75: 0.106742
+        },
+        "800": {
+          median: [0.057447, 0.062982, 0.062982, 0.062982, 0.062982, 0.062982, 0.062982, 0.062982, 0.062982, 0.062982, 0.062982, 0.062982, 0.062982, 0.062982, 0.061897, 0.061897],
+          q25: [0.056801, 0.062911, 0.062911, 0.062911, 0.062911, 0.062911, 0.062911, 0.062911, 0.062911, 0.062911, 0.062911, 0.062911, 0.062911, 0.062911, 0.061352, 0.061352],
+          q75: [0.057894, 0.06304, 0.06304, 0.06304, 0.06304, 0.06304, 0.06304, 0.06304, 0.06304, 0.06304, 0.06304, 0.06304, 0.06304, 0.06304, 0.062549, 0.062549],
+          n: 16
+        },
+        "1500": {
+          median: [0.030212, 0.033488, 0.033488, 0.033488, 0.033488, 0.033488, 0.033488, 0.033488, 0.033488, 0.033488, 0.033488, 0.033488, 0.033488, 0.033488, 0.033488, 0.033488, 0.033488, 0.033488, 0.033488, 0.033488, 0.033488, 0.033488, 0.033488, 0.033488, 0.033488, 0.033488, 0.033488, 0.033488, 0.032804, 0.032804],
+          q25: [0.029809, 0.033459, 0.033459, 0.033459, 0.033459, 0.033459, 0.033459, 0.033459, 0.033459, 0.033459, 0.033459, 0.033459, 0.033459, 0.033459, 0.033459, 0.033459, 0.033459, 0.033459, 0.033459, 0.033459, 0.033459, 0.033459, 0.033459, 0.033459, 0.033459, 0.033459, 0.033459, 0.033459, 0.032455, 0.032455],
+          q75: [0.030456, 0.033521, 0.033521, 0.033521, 0.033521, 0.033521, 0.033521, 0.033521, 0.033521, 0.033521, 0.033521, 0.033521, 0.033521, 0.033521, 0.033521, 0.033521, 0.033521, 0.033521, 0.033521, 0.033521, 0.033521, 0.033521, 0.033521, 0.033521, 0.033521, 0.033521, 0.033521, 0.033521, 0.033139, 0.033139],
+          n: 23,
+          pb50Ratio: 0.028868,
+          pb50Q25: 0.02884,
+          pb50Q75: 0.029048
+        }
+      },
+      LCM: {
+        "100": {
+          median: [0.478939, 0.521061],
+          q25: [0.47521, 0.517715],
+          q75: [0.482285, 0.52479],
+          n: 24,
+          pb50Ratio: 0.453522,
+          pb50Q25: 0.445321,
+          pb50Q75: 0.460715
+        },
+        "200": {
+          median: [0.232342, 0.25429, 0.256622, 0.256746],
+          q25: [0.230121, 0.25199, 0.255504, 0.25543],
+          q75: [0.23388, 0.255191, 0.257731, 0.260154],
+          n: 24,
+          pb50Ratio: 0.214658,
+          pb50Q25: 0.208868,
+          pb50Q75: 0.219459
+        },
+        "400": {
+          median: [0.114419, 0.126891, 0.126891, 0.126891, 0.126891, 0.126891, 0.126891, 0.124235],
+          q25: [0.113102, 0.126678, 0.126678, 0.126678, 0.126678, 0.126678, 0.126678, 0.122566],
+          q75: [0.115876, 0.127134, 0.127134, 0.127134, 0.127134, 0.127134, 0.127134, 0.12615],
+          n: 24,
+          pb50Ratio: 0.106938,
+          pb50Q25: 0.104053,
+          pb50Q75: 0.109464
+        },
+        "800": {
+          median: [0.057054, 0.063069, 0.063069, 0.063069, 0.063069, 0.063069, 0.063069, 0.063069, 0.063069, 0.063069, 0.063069, 0.063069, 0.063069, 0.063069, 0.061523, 0.061523],
+          q25: [0.056232, 0.06297, 0.06297, 0.06297, 0.06297, 0.06297, 0.06297, 0.06297, 0.06297, 0.06297, 0.06297, 0.06297, 0.06297, 0.06297, 0.060757, 0.060757],
+          q75: [0.057802, 0.063176, 0.063176, 0.063176, 0.063176, 0.063176, 0.063176, 0.063176, 0.063176, 0.063176, 0.063176, 0.063176, 0.063176, 0.063176, 0.062372, 0.062372],
+          n: 24,
+          pb50Ratio: 0.052187,
+          pb50Q25: 0.050933,
+          pb50Q75: 0.054293
+        },
+        "1500": {
+          median: [0.030709, 0.033501, 0.033501, 0.033501, 0.033501, 0.033501, 0.033501, 0.033501, 0.033501, 0.033501, 0.033501, 0.033501, 0.033501, 0.033501, 0.033501, 0.033501, 0.033501, 0.033501, 0.033501, 0.033501, 0.033501, 0.033501, 0.033501, 0.033501, 0.033501, 0.033501, 0.033501, 0.033501, 0.032381, 0.032381],
+          q25: [0.03046, 0.033451, 0.033451, 0.033451, 0.033451, 0.033451, 0.033451, 0.033451, 0.033451, 0.033451, 0.033451, 0.033451, 0.033451, 0.033451, 0.033451, 0.033451, 0.033451, 0.033451, 0.033451, 0.033451, 0.033451, 0.033451, 0.033451, 0.033451, 0.033451, 0.033451, 0.033451, 0.033451, 0.031751, 0.031751],
+          q75: [0.031022, 0.033544, 0.033544, 0.033544, 0.033544, 0.033544, 0.033544, 0.033544, 0.033544, 0.033544, 0.033544, 0.033544, 0.033544, 0.033544, 0.033544, 0.033544, 0.033544, 0.033544, 0.033544, 0.033544, 0.033544, 0.033544, 0.033544, 0.033544, 0.033544, 0.033544, 0.033544, 0.033544, 0.033069, 0.033069],
+          n: 24,
+          pb50Ratio: 0.028283,
+          pb50Q25: 0.028367,
+          pb50Q75: 0.02882
+        }
+      }
+    }
+  },
+  IM: {
+    F: {
+      LCM: {
+        "200": {
+          median: [0.213359, 0.25569, 0.290949, 0.240002],
+          q25: [0.211775, 0.253135, 0.287552, 0.236953],
+          q75: [0.214817, 0.256138, 0.294768, 0.242214],
+          n: 22
+        },
+        "400": {
+          median: [0.105314, 0.120547, 0.128129, 0.125689, 0.143622, 0.146811, 0.116832, 0.113056],
+          q25: [0.104321, 0.119083, 0.126942, 0.123978, 0.141855, 0.144683, 0.11534, 0.111024],
+          q75: [0.106483, 0.121518, 0.129427, 0.127154, 0.145627, 0.147844, 0.118556, 0.114463],
+          n: 24
+        }
+      },
+      SCM: {
+        "200": {
+          median: [0.216412, 0.251437, 0.29115, 0.241001],
+          q25: [0.213954, 0.2476, 0.289355, 0.23702],
+          q75: [0.219291, 0.253454, 0.29305, 0.244633],
+          n: 24
+        },
+        "400": {
+          median: [0.106534, 0.12202, 0.128454, 0.126471, 0.141436, 0.143661, 0.117992, 0.113432],
+          q25: [0.105706, 0.120366, 0.127042, 0.125471, 0.138747, 0.142594, 0.116079, 0.110928],
+          q75: [0.107677, 0.122845, 0.130156, 0.127421, 0.143212, 0.145273, 0.119723, 0.115413],
+          n: 24
+        }
+      }
+    },
+    M: {
+      LCM: {
+        "200": {
+          median: [0.213867, 0.252764, 0.290859, 0.24251],
+          q25: [0.212068, 0.250735, 0.287803, 0.239898],
+          q75: [0.215745, 0.254647, 0.293509, 0.245991],
+          n: 24
+        },
+        "400": {
+          median: [0.104004, 0.120125, 0.129992, 0.128094, 0.141034, 0.143339, 0.118908, 0.114504],
+          q25: [0.102615, 0.118721, 0.128613, 0.126693, 0.139522, 0.142137, 0.117084, 0.112056],
+          q75: [0.105533, 0.121367, 0.131381, 0.129504, 0.142021, 0.144704, 0.120412, 0.116399],
+          n: 24
+        }
+      },
+      SCM: {
+        "200": {
+          median: [0.216058, 0.250015, 0.290241, 0.243686],
+          q25: [0.214949, 0.247588, 0.287435, 0.24158],
+          q75: [0.217936, 0.252685, 0.292542, 0.24547],
+          n: 24
+        },
+        "400": {
+          median: [0.105665, 0.121507, 0.128502, 0.126486, 0.140717, 0.143051, 0.1194, 0.114672],
+          q25: [0.104648, 0.119892, 0.127506, 0.125449, 0.138969, 0.141942, 0.117953, 0.112474],
+          q75: [0.106461, 0.122094, 0.129586, 0.127896, 0.142007, 0.145054, 0.121442, 0.11625],
+          n: 24
+        }
+      }
+    }
+  }
+};
+
+// IM segment labels (200/400 IM)
+const imLabels = {
+  200: ['Fly', 'Back', 'Breast', 'Free'],
+  400: ['Fly · 1st 50', 'Fly · 2nd 50', 'Back · 1st 50', 'Back · 2nd 50', 'Breast · 1st 50', 'Breast · 2nd 50', 'Free · 1st 50', 'Free · 2nd 50'],
+};
+
+// Roster — sample swimmers with stored PBs (including 50 PBs for the limiter analysis)
+const swimmers = [
+  { id: 'qp', name: 'Quinn Patterson', sex: 'M', initials: 'QP',
+    bestEvent: { stroke: 'Free', distance: 400, pool: 'LCM', time: 228.49 }, // 3:48.49
+    pb50: { Free: 23.45 } },
+  { id: 'to', name: "Tegan O'Neill", sex: 'F', initials: 'TO',
+    bestEvent: { stroke: 'Back', distance: 100, pool: 'LCM', time: 62.10 },
+    pb50: { Back: 28.50 } },
+  { id: 'nl', name: 'Nate Lin', sex: 'M', initials: 'NL',
+    bestEvent: { stroke: 'Breast', distance: 200, pool: 'LCM', time: 128.12 },
+    pb50: { Breast: 27.95 } },
+  { id: 'br', name: 'Ben Russo', sex: 'M', initials: 'BR',
+    bestEvent: { stroke: 'Fly', distance: 100, pool: 'LCM', time: 55.41 },
+    pb50: { Fly: 25.90 } },
+  { id: 'kt', name: 'Kylie Tran', sex: 'F', initials: 'KT',
+    bestEvent: { stroke: 'Back', distance: 200, pool: 'LCM', time: 129.78 },
+    pb50: { Back: 28.90 } },
+  { id: 'jm', name: 'Jordan Mehta', sex: 'M', initials: 'JM',
+    bestEvent: { stroke: 'IM', distance: 200, pool: 'LCM', time: 118.04 },
+    pb50: { Free: 23.80 } },
+  { id: 'sk', name: 'Sara Kowalski', sex: 'F', initials: 'SK',
+    bestEvent: { stroke: 'Free', distance: 400, pool: 'LCM', time: 248.55 },
+    pb50: { Free: 27.50 } },
+];
+
+// Pre-built race for the analysis screen
+const sampleRace = {
+  swimmerId: 'qp',
+  stroke: 'Free', distance: 400, pool: 'LCM', sex: 'M',
+  targetSeconds: 228.0, // 3:48.00
+  actualSplits: [26.10, 28.62, 28.95, 29.10, 29.35, 29.85, 30.20, 29.03],
+  date: 'Apr 6',
+};
+
+// ============================================================
+// UTILITIES
+// ============================================================
+
+function formatTime(seconds, opts = {}) {
+  if (seconds == null || isNaN(seconds)) return '—';
+  const precision = opts.precision ?? 2;
+  const m = Math.floor(seconds / 60);
+  const s = seconds - m * 60;
+  if (m === 0 && !opts.forceMin) return s.toFixed(precision);
+  // SS or SS.ss — width = 2 integer digits + (decimal + precision) if precision > 0
+  const width = precision > 0 ? 3 + precision : 2;
+  return `${m}:${s.toFixed(precision).padStart(width, '0')}`;
+}
+
+function parseTime(str) {
+  if (str == null) return null;
+  str = String(str).trim();
+  const colon = str.indexOf(':');
+  if (colon === -1) {
+    const v = parseFloat(str);
+    return isNaN(v) ? null : v;
+  }
+  const m = parseInt(str.slice(0, colon), 10);
+  const s = parseFloat(str.slice(colon + 1));
+  if (isNaN(m) || isNaN(s)) return null;
+  return m * 60 + s;
+}
+
+function getRatios(stroke, sex, pool, distance) {
+  return ratios?.[stroke]?.[sex]?.[pool]?.[distance] ?? null;
+}
+
+function predict(stroke, sex, pool, distance, targetSeconds) {
+  const r = getRatios(stroke, sex, pool, distance);
+  if (!r) return null;
+  // Defensive renormalisation so the predicted splits sum to exactly the target.
+  const sum = r.median.reduce((a, b) => a + b, 0);
+  const k = sum ? 1 / sum : 1;
+  return {
+    splits: r.median.map(x => x * k * targetSeconds),
+    lo: r.q25.map(x => x * k * targetSeconds),
+    hi: r.q75.map(x => x * k * targetSeconds),
+    pb50: r.pb50Ratio ? r.pb50Ratio * targetSeconds : null,
+    pb50Lo: r.pb50Q25 ? r.pb50Q25 * targetSeconds : null,
+    pb50Hi: r.pb50Q75 ? r.pb50Q75 * targetSeconds : null,
+    n: r.n ?? null,
+    segLen: distance === 50 ? 25 : 50,
+    targetSeconds,
+    stroke, sex, pool, distance,
+  };
+}
+
+function classifySplit(actual, lo, hi) {
+  if (actual < lo - 0.01) return 'too-fast';
+  if (actual > hi + 0.01) return 'too-slow';
+  return 'in-range';
+}
+
+function generateInsights(prediction, actualSplits, swimmer) {
+  const insights = [];
+  const classes = actualSplits.map((a, i) => classifySplit(a, prediction.lo[i], prediction.hi[i]));
+  const firstFast = classes[0] === 'too-fast';
+  const lastTwoSlow = classes.length >= 2 &&
+    classes.slice(-2).every(c => c === 'too-slow');
+  const anyLaterSlow = classes.slice(1).some(c => c === 'too-slow');
+  const allInRange = classes.every(c => c === 'in-range');
+
+  if (firstFast && anyLaterSlow) {
+    insights.push({
+      tone: 'amber', icon: '⚡', title: 'Went out too hard',
+      body: `You opened ${(prediction.splits[0] - actualSplits[0]).toFixed(2)}s under predicted pace, then paid for it the rest of the race.`,
+      action: 'Try the next attempt with a controlled opening — sit within the predicted range for the first 50.',
+    });
+  }
+
+  if (lastTwoSlow) {
+    const fade = (actualSplits.slice(-2).reduce((a, b) => a + b, 0) -
+                  prediction.splits.slice(-2).reduce((a, b) => a + b, 0));
+    insights.push({
+      tone: 'rose', icon: '🔻', title: 'Back-end fade',
+      body: `Your last two splits were +${fade.toFixed(2)}s vs predicted. The drop-off is bigger than pacing alone — points to aerobic endurance, not just race discipline.`,
+      action: 'Aerobic threshold sets, broken 200s on short rest.',
+    });
+  }
+
+  if (allInRange) {
+    insights.push({
+      tone: 'emerald', icon: '✓', title: 'Well-paced race',
+      body: 'Every split landed inside the predicted range. Distribution matched elite pacing — strong execution.',
+    });
+  }
+
+  // Top-end speed limiter — only relevant to short events with pb50
+  if (prediction.pb50 && swimmer && swimmer.pb50) {
+    const knownPB = swimmer.pb50[prediction.stroke];
+    if (knownPB && knownPB > prediction.pb50 + 0.3) {
+      insights.push({
+        tone: 'amber', icon: '⚠', title: 'Top-end speed is the limiter',
+        body: `To go this time, the math wants a ${prediction.pb50.toFixed(1)}s opening 50 — but your 50 PB is ${knownPB.toFixed(2)}s. The opening won't be there without faster top-end speed.`,
+        action: 'Sprint work — dive-15s, broken 25s, race-pace overspeed.',
+      });
+    }
+  }
+
+  return insights;
+}
+
+// ============================================================
+// STATE
+// ============================================================
+
+const state = {
+  view: 'roster',
+  history: [],
+  swimmer: null, // active swimmer if any
+  form: {
+    stroke: 'Free', sex: 'M', pool: 'LCM', distance: 200,
+    targetSeconds: 120,
+  },
+  result: null, // last computed prediction
+  race: null,   // active race being analyzed
+  splitView: '100', // distance events (400+): show '50' or '100' checkpoints
+};
+
+function navigate(view, opts = {}) {
+  const { skipHistory, ...rest } = opts;
+  if (!skipHistory && state.view !== view) state.history.push(state.view);
+  state.view = view;
+  Object.assign(state, rest);
+  render();
+}
+
+function back() {
+  if (state.history.length === 0) return navigate('roster');
+  state.view = state.history.pop();
+  render();
+}
+
+function showToast(msg) {
+  const host = document.getElementById('toast-host');
+  const t = document.createElement('div');
+  t.className = 'toast'; t.textContent = msg;
+  host.appendChild(t);
+  setTimeout(() => t.remove(), 2200);
+}
+
+// ============================================================
+// RENDER
+// ============================================================
+
+const screenLabels = {
+  roster: { num: 1, label: 'Roster' },
+  'quick-calc': { num: 2, label: 'Calculator input' },
+  'predicted-splits': { num: 3, label: 'Predicted splits' },
+  'race-analysis': { num: 4, label: 'Race analysis' },
+  'squad-targets': { num: 5, label: 'Squad targets' },
+  'swimmer-detail': { num: null, label: 'Swimmer detail' },
+};
+
+function renderJumper() {
+  const host = document.getElementById('jumper');
+  const items = [
+    ['roster', 'Roster'],
+    ['quick-calc', 'Calculator'],
+    ['predicted-splits', 'Predicted splits'],
+    ['race-analysis', 'Race analysis'],
+    ['squad-targets', 'Squad targets'],
+  ];
+  host.innerHTML = items.map(([key, label], i) => `
+    <button data-view="${key}" class="jumper-btn w-full text-left px-3 py-2 text-sm rounded-lg flex items-center gap-2 transition ${state.view === key ? 'bg-cyan-50 text-cyan-800 font-semibold' : 'hover:bg-slate-200 text-slate-600'}">
+      <span class="w-5 text-xs ${state.view === key ? 'text-cyan-600' : 'text-slate-400'}">${i + 1}</span>
+      <span>${label}</span>
+    </button>
+  `).join('');
+}
+
+function render() {
+  const host = document.getElementById('screen-container');
+  let html = '';
+  switch (state.view) {
+    case 'roster': html = renderRoster(); break;
+    case 'swimmer-detail': html = renderSwimmerDetail(); break;
+    case 'quick-calc': html = renderQuickCalc(); break;
+    case 'predicted-splits': html = renderPredictedSplits(); break;
+    case 'race-analysis': html = renderRaceAnalysis(); break;
+    case 'squad-targets': html = renderSquadTargets(); break;
+    default: html = '<div class="p-8 text-slate-500">Unknown view</div>';
+  }
+  host.innerHTML = html;
+  renderJumper();
+  // Re-bind input event for time field if present
+  const ti = host.querySelector('[data-time-input]');
+  if (ti) {
+    ti.addEventListener('input', () => {
+      const v = parseTime(ti.value);
+      if (v != null) state.form.targetSeconds = v;
+    });
+    ti.addEventListener('blur', () => {
+      ti.value = formatTime(state.form.targetSeconds);
+    });
+  }
+  // On the predicted-splits screen the target is editable inline — recompute splits on commit.
+  const tedit = host.querySelector('[data-target-edit]');
+  if (tedit) {
+    const commit = () => {
+      const v = parseTime(tedit.value);
+      if (v != null && state.result) {
+        const r = state.result;
+        state.form.targetSeconds = v;
+        state.result = predict(r.stroke, r.sex, r.pool, r.distance, v);
+        render();
+      }
+    };
+    tedit.addEventListener('blur', commit);
+    tedit.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); tedit.blur(); } });
+  }
+}
+
+// ----- Screen 1: Roster -----
+function renderRoster() {
+  const rows = swimmers.map(s => `
+    <div class="px-3 py-4 flex items-center gap-3 clickable rounded-xl" data-swimmer="${s.id}" style="min-height: 64px;">
+      <div class="w-11 h-11 rounded-full bg-cyan-50 text-cyan-800 font-bold flex items-center justify-center text-sm flex-shrink-0">${s.initials}</div>
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2">
+          <span class="font-semibold text-base">${s.name}</span>
+          <span class="text-[10px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">${s.sex}</span>
+        </div>
+        <div class="text-xs text-muted mt-0.5">${s.bestEvent.distance} ${s.bestEvent.stroke} ${s.bestEvent.pool} · <span class="mono font-semibold text-slate-700">${formatTime(s.bestEvent.time)}</span></div>
+      </div>
+      <span class="text-slate-300 text-2xl">›</span>
+    </div>
+  `).join('<div class="border-t border-slate-100 mx-3"></div>');
+
+  return `
+    <div class="statusbar"></div>
+    <div class="px-5 pt-3 pb-3 flex items-center justify-between">
+      <div>
+        <div class="text-3xl font-bold tracking-tight">Pacer</div>
+        <div class="text-sm text-muted mt-0.5">Roster</div>
+      </div>
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 transition" data-action="settings" aria-label="Settings">⚙</button>
+    </div>
+    <div class="px-5 pt-2 pb-3">
+      <button class="w-full bg-gradient-to-br from-cyan-600 to-cyan-700 rounded-2xl px-4 py-4 flex items-center justify-between hover:from-cyan-700 hover:to-cyan-800 transition shadow-md shadow-cyan-600/20" data-action="quick-calc">
+        <div class="text-left">
+          <div class="font-bold text-white text-base">Quick calc</div>
+          <div class="text-xs text-cyan-100 mt-0.5">Predict splits without picking a swimmer</div>
+        </div>
+        <span class="text-white text-2xl">→</span>
+      </button>
+    </div>
+    <div class="px-5 pb-2">
+      <div class="bg-slate-100 rounded-xl px-3.5 py-3 flex items-center gap-2">
+        <span class="text-muted">⌕</span>
+        <span class="text-sm text-muted">Search swimmers</span>
+      </div>
+    </div>
+    <div class="px-5 py-3 flex items-center justify-between">
+      <span class="label-cap">${swimmers.length} swimmers</span>
+      <span class="text-xs text-muted">Sort: Name</span>
+    </div>
+    <div class="scrollable px-3 pb-2">
+      <div>${rows}</div>
+    </div>
+    <button class="absolute right-5 bottom-28 w-14 h-14 rounded-full bg-cyan-600 text-white text-3xl shadow-lg shadow-cyan-600/30 flex items-center justify-center font-light hover:bg-cyan-700 transition" data-action="add-swimmer">+</button>
+    <div class="border-t border-slate-200 bg-white flex items-center justify-around py-3 pb-6 flex-shrink-0">
+      <div class="flex flex-col items-center gap-1">
+        <span class="text-cyan-600">●</span>
+        <span class="text-[11px] font-semibold text-cyan-700">Roster</span>
+      </div>
+      <div class="flex flex-col items-center gap-1 clickable px-4 py-1 rounded" data-action="squad">
+        <span class="text-slate-300">●</span>
+        <span class="text-[11px] text-slate-500">Squad</span>
+      </div>
+      <div class="flex flex-col items-center gap-1 clickable px-4 py-1 rounded" data-action="settings">
+        <span class="text-slate-300">●</span>
+        <span class="text-[11px] text-slate-500">Settings</span>
+      </div>
+    </div>
+  `;
+}
+
+// ----- Screen: Swimmer detail -----
+function renderSwimmerDetail() {
+  const s = state.swimmer;
+  if (!s) return renderRoster();
+  const last = sampleRace.swimmerId === s.id ? sampleRace : null;
+
+  const actualTotal = last ? last.actualSplits.reduce((a,b)=>a+b,0) : 0;
+  const lastDelta = last ? actualTotal - last.targetSeconds : 0;
+
+  return `
+    <div class="statusbar"></div>
+    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <div class="flex-1 min-w-0">
+        <div class="text-lg font-semibold">${s.name}</div>
+        <div class="text-xs text-muted">${s.sex === 'M' ? 'Men' : 'Women'}</div>
+      </div>
+    </div>
+    <div class="scrollable px-5 py-3 space-y-3 bg-slate-50">
+      <div class="bg-white border border-slate-200 rounded-2xl p-4">
+        <div class="label-cap mb-2 text-muted">Best time</div>
+        <div class="flex items-end justify-between gap-3">
+          <div>
+            <div class="hero-time text-4xl">${formatTime(s.bestEvent.time)}</div>
+            <div class="text-xs text-muted mt-1.5">${s.bestEvent.distance} ${s.bestEvent.stroke} ${s.bestEvent.pool}</div>
+          </div>
+          <button class="px-4 py-3 bg-cyan-600 text-white rounded-xl text-sm font-bold hover:bg-cyan-700 active:scale-[0.98] transition shadow-md shadow-cyan-600/20" data-action="plan-from-pb">New pace plan →</button>
+        </div>
+      </div>
+
+      ${Object.keys(s.pb50).map(stroke => `
+        <div class="bg-white border border-slate-200 rounded-2xl p-4">
+          <div class="flex items-end justify-between">
+            <div>
+              <div class="label-cap mb-1 text-muted">50 ${stroke} PB</div>
+              <div class="hero-time text-3xl">${s.pb50[stroke].toFixed(2)}</div>
+            </div>
+            <div class="text-[11px] text-faint text-right max-w-[140px] leading-snug">Used to flag top-end speed limiters</div>
+          </div>
+        </div>
+      `).join('')}
+
+      ${last ? `
+        <div class="bg-white border border-slate-200 rounded-2xl p-4">
+          <div class="flex items-center justify-between mb-3">
+            <div class="label-cap text-muted">Recent race</div>
+            <span class="text-xs text-faint">${last.date}</span>
+          </div>
+          <button class="w-full text-left clickable rounded-lg p-2 -m-2 hover:bg-slate-50 transition" data-action="open-race">
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="font-semibold text-sm">${last.distance} ${last.stroke} ${last.pool}</div>
+                <div class="text-xs text-muted mt-1 mono">${formatTime(actualTotal)} <span class="${lastDelta > 0 ? 'text-rose-600' : 'text-emerald-700'} font-semibold">(${lastDelta >= 0 ? '+' : ''}${lastDelta.toFixed(2)})</span></div>
+              </div>
+              <span class="text-cyan-700 text-sm font-bold">View →</span>
+            </div>
+          </button>
+        </div>
+      ` : ''}
+
+      <button class="w-full bg-white border-2 border-dashed border-slate-200 rounded-xl py-3.5 text-sm font-semibold text-muted hover:bg-slate-100 transition" data-action="log-race">+ Log a new race</button>
+    </div>
+  `;
+}
+
+// ----- Screen 2: Quick Calc form -----
+function renderQuickCalc() {
+  const f = state.form;
+  const strokes = ['Free', 'Back', 'Breast', 'Fly', 'IM'];
+  const distances = [50, 100, 200, 400, 800, 1500];
+  const ctxLine = state.swimmer
+    ? `${state.swimmer.name}`
+    : 'No swimmer required';
+
+  return `
+    <div class="statusbar"></div>
+    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <div class="flex-1 min-w-0">
+        <div class="text-lg font-semibold">${state.swimmer ? 'Pace plan' : 'Quick calc'}</div>
+        <div class="text-xs text-muted truncate">${ctxLine}</div>
+      </div>
+    </div>
+    <div class="scrollable px-5 py-4 space-y-6">
+      <div>
+        <div class="label-cap mb-2">Stroke</div>
+        <div class="flex gap-2 flex-wrap">
+          ${strokes.map(s => `<span class="pill ${f.stroke === s ? 'active' : ''}" data-stroke="${s}">${s}</span>`).join('')}
+        </div>
+      </div>
+      <div class="flex gap-3">
+        <div class="flex-1">
+          <div class="label-cap mb-2">Sex</div>
+          <div class="seg-group">
+            <div class="seg ${f.sex === 'M' ? 'active' : ''}" data-sex="M">Men</div>
+            <div class="seg ${f.sex === 'F' ? 'active' : ''}" data-sex="F">Women</div>
+          </div>
+        </div>
+        <div class="flex-1">
+          <div class="label-cap mb-2">Pool</div>
+          <div class="seg-group">
+            <div class="seg ${f.pool === 'LCM' ? 'active' : ''}" data-pool="LCM">LCM</div>
+            <div class="seg ${f.pool === 'SCM' ? 'active' : ''}" data-pool="SCM">SCM</div>
+            <div class="seg ${f.pool === 'SCY' ? 'active' : ''}" data-pool="SCY">SCY</div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="label-cap mb-2">Distance</div>
+        <div class="flex gap-2 flex-wrap">
+          ${distances.map(d => `<span class="pill ${f.distance === d ? 'active' : ''}" data-distance="${d}">${d}</span>`).join('')}
+        </div>
+      </div>
+      <div>
+        <div class="label-cap mb-2">Target time</div>
+        <div class="bg-gradient-to-br from-cyan-50 to-white border-2 border-cyan-200 rounded-2xl px-5 py-6 focus-within:border-cyan-500 transition">
+          <input type="text" inputmode="decimal" data-time-input value="${formatTime(f.targetSeconds)}" class="time-input" aria-label="Target time" />
+        </div>
+        <div class="text-center text-xs text-muted mt-2">Tap to edit · format MM:SS.ss</div>
+      </div>
+    </div>
+    <div class="border-t border-slate-200 px-5 py-4 pb-5 bg-white flex-shrink-0">
+      <button class="w-full bg-cyan-600 text-white font-semibold rounded-xl py-4 text-base hover:bg-cyan-700 active:scale-[0.98] transition shadow-lg shadow-cyan-600/20" data-action="predict">
+        Predict splits →
+      </button>
+    </div>
+  `;
+}
+
+// ----- Screen 3: Predicted splits -----
+// Build the rows actually displayed: per-50 (per-25 for the 50), or per-100
+// checkpoints for distance events when that view is selected.
+function buildDisplaySegments(r) {
+  const isIM = r.stroke === 'IM';
+  const per100 = !isIM && r.distance >= 400 && state.splitView === '100' && r.splits.length % 2 === 0;
+  if (per100) {
+    const rows = [];
+    for (let k = 0; k * 2 < r.splits.length; k++) {
+      const a = 2 * k, b = 2 * k + 1;
+      rows.push({
+        time: r.splits[a] + r.splits[b],
+        lo: r.lo[a] + r.lo[b],
+        hi: r.hi[a] + r.hi[b],
+        label: `${(k + 1) * 100} m`,
+      });
+    }
+    return rows;
+  }
+  const imL = isIM ? imLabels[r.distance] : null;
+  return r.splits.map((t, i) => ({
+    time: t, lo: r.lo[i], hi: r.hi[i],
+    label: imL ? imL[i] : `${(i + 1) * r.segLen} m`,
+  }));
+}
+
+function renderPredictedSplits() {
+  const r = state.result;
+  if (!r || !r.splits || !r.splits.length) {
+    const avail = availableEventsFor(state.form.stroke);
+    return `
+      <div class="statusbar"></div>
+      <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
+        <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+        <div class="text-lg font-semibold">Pace plan</div>
+      </div>
+      <div class="p-8 text-center">
+        <div class="text-slate-700 font-semibold text-sm mb-1">No data for this combination</div>
+        <div class="text-slate-500 text-sm leading-relaxed">There's no ${state.form.distance} ${state.form.stroke} ${state.form.pool} in the dataset.</div>
+        ${avail ? `<div class="text-xs text-muted mt-3 leading-relaxed">Available for <span class="font-semibold">${state.form.stroke}</span>: ${avail}</div>` : ''}
+        <button class="mt-5 px-4 py-3 bg-cyan-600 text-white rounded-xl text-sm font-bold hover:bg-cyan-700 transition" data-action="back">Adjust event</button>
+      </div>`;
+  }
+
+  const isIM = r.stroke === 'IM';
+  const rows = buildDisplaySegments(r);
+  const showEven = !isIM; // show front-end / back-end labels on the range (not for IM legs)
+
+  const splitRows = rows.map((row, i) => {
+    const rangeWidth = Math.min(100, ((row.hi - row.lo) / row.time) * 100);
+    const padding = (100 - rangeWidth) / 2;
+    // faster end (q25, lower time) sits left = a front-end swimmer; slower end right = back-end.
+    const ends = showEven
+      ? `<span><span class="mono">${row.lo.toFixed(2)}</span> <span class="text-[9px] uppercase tracking-wide text-faint">front-end</span></span>
+         <span><span class="text-[9px] uppercase tracking-wide text-faint">back-end</span> <span class="mono">${row.hi.toFixed(2)}</span></span>`
+      : `<span class="mono">${row.lo.toFixed(2)}</span><span class="mono">${row.hi.toFixed(2)}</span>`;
+    return `
+      <div class="px-4 py-3.5 ${i < rows.length - 1 ? 'border-b border-slate-100' : ''}">
+        <div class="text-center mb-1.5">
+          <span class="label-cap text-faint">${row.label}</span>
+          <div class="hero-time text-2xl leading-tight">${row.time.toFixed(2)}</div>
+        </div>
+        <div class="relative">
+          <div class="range-track">
+            <div class="range-fill" style="left: ${padding.toFixed(1)}%; right: ${padding.toFixed(1)}%;"></div>
+            <div class="range-tick" style="left: 50%;"></div>
+          </div>
+          <div class="flex justify-between items-baseline text-[11px] text-muted mt-1.5">${ends}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // 50 / 100 checkpoint toggle (distance events only)
+  const viewToggle = (r.distance >= 400 && !isIM) ? `
+    <div class="seg-group" style="max-width: 180px;">
+      <div class="seg ${state.splitView === '50' ? 'active' : ''}" data-action="splitview" data-mode="50">Per 50</div>
+      <div class="seg ${state.splitView === '100' ? 'active' : ''}" data-action="splitview" data-mode="100">Per 100</div>
+    </div>` : '';
+
+  // Top-end speed limiter check
+  let limiterCallout = '';
+  if (r.pb50 && state.swimmer && state.swimmer.pb50 && state.swimmer.pb50[r.stroke]) {
+    const knownPB = state.swimmer.pb50[r.stroke];
+    if (knownPB > r.pb50 + 0.3) {
+      limiterCallout = `
+        <div class="bg-amber-50 border border-amber-100 rounded-xl px-4 py-3.5 flex gap-3">
+          <span class="text-amber-600 text-lg leading-none mt-0.5">⚠</span>
+          <div class="flex-1">
+            <div class="font-semibold text-amber-900 text-sm">Top-end speed is the limiter</div>
+            <div class="text-xs text-amber-800 mt-1 leading-relaxed">For ${formatTime(r.targetSeconds)} you'd need a ${r.pb50.toFixed(1)}s 50. Your 50 PB is ${knownPB.toFixed(2)}s — work on top-end speed before this target is realistic.</div>
+          </div>
+        </div>
+      `;
+    }
+  }
+
+  let pb50Card = '';
+  if (r.pb50) {
+    const knownPB = state.swimmer?.pb50?.[r.stroke];
+    const gap = knownPB ? knownPB - r.pb50 : null;
+    const ok = knownPB && gap <= 0.3;
+    const tone = !knownPB ? 'slate' : (ok ? 'emerald' : 'amber');
+    const toneClasses = {
+      amber:   { wrap: 'bg-amber-50 border-amber-200',   label: 'text-amber-700',   num: 'text-amber-900' },
+      emerald: { wrap: 'bg-emerald-50 border-emerald-200', label: 'text-emerald-700', num: 'text-emerald-900' },
+      slate:   { wrap: 'bg-slate-50 border-slate-200',   label: 'text-muted',       num: 'text-slate-900' },
+    };
+    const t = toneClasses[tone];
+    const band = (r.pb50Lo != null && r.pb50Hi != null);
+    const pbW = band ? Math.min(100, ((r.pb50Hi - r.pb50Lo) / r.pb50) * 100) : 0;
+    const pbPad = (100 - pbW) / 2;
+    pb50Card = `
+      <div class="bg-white rounded-2xl border border-slate-200 px-4 py-4">
+        <div class="label-cap mb-2 text-muted">50 m best time needed</div>
+        <div class="text-center mb-1.5">
+          <div class="hero-time text-3xl leading-tight">${r.pb50.toFixed(2)}</div>
+        </div>
+        ${band ? `
+        <div class="relative">
+          <div class="range-track">
+            <div class="range-fill" style="left: ${pbPad.toFixed(1)}%; right: ${pbPad.toFixed(1)}%;"></div>
+            <div class="range-tick" style="left: 50%;"></div>
+          </div>
+          <div class="flex justify-between text-[11px] text-muted mt-1.5 mono">
+            <span>${r.pb50Lo.toFixed(2)}</span><span>${r.pb50Hi.toFixed(2)}</span>
+          </div>
+        </div>` : ''}
+        <div class="text-xs text-muted mt-2 text-center">Opening 50 to make ${formatTime(r.targetSeconds, { precision: 0 })} feasible</div>
+        ${knownPB ? `
+          <div class="${t.wrap} border rounded-xl px-3.5 py-2.5 mt-3 flex items-center justify-between">
+            <div class="text-[10px] font-bold uppercase tracking-wide ${t.label}">${state.swimmer.name.split(' ')[0]}'s 50 PB</div>
+            <div class="flex items-baseline gap-2">
+              <div class="hero-time text-lg ${t.num}">${knownPB.toFixed(2)}</div>
+              <div class="text-[10px] ${t.label}">${gap > 0 ? `+${gap.toFixed(2)} off` : 'on pace'}</div>
+            </div>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  return `
+    <div class="statusbar"></div>
+    <div class="px-5 pt-3 pb-2 flex items-center gap-3 bg-white">
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <div class="flex-1 min-w-0">
+        <div class="text-base font-semibold">${state.swimmer ? state.swimmer.name : 'Pace plan'}</div>
+        <div class="text-xs text-muted truncate">${r.distance} ${r.stroke} · ${r.pool} · ${r.sex === 'M' ? 'Men' : 'Women'}</div>
+      </div>
+      <button class="px-3.5 py-2 rounded-full bg-cyan-50 text-cyan-800 text-xs font-semibold hover:bg-cyan-100 transition" data-action="save">Save</button>
+    </div>
+
+    <!-- Target time hero, with quick nudge controls -->
+    <div class="px-5 py-3 bg-white border-b border-slate-100">
+      <div class="bg-gradient-to-br from-cyan-50 to-white border border-cyan-100 rounded-2xl p-4">
+        <div class="label-cap text-cyan-800 mb-1">Target · tap to edit</div>
+        <div class="flex items-center justify-between gap-2">
+          <input type="text" inputmode="decimal" data-target-edit value="${formatTime(r.targetSeconds)}"
+                 class="hero-time text-4xl text-cyan-900 bg-transparent outline-none w-[150px]" aria-label="Target time" />
+          <div class="flex items-center gap-1.5">
+            <button class="w-10 h-11 rounded-l-xl bg-white border border-cyan-200 text-cyan-800 text-sm font-bold hover:bg-cyan-100 active:scale-95 transition" data-action="nudge-target" data-delta="-1" title="Faster by 1.0s" aria-label="Faster by 1 second">−1</button>
+            <button class="w-10 h-11 bg-white border border-cyan-200 text-cyan-800 text-sm font-bold hover:bg-cyan-100 active:scale-95 transition" data-action="nudge-target" data-delta="-0.1" title="Faster by 0.1s" aria-label="Faster by 0.1 seconds">−.1</button>
+            <button class="w-10 h-11 bg-white border border-cyan-200 text-cyan-800 text-sm font-bold hover:bg-cyan-100 active:scale-95 transition" data-action="nudge-target" data-delta="0.1" title="Slower by 0.1s" aria-label="Slower by 0.1 seconds">+.1</button>
+            <button class="w-10 h-11 rounded-r-xl bg-white border border-cyan-200 text-cyan-800 text-sm font-bold hover:bg-cyan-100 active:scale-95 transition" data-action="nudge-target" data-delta="1" title="Slower by 1.0s" aria-label="Slower by 1 second">+1</button>
+          </div>
+        </div>
+        <div class="flex gap-1.5 mt-3 text-xs flex-wrap">
+          ${state.swimmer && state.swimmer.bestEvent.stroke === r.stroke && state.swimmer.bestEvent.distance === r.distance ? `
+            <button class="px-2.5 py-1.5 rounded-full bg-white border border-slate-200 text-slate-700 font-semibold hover:bg-slate-50 transition" data-action="target-preset" data-mode="pb">PB</button>
+          ` : ''}
+          <button class="px-2.5 py-1.5 rounded-full bg-white border border-slate-200 text-slate-700 font-semibold hover:bg-slate-50 transition" data-action="target-preset" data-mode="minus1">−1%</button>
+          <button class="px-2.5 py-1.5 rounded-full bg-white border border-slate-200 text-slate-700 font-semibold hover:bg-slate-50 transition" data-action="target-preset" data-mode="minus2">−2%</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="scrollable px-5 py-3 space-y-4 bg-slate-50">
+      ${limiterCallout}
+      <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-100 flex items-center justify-between gap-2">
+          <div class="label-cap text-muted">Splits</div>
+          <div class="flex items-center gap-2">
+            ${viewToggle}
+            <button class="px-3 py-2 rounded-lg bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 transition" data-action="copy-splits" title="Copy splits">Copy</button>
+          </div>
+        </div>
+        ${splitRows}
+      </div>
+      ${pb50Card}
+      ${state.swimmer ? `
+        <button class="w-full bg-cyan-600 text-white rounded-xl py-4 text-sm font-semibold hover:bg-cyan-700 transition" data-action="set-as-target">Set as ${state.swimmer.name.split(' ')[0]}'s race target</button>
+      ` : ''}
+    </div>
+  `;
+}
+
+// What events the dataset covers for a given stroke (for the no-data screen).
+function availableEventsFor(stroke) {
+  const out = [];
+  const byStroke = ratios[stroke];
+  if (!byStroke) return '';
+  const combos = new Set();
+  for (const sex of Object.keys(byStroke))
+    for (const pool of Object.keys(byStroke[sex]))
+      for (const d of Object.keys(byStroke[sex][pool])) combos.add(`${d}m ${pool}`);
+  return Array.from(combos).sort((a, b) => parseInt(a) - parseInt(b)).join(', ');
+}
+
+function ordinal(n) {
+  const s = ['th', 'st', 'nd', 'rd'], v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+
+// ----- Screen 4: Race analysis -----
+function renderRaceAnalysis() {
+  const race = state.race || sampleRace;
+  const swimmer = swimmers.find(s => s.id === race.swimmerId);
+  const prediction = predict(race.stroke, race.sex, race.pool, race.distance, race.targetSeconds);
+  if (!prediction) return '<div class="p-8">No data</div>';
+
+  const actualTotal = race.actualSplits.reduce((a, b) => a + b, 0);
+  const delta = actualTotal - race.targetSeconds;
+  const insights = generateInsights(prediction, race.actualSplits, swimmer);
+
+  const splitRows = race.actualSplits.map((a, i) => {
+    const cls = classifySplit(a, prediction.lo[i], prediction.hi[i]);
+    const d = a - prediction.splits[i];
+    const aColor = cls === 'too-fast' ? 'text-amber-700' : (cls === 'too-slow' ? 'text-rose-600' : 'text-slate-900');
+    const dColor = cls === 'too-fast' ? 'text-amber-700' : (cls === 'too-slow' ? 'text-rose-600' : 'text-emerald-700');
+
+    // Layout the range as a fixed extended window so a too-fast actual is visible left of the range,
+    // and too-slow visible right. Pad the visualized window by 1.5x the IQR.
+    const lo = prediction.lo[i], hi = prediction.hi[i], mean = prediction.splits[i];
+    const iqr = hi - lo;
+    const winLo = lo - iqr * 1.0;
+    const winHi = hi + iqr * 1.0;
+    const pct = (v) => Math.max(0, Math.min(100, ((v - winLo) / (winHi - winLo)) * 100));
+    return `
+      <div class="px-4 py-4 ${i < race.actualSplits.length - 1 ? 'border-b border-slate-100' : ''}">
+        <div class="flex items-baseline justify-between gap-2 mb-3">
+          <div class="text-sm font-semibold text-slate-700">${i + 1}${ordinal(i+1).slice(-2)} 50</div>
+          <div class="flex items-baseline gap-3">
+            <div class="hero-time text-2xl ${aColor}">${a.toFixed(2)}</div>
+            <div class="text-xs ${dColor} font-semibold tnum">${d >= 0 ? '+' : ''}${d.toFixed(2)}</div>
+          </div>
+        </div>
+        <div class="relative pb-1">
+          <div class="range-track">
+            <div class="range-fill" style="left: ${pct(lo).toFixed(1)}%; right: ${(100-pct(hi)).toFixed(1)}%;"></div>
+            <div class="range-tick" style="left: ${pct(mean).toFixed(1)}%;"></div>
+            <div class="range-actual ${cls}" style="left: ${pct(a).toFixed(1)}%;"></div>
+          </div>
+          <div class="flex justify-between text-[10px] text-faint mt-1.5 mono">
+            <span>${lo.toFixed(2)}</span>
+            <span class="text-[10px] text-faint">predicted ${mean.toFixed(2)}</span>
+            <span>${hi.toFixed(2)}</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  const toneStyles = {
+    amber:   { wrap: 'bg-amber-50 border-amber-200',   title: 'text-amber-900',   body: 'text-amber-800',   icon: 'text-amber-600',   action: 'text-amber-900 bg-amber-100' },
+    rose:    { wrap: 'bg-rose-50 border-rose-200',     title: 'text-rose-900',    body: 'text-rose-800',    icon: 'text-rose-600',    action: 'text-rose-900 bg-rose-100' },
+    emerald: { wrap: 'bg-emerald-50 border-emerald-200', title: 'text-emerald-900', body: 'text-emerald-800', icon: 'text-emerald-600', action: 'text-emerald-900 bg-emerald-100' },
+  };
+  const insightCards = insights.map(ins => {
+    const t = toneStyles[ins.tone] || { wrap: 'bg-slate-100 border-slate-200', title: 'text-slate-900', body: 'text-slate-700', icon: 'text-slate-500', action: 'text-slate-700 bg-slate-100' };
+    return `
+      <div class="${t.wrap} border rounded-xl px-4 py-4 flex gap-3">
+        <span class="${t.icon} text-xl leading-none mt-0.5 flex-shrink-0">${ins.icon}</span>
+        <div class="flex-1">
+          <div class="font-semibold text-sm ${t.title}">${ins.title}</div>
+          <div class="text-xs mt-1 leading-relaxed ${t.body}">${ins.body}</div>
+          ${ins.action ? `<div class="mt-2 inline-block px-2.5 py-1 rounded-md text-[11px] font-semibold ${t.action}">Next: ${ins.action.replace(/^Next:\s*/, '')}</div>` : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  const deltaColor = delta > 0 ? 'text-rose-600' : 'text-emerald-700';
+  const deltaBg = delta > 0 ? 'bg-rose-50 border-rose-100' : 'bg-emerald-50 border-emerald-100';
+
+  return `
+    <div class="statusbar"></div>
+    <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <div class="flex-1 min-w-0">
+        <div class="text-base font-semibold">${swimmer?.name || ''}</div>
+        <div class="text-xs text-muted truncate">${race.distance} ${race.stroke} ${race.pool} · ${race.date}</div>
+      </div>
+    </div>
+
+    <!-- Hero summary: target | actual | delta -->
+    <div class="px-5 py-3 bg-white border-b border-slate-100">
+      <div class="${deltaBg} border rounded-2xl p-4">
+        <div class="grid grid-cols-3 gap-2">
+          <div>
+            <div class="label-cap text-muted">Target</div>
+            <div class="hero-time text-xl mt-1">${formatTime(race.targetSeconds)}</div>
+          </div>
+          <div class="text-center border-l border-r border-slate-200/60">
+            <div class="label-cap text-muted">Actual</div>
+            <div class="hero-time text-xl mt-1">${formatTime(actualTotal)}</div>
+          </div>
+          <div class="text-right">
+            <div class="label-cap ${deltaColor}">Delta</div>
+            <div class="hero-time text-xl mt-1 ${deltaColor}">${delta >= 0 ? '+' : ''}${delta.toFixed(2)}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="scrollable px-5 py-3 space-y-4 bg-slate-50">
+
+      <!-- Legend (color is never the only signal) -->
+      <div class="flex items-center justify-center gap-4 text-[11px] text-muted">
+        <span><span class="status-dot too-fast"></span>Too fast</span>
+        <span><span class="status-dot in-range"></span>In range</span>
+        <span><span class="status-dot too-slow"></span>Too slow</span>
+      </div>
+
+      <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+          <div class="label-cap text-muted">Splits</div>
+          <div class="label-cap text-faint">Actual · Δ vs predicted</div>
+        </div>
+        ${splitRows}
+      </div>
+
+      ${insights.length ? `
+        <div class="space-y-3">
+          <div class="label-cap text-muted px-1">Coaching insights</div>
+          ${insightCards}
+        </div>
+      ` : '<div class="text-xs text-faint italic text-center py-2">No automatic insights for this race.</div>'}
+    </div>
+  `;
+}
+
+// ----- Screen 5: Squad targets -----
+function renderSquadTargets() {
+  // Build per-swimmer 200 fly targets from their best events; fall back to a default for swimmers
+  // whose best isn't a 200, since the demo focuses on the squad-targets-for-event use case.
+  const event = { stroke: 'Fly', distance: 200, pool: 'LCM' };
+  const entries = swimmers.map(s => {
+    // Synthetic target: scale their best to a 200 fly using a simple ratio fudge
+    let target;
+    if (s.bestEvent.stroke === 'Fly' && s.bestEvent.distance === 100) {
+      target = s.bestEvent.time * 2.26; // approx 100→200 fly scaling
+    } else if (s.bestEvent.stroke === 'Fly' && s.bestEvent.distance === 200) {
+      target = s.bestEvent.time;
+    } else if (s.bestEvent.distance === 200) {
+      target = s.bestEvent.time * 1.07;
+    } else {
+      target = s.bestEvent.time * 0.55;
+    }
+    const r = predict(event.stroke, s.sex, event.pool, event.distance, target);
+    return { swimmer: s, target, splits: r?.splits || [0,0,0,0] };
+  }).sort((a, b) => a.target - b.target);
+
+  const cards = entries.map(e => `
+    <div class="bg-white rounded-2xl border border-slate-200 px-3.5 py-3.5 clickable" data-swimmer="${e.swimmer.id}">
+      <div class="flex items-center justify-between mb-2.5">
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-full bg-cyan-50 text-cyan-800 font-bold flex items-center justify-center text-xs">${e.swimmer.initials}</div>
+          <span class="font-semibold text-[15px]">${e.swimmer.name}</span>
+        </div>
+        <div class="text-right">
+          <div class="label-cap text-muted">Target</div>
+          <div class="hero-time text-base mt-0.5">${formatTime(e.target)}</div>
+        </div>
+      </div>
+      <div class="grid grid-cols-4 gap-1.5 text-center">
+        ${e.splits.map((s, i) => `
+          <div class="bg-slate-50 rounded-lg py-2">
+            <div class="text-[9px] text-muted uppercase tracking-wide font-semibold">${i === 0 ? '1st 50' : i === e.splits.length - 1 ? 'Last' : (i + 1) + ordinal(i+1).slice(-2)}</div>
+            <div class="mono text-sm font-bold mt-0.5">${s.toFixed(1)}</div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `).join('');
+
+  return `
+    <div class="statusbar"></div>
+    <div class="px-5 pt-3 pb-3 bg-white">
+      <div class="flex items-center gap-3 mb-2">
+        <button class="w-10 h-10 rounded-full bg-slate-50 flex items-center justify-center text-slate-700 text-xl leading-none" data-action="back">‹</button>
+        <div class="flex-1 min-w-0">
+          <div class="text-lg font-semibold">Squad targets</div>
+          <div class="text-xs text-slate-500">Pace plan for every swimmer</div>
+        </div>
+        <button class="w-10 h-10 rounded-full bg-slate-50 flex items-center justify-center text-slate-500" title="Export">⎙</button>
+      </div>
+      <div class="flex gap-2 overflow-x-auto pt-2 -mx-5 px-5 pb-1">
+        <span class="pill active">200 Fly</span>
+        <span class="pill">LCM</span>
+        <span class="pill">Stretch +1%</span>
+      </div>
+    </div>
+    <div class="scrollable bg-slate-50">
+      <div class="px-5 py-3"><div class="label-cap">${entries.length} swimmers · sorted by target time</div></div>
+      <div class="space-y-2 px-3 pb-4">${cards}</div>
+    </div>
+  `;
+}
+
+// ============================================================
+// EVENTS
+// ============================================================
+
+document.addEventListener('click', (e) => {
+  const phone = document.getElementById('phone');
+  // Click handler for phone-internal nav
+  if (phone.contains(e.target)) {
+    const swim = e.target.closest('[data-swimmer]');
+    if (swim) {
+      const id = swim.getAttribute('data-swimmer');
+      const s = swimmers.find(x => x.id === id);
+      navigate('swimmer-detail', { swimmer: s });
+      return;
+    }
+    const stroke = e.target.closest('[data-stroke]');
+    if (stroke) {
+      state.form.stroke = stroke.getAttribute('data-stroke');
+      render(); return;
+    }
+    const sex = e.target.closest('[data-sex]');
+    if (sex) {
+      state.form.sex = sex.getAttribute('data-sex');
+      render(); return;
+    }
+    const pool = e.target.closest('[data-pool]');
+    if (pool) {
+      state.form.pool = pool.getAttribute('data-pool');
+      render(); return;
+    }
+    const dist = e.target.closest('[data-distance]');
+    if (dist) {
+      state.form.distance = parseInt(dist.getAttribute('data-distance'), 10);
+      render(); return;
+    }
+    const action = e.target.closest('[data-action]');
+    if (action) {
+      handleAction(action.getAttribute('data-action'), action);
+      return;
+    }
+  }
+
+  // Click handler for jumper rail
+  const jbtn = e.target.closest('.jumper-btn');
+  if (jbtn) {
+    const v = jbtn.getAttribute('data-view');
+    handleJumpTo(v);
+  }
+
+  // Demo flow buttons
+  const flow = e.target.closest('[data-flow]');
+  if (flow) {
+    runDemo(flow.getAttribute('data-flow'));
+  }
+});
+
+function handleAction(action, el) {
+  switch (action) {
+    case 'quick-calc':
+      state.swimmer = null;
+      state.form = { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 200, targetSeconds: 120 };
+      navigate('quick-calc');
+      break;
+    case 'predict':
+      // Navigate either way: a valid result shows splits, null shows the helpful no-data screen.
+      state.result = predict(state.form.stroke, state.form.sex, state.form.pool, state.form.distance, state.form.targetSeconds);
+      navigate('predicted-splits');
+      break;
+    case 'back': back(); break;
+    case 'squad': navigate('squad-targets'); break;
+    case 'settings': showToast('Settings — not in v1 mock'); break;
+    case 'add-swimmer': showToast('Add swimmer — not in v1 mock'); break;
+    case 'save': showToast('Saved as race target'); break;
+    case 'set-as-target': showToast(`Saved to ${state.swimmer.name}'s next race`); break;
+    case 'plan-from-pb':
+      state.form = {
+        stroke: state.swimmer.bestEvent.stroke,
+        sex: state.swimmer.sex,
+        pool: state.swimmer.bestEvent.pool,
+        distance: state.swimmer.bestEvent.distance,
+        targetSeconds: state.swimmer.bestEvent.time * 0.99, // 1% stretch
+      };
+      navigate('quick-calc');
+      break;
+    case 'log-race':
+      if (state.swimmer && state.swimmer.id === sampleRace.swimmerId) {
+        state.race = sampleRace;
+        navigate('race-analysis');
+      } else {
+        showToast('Race entry form — not in v1 mock');
+      }
+      break;
+    case 'open-race':
+      state.race = sampleRace;
+      navigate('race-analysis');
+      break;
+    case 'nudge-target': {
+      const delta = parseFloat(el?.getAttribute('data-delta') || '0');
+      const next = Math.max(10, state.result.targetSeconds + delta);
+      state.form.targetSeconds = next;
+      state.result = predict(state.result.stroke, state.result.sex, state.result.pool, state.result.distance, next);
+      render();
+      break;
+    }
+    case 'target-preset': {
+      const mode = el?.getAttribute('data-mode');
+      const base = (state.swimmer && state.swimmer.bestEvent.stroke === state.result.stroke && state.swimmer.bestEvent.distance === state.result.distance)
+        ? state.swimmer.bestEvent.time
+        : state.result.targetSeconds;
+      let next = state.result.targetSeconds;
+      if (mode === 'pb') next = base;
+      else if (mode === 'minus1') next = base * 0.99;
+      else if (mode === 'minus2') next = base * 0.98;
+      state.form.targetSeconds = next;
+      state.result = predict(state.result.stroke, state.result.sex, state.result.pool, state.result.distance, next);
+      render();
+      break;
+    }
+    case 'splitview': {
+      state.splitView = el?.getAttribute('data-mode') || '100';
+      render();
+      break;
+    }
+    case 'copy-splits': {
+      const r = state.result;
+      if (!r) break;
+      const rows = buildDisplaySegments(r);
+      let cum = 0;
+      const header = `${r.distance} ${r.stroke} ${r.pool} ${r.sex === 'M' ? 'Men' : 'Women'} — target ${formatTime(r.targetSeconds)}`;
+      const lines = rows.map(row => { cum += row.time; return `${row.label}\t${row.time.toFixed(2)}\tcum ${formatTime(cum)}`; });
+      const text = header + '\n' + lines.join('\n');
+      const done = () => showToast('Splits copied');
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(done);
+      } else { done(); }
+      break;
+    }
+  }
+}
+
+function handleJumpTo(view) {
+  switch (view) {
+    case 'roster': navigate('roster'); break;
+    case 'quick-calc':
+      state.swimmer = null;
+      navigate('quick-calc');
+      break;
+    case 'predicted-splits':
+      if (!state.result) {
+        state.result = predict('Free', 'M', 'LCM', 200, 120);
+      }
+      navigate('predicted-splits');
+      break;
+    case 'race-analysis':
+      state.race = sampleRace;
+      navigate('race-analysis');
+      break;
+    case 'squad-targets':
+      navigate('squad-targets');
+      break;
+  }
+}
+
+function runDemo(flow) {
+  switch (flow) {
+    case 'quick200':
+      state.swimmer = null;
+      state.form = { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 200, targetSeconds: 120 };
+      state.result = predict('Free', 'M', 'LCM', 200, 120);
+      state.history = ['roster', 'quick-calc'];
+      navigate('predicted-splits', { skipHistory: true });
+      break;
+    case 'ben':
+      state.swimmer = swimmers.find(s => s.id === 'br');
+      state.form = { stroke: 'Fly', sex: 'M', pool: 'LCM', distance: 100, targetSeconds: 54.8 };
+      state.result = predict('Fly', 'M', 'LCM', 100, 54.8);
+      state.history = ['roster', 'swimmer-detail', 'quick-calc'];
+      navigate('predicted-splits', { skipHistory: true });
+      break;
+    case 'quinn':
+      state.swimmer = swimmers.find(s => s.id === 'qp');
+      state.race = sampleRace;
+      state.history = ['roster', 'swimmer-detail'];
+      navigate('race-analysis', { skipHistory: true });
+      break;
+    case 'reset':
+      state.history = [];
+      state.swimmer = null;
+      state.result = null;
+      state.race = null;
+      navigate('roster');
+      break;
+  }
+}
+
+// ============================================================
+// BOOT
+// ============================================================
+render();
+</script>
+
+</body>
+</html>
