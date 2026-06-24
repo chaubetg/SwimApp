@@ -1500,14 +1500,14 @@ function buildDisplaySegments(r) {
     // The middle 100s are identical (flat-middle model) — collapse them into one row.
     if (n >= 3) {
       const mid = all[1];
+      // Distance events are paced near-even — all rows neutral (faster/slower), no front/back-end.
       return [
-        { ...all[0], label: 'First 100', count: 1, half: 'front' },
+        { ...all[0], label: 'First 100', count: 1, half: 'middle' },
         { time: mid.time, lo: mid.lo, hi: mid.hi, label: `Middle 100s · 2–${n - 1}`, count: n - 2, half: 'middle' },
-        { ...all[n - 1], label: 'Last 100', count: 1, half: 'back' },
+        { ...all[n - 1], label: 'Last 100', count: 1, half: 'middle' },
       ];
     }
-    return all.map((row, k) => ({ ...row, label: `${(k + 1) * 100} m`, count: 1,
-      half: k === 0 ? 'front' : (k === all.length - 1 ? 'back' : 'middle') }));
+    return all.map((row, k) => ({ ...row, label: `${(k + 1) * 100} m`, count: 1, half: 'middle' }));
   }
   // Per-50 view for distance free: First 50, one combined Middle 50s row, Last 50.
   if (!isIM && r.distance >= 400 && state.splitView === '50' && r.splits.length >= 3) {
@@ -1515,10 +1515,11 @@ function buildDisplaySegments(r) {
     let midSum = 0;
     for (let i = 1; i < n - 1; i++) midSum += r.splits[i];
     const midCount = n - 2;
+    // Distance events are paced near-even — all rows neutral (faster/slower), no front/back-end.
     return [
-      { time: r.splits[0], lo: r.lo[0], hi: r.hi[0], label: 'First 50', count: 1, half: 'front' },
+      { time: r.splits[0], lo: r.lo[0], hi: r.hi[0], label: 'First 50', count: 1, half: 'middle' },
       { time: midSum / midCount, lo: r.lo[1], hi: r.hi[1], label: `Middle 50s · 2–${n - 1}`, count: midCount, half: 'middle' },
-      { time: r.splits[n - 1], lo: r.lo[n - 1], hi: r.hi[n - 1], label: 'Last 50', count: 1, half: 'back' },
+      { time: r.splits[n - 1], lo: r.lo[n - 1], hi: r.hi[n - 1], label: 'Last 50', count: 1, half: 'middle' },
     ];
   }
   const imL = isIM ? imLabels[r.distance] : null;
@@ -1526,8 +1527,9 @@ function buildDisplaySegments(r) {
   return r.splits.map((t, i) => ({
     time: t, lo: r.lo[i], hi: r.hi[i],
     label: imL ? imL[i] : `${(i + 1) * r.segLen} m`,
-    // Front half vs back half by position (IM uses stroke-strength labels instead, so leave null).
-    half: isIM ? null : (i < nSeg / 2 ? 'front' : 'back'),
+    // Front/back-end only on the true opening & closing splits (a pacing choice); the rest neutral.
+    // IM uses stroke-strength labels instead, so leave null.
+    half: isIM ? null : (i === 0 ? 'front' : (i === nSeg - 1 ? 'back' : 'middle')),
   }));
 }
 
@@ -1599,11 +1601,11 @@ function renderPredictedSplits() {
     const rangeWidth = Math.min(100, ((row.hi - row.lo) / row.time) * 100);
     const padding = (100 - rangeWidth) / 2;
     // The faster time (q25) always sits on the left, slower (q75) on the right.
-    // Only the *labels* change with race position:
-    //  • Front half  → faster = front-end (a front-loaded swimmer goes out fast).
-    //  • Back half   → faster = back-end  (a back-loaded swimmer comes home fast) — reversed.
-    //  • Middle      → neutral faster / slower (front/back-end isn't meaningful mid-race).
-    //  • IM legs     → "better <leg>" / "worse <leg>" (stroke strength, not pacing position).
+    // Only the *labels* change, and front/back-end is reserved for true opening/closing splits:
+    //  • Opening split → faster = front-end (a front-loaded swimmer goes out fast).
+    //  • Closing split → faster = back-end  (a back-loaded swimmer comes home fast) — reversed.
+    //  • Everything else (200 middle 50s, all of distance) → neutral faster / slower.
+    //  • IM legs       → "better <leg>" / "worse <leg>" (stroke strength, not pacing position).
     let leftCap = 'front-end', rightCap = 'back-end';
     if (isIM) {
       const leg = row.label.split(' · ')[0].toLowerCase();
