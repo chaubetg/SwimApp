@@ -1597,9 +1597,21 @@ function renderPredictedSplits() {
 
   const isIM = r.stroke === 'IM';
   const rows = buildDisplaySegments(r);
+  const isDistanceCollapsed = r.distance >= 400 && !isIM; // shown as First / Middle / Last
+  let cumRun = 0;
   const splitRows = rows.map((row, i) => {
     const rangeWidth = Math.min(100, ((row.hi - row.lo) / row.time) * 100);
     const padding = (100 - rangeWidth) / 2;
+    // Running cumulative "split-to" time (row.time × count handles the collapsed middle,
+    // so the Last row always lands on the full event time = target).
+    cumRun += row.time * (row.count || 1);
+    const isFirstRow = i === 0, isLastRow = i === rows.length - 1;
+    // Distance: cumulative on First + Last only (middle is collapsed). Others: every row but the
+    // first (where cumulative would just repeat the split).
+    const showCum = isDistanceCollapsed ? (isFirstRow || isLastRow) : !isFirstRow;
+    const cumHtml = showCum
+      ? `<span class="flex items-baseline gap-1"><span class="text-[9px] uppercase tracking-wide text-faint">cum</span><span class="mono text-sm font-semibold text-slate-600">${formatTime(cumRun)}</span></span>`
+      : '<span></span>';
     // The faster time (q25) always sits on the left, slower (q75) on the right.
     // Only the *labels* change, and front/back-end is reserved for true opening/closing splits:
     //  • Opening split → faster = front-end (a front-loaded swimmer goes out fast).
@@ -1620,8 +1632,11 @@ function renderPredictedSplits() {
          <span><span class="${cap}">${rightCap}</span> <span class="mono">${formatTime(row.hi)}</span></span>`;
     return `
       <div class="px-4 py-3.5 ${i < rows.length - 1 ? 'border-b border-slate-100' : ''}">
-        <div class="text-center mb-1.5">
+        <div class="flex items-baseline justify-between mb-0.5">
           <span class="label-cap text-faint">${row.label}</span>
+          ${cumHtml}
+        </div>
+        <div class="text-center mb-1.5">
           <div class="hero-time text-2xl leading-tight">${formatTime(row.time)}</div>
         </div>
         <div class="relative">
