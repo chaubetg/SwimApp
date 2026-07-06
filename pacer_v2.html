@@ -1693,7 +1693,6 @@ function convResultHtml() {
           <span><span class="${cap}">${slowLabel}</span> <span class="mono">${formatTime(slow)}</span></span>
         </div>
       </div>
-      <div class="text-center text-[10px] text-faint mt-3 leading-snug">Central = trimmed-mean ratio · range = swimmer who favours LCM ↔ favours SCM (Q25–Q75) · n=${rec.n} paired athletes</div>
     </div>`;
 }
 
@@ -1722,18 +1721,18 @@ function renderConverter() {
         </div>
       </div>
       <div class="flex gap-3">
-        <div class="flex-1">
+        <div class="flex-[0.82]">
           <div class="label-cap mb-2">Sex</div>
           <div class="seg-group">
             <div class="seg ${c.sex === 'M' ? 'active' : ''}" data-csex="M">Men</div>
             <div class="seg ${c.sex === 'F' ? 'active' : ''}" data-csex="F">Women</div>
           </div>
         </div>
-        <div class="flex-1">
+        <div class="flex-[1.18] min-w-0">
           <div class="label-cap mb-2">Direction</div>
           <div class="seg-group">
-            <div class="seg ${c.from === 'LCM' ? 'active' : ''}" data-convfrom="LCM">LCM→SCM</div>
-            <div class="seg ${c.from === 'SCM' ? 'active' : ''}" data-convfrom="SCM">SCM→LCM</div>
+            <div class="seg ${c.from === 'LCM' ? 'active' : ''}" data-convfrom="LCM" style="padding:10px 4px;font-size:12.5px;white-space:nowrap;">LCM→SCM</div>
+            <div class="seg ${c.from === 'SCM' ? 'active' : ''}" data-convfrom="SCM" style="padding:10px 4px;font-size:12.5px;white-space:nowrap;">SCM→LCM</div>
           </div>
         </div>
       </div>
@@ -1795,7 +1794,7 @@ function fiftyResultHtml() {
         <div><div class="label-cap text-muted mb-1">1st 25 m</div><div class="hero-time text-3xl">${s1.toFixed(2)}</div></div>
         <div><div class="label-cap text-muted mb-1">2nd 25 m</div><div class="hero-time text-3xl">${s2.toFixed(2)}</div></div>
       </div>
-      <div class="text-center text-[11px] text-muted mt-2">Stroke rate: 1st 25 <span class="mono font-semibold text-slate-700">${rr.sr1}</span> · 2nd 25 <span class="mono font-semibold text-slate-700">${rr.sr2}</span> cyc/min</div>
+      <div class="text-center text-[11px] text-muted mt-2">Stroke rate: 1st 25 <span class="mono font-semibold text-slate-700">${Math.round(rr.sr1)}</span> · 2nd 25 <span class="mono font-semibold text-slate-700">${Math.round(rr.sr2)}</span> cyc/min</div>
     </div>
     <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden">
       <div class="label-cap text-muted px-3 pt-3 pb-1">Cumulative checkpoints (from start)</div>
@@ -2155,17 +2154,16 @@ function srCardHtml(r) {
   if (!rec) return '';
   const fifty = (r.distance === 50 && fiftyRatios[r.stroke]) ? fiftyRatios[r.stroke][r.sex] : null;
   const fiftyLine = fifty
-    ? `<div class="text-[11px] text-muted mt-2 text-center">1st 25 <span class="mono font-semibold text-slate-700">${fifty.sr1}</span> · 2nd 25 <span class="mono font-semibold text-slate-700">${fifty.sr2}</span> cyc/min</div>`
+    ? `<div class="text-[11px] text-muted mt-2 text-center">1st 25 <span class="mono font-semibold text-slate-700">${Math.round(fifty.sr1)}</span> · 2nd 25 <span class="mono font-semibold text-slate-700">${Math.round(fifty.sr2)}</span> cyc/min</div>`
     : '';
   return `
     <div class="bg-white rounded-2xl border border-slate-200 px-4 py-4">
       <div class="label-cap mb-2 text-muted">Elite stroke rate</div>
       <div class="text-center">
-        <div class="hero-time text-3xl leading-tight">${rec.avg.toFixed(1)}<span class="text-sm text-muted font-normal"> cyc/min</span></div>
-        <div class="text-[11px] text-muted mt-1">range <span class="mono">${rec.min.toFixed(1)}–${rec.max.toFixed(1)}</span></div>
+        <div class="hero-time text-3xl leading-tight">${Math.round(rec.avg)}<span class="text-sm text-muted font-normal"> cyc/min</span></div>
+        <div class="text-[11px] text-muted mt-1">range <span class="mono">${Math.round(rec.min)}–${Math.round(rec.max)}</span></div>
       </div>
       ${fiftyLine}
-      <div class="text-center text-[10px] text-faint mt-2 leading-snug">Mean & min–max of finalists · Paris 2024 + Fukuoka 2023 (LCM)</div>
     </div>`;
 }
 
