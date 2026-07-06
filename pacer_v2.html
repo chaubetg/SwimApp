@@ -823,6 +823,10 @@ const sampleRace = {
 function formatTime(seconds, opts = {}) {
   if (seconds == null || isNaN(seconds)) return '—';
   const precision = opts.precision ?? 2;
+  // Round to display precision FIRST so the seconds field can't render as "60.00"
+  // (e.g. 119.9997s must show 2:00.00, not 1:60.00).
+  const factor = Math.pow(10, precision);
+  seconds = Math.round(seconds * factor) / factor;
   const m = Math.floor(seconds / 60);
   const s = seconds - m * 60;
   if (m === 0 && !opts.forceMin) return s.toFixed(precision);
@@ -951,10 +955,37 @@ function initialsOf(name) {
   return (i || (name || '?')[0] || '?').toUpperCase();
 }
 
+// SCM↔LCM course-conversion ratios (LCM_time / SCM_time), IQR-trimmed mean + Q25/Q75 bounds,
+// from paired athletes in the World Aquatics top-200 all-time rankings (March 2026).
+// convRatios[stroke][sex][distance] = { mean, q25, q75, n }.  SCM→LCM: ×ratio.  LCM→SCM: ÷ratio.
+const convRatios = {
+  Free: {
+    M: { 50: { mean: 1.0356, q25: 1.02805, q75: 1.04249, n: 120 }, 100: { mean: 1.0352, q25: 1.02873, q75: 1.04176, n: 124 }, 200: { mean: 1.03491, q25: 1.02944, q75: 1.04027, n: 69 }, 400: { mean: 1.02909, q25: 1.02478, q75: 1.03426, n: 71 }, 800: { mean: 1.02189, q25: 1.01523, q75: 1.02825, n: 119 }, 1500: { mean: 1.02479, q25: 1.01888, q75: 1.02987, n: 127 } },
+    F: { 50: { mean: 1.02695, q25: 1.01964, q75: 1.03396, n: 124 }, 100: { mean: 1.02621, q25: 1.02029, q75: 1.03156, n: 135 }, 200: { mean: 1.02316, q25: 1.01728, q75: 1.02917, n: 122 }, 400: { mean: 1.02048, q25: 1.0148, q75: 1.02575, n: 107 }, 800: { mean: 1.01713, q25: 1.01118, q75: 1.02263, n: 123 }, 1500: { mean: 1.01622, q25: 1.00761, q75: 1.02335, n: 78 } },
+  },
+  Fly: {
+    M: { 50: { mean: 1.03092, q25: 1.02148, q75: 1.03956, n: 110 }, 100: { mean: 1.02768, q25: 1.02096, q75: 1.03478, n: 120 }, 200: { mean: 1.03131, q25: 1.0246, q75: 1.03955, n: 123 } },
+    F: { 50: { mean: 1.01913, q25: 1.01159, q75: 1.02706, n: 123 }, 100: { mean: 1.01891, q25: 1.01141, q75: 1.02555, n: 131 }, 200: { mean: 1.01866, q25: 1.01173, q75: 1.02613, n: 124 } },
+  },
+  Back: {
+    M: { 50: { mean: 1.06712, q25: 1.05817, q75: 1.07726, n: 113 }, 100: { mean: 1.05892, q25: 1.04821, q75: 1.07335, n: 111 }, 200: { mean: 1.05146, q25: 1.0416, q75: 1.06101, n: 112 } },
+    F: { 50: { mean: 1.05254, q25: 1.04252, q75: 1.06171, n: 119 }, 100: { mean: 1.04582, q25: 1.037, q75: 1.05411, n: 123 }, 200: { mean: 1.03821, q25: 1.0313, q75: 1.04594, n: 119 } },
+  },
+  Breast: {
+    M: { 50: { mean: 1.03245, q25: 1.02613, q75: 1.03992, n: 120 }, 100: { mean: 1.04053, q25: 1.03295, q75: 1.04926, n: 119 }, 200: { mean: 1.03984, q25: 1.03478, q75: 1.04607, n: 126 } },
+    F: { 50: { mean: 1.02233, q25: 1.01511, q75: 1.02819, n: 125 }, 100: { mean: 1.02754, q25: 1.02151, q75: 1.03379, n: 139 }, 200: { mean: 1.0293, q25: 1.02301, q75: 1.03575, n: 135 } },
+  },
+  IM: {
+    M: { 200: { mean: 1.03897, q25: 1.03299, q75: 1.04628, n: 121 }, 400: { mean: 1.03553, q25: 1.02808, q75: 1.04284, n: 118 } },
+    F: { 200: { mean: 1.0268, q25: 1.0202, q75: 1.03403, n: 127 }, 400: { mean: 1.02466, q25: 1.01762, q75: 1.03186, n: 127 } },
+  },
+};
+
 const state = {
   view: 'roster',
   history: [],
   swimmer: null, // active swimmer if any
+  convForm: { stroke: 'Free', sex: 'M', distance: 100, from: 'LCM', seconds: 0 }, // course converter
   form: {
     stroke: 'Free', sex: 'M', pool: 'LCM', distance: 200,
     targetSeconds: 120, name: '',
@@ -1073,6 +1104,7 @@ function render() {
     case 'race-analysis': html = renderRaceAnalysis(); break;
     case 'race-compare': html = renderRaceCompare(); break;
     case 'squad-targets': html = renderSquadTargets(); break;
+    case 'converter': html = renderConverter(); break;
     default: html = '<div class="p-8 text-slate-500">Unknown view</div>';
   }
   host.innerHTML = html;
@@ -1124,6 +1156,33 @@ function render() {
       });
       el.addEventListener('blur', () => {
         if ((el === tsec || el === thh) && el.value !== '') el.value = el.value.padStart(2, '0');
+        sync();
+      });
+    });
+  }
+  // Course-converter segmented input (min:sec.hh) → state.convForm.seconds; live-update the result.
+  const cmin = host.querySelector('[data-cmin]');
+  const csec = host.querySelector('[data-csec]');
+  const chh = host.querySelector('[data-chh]');
+  if (cmin && csec && chh) {
+    const res = host.querySelector('#conv-result');
+    const sync = () => {
+      const m = parseInt(cmin.value || '0', 10) || 0;
+      const s = parseInt(csec.value || '0', 10) || 0;
+      const h = parseInt(chh.value || '0', 10) || 0;
+      state.convForm.seconds = m * 60 + s + h / 100;
+      if (res) res.innerHTML = convResultHtml();
+    };
+    [cmin, csec, chh].forEach((el) => {
+      el.addEventListener('focus', () => el.select());
+      el.addEventListener('input', () => {
+        el.value = el.value.replace(/\D/g, '').slice(0, 2);
+        sync();
+        if (el === cmin && el.value.length === 2) { csec.focus(); csec.select(); }
+        else if (el === csec && el.value.length === 2) { chh.focus(); chh.select(); }
+      });
+      el.addEventListener('blur', () => {
+        if ((el === csec || el === chh) && el.value !== '') el.value = el.value.padStart(2, '0');
         sync();
       });
     });
@@ -1234,6 +1293,15 @@ function renderRoster() {
       <button class="bg-white border border-slate-200 rounded-2xl px-4 py-4 text-left hover:border-cyan-300 hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm" data-action="new-race">
         <div class="font-bold text-slate-800 text-[15px]">Analyze a race</div>
         <div class="text-[11px] text-muted mt-0.5 leading-snug">Compare a swim to the plan</div>
+      </button>
+    </div>
+    <div class="px-5 pb-2">
+      <button class="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3.5 text-left hover:border-cyan-300 hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm flex items-center justify-between gap-3" data-action="converter">
+        <div>
+          <div class="font-bold text-slate-800 text-[15px]">Course converter</div>
+          <div class="text-[11px] text-muted mt-0.5 leading-snug">Convert a time between SCM &amp; LCM</div>
+        </div>
+        <span class="text-cyan-600 text-xl leading-none flex-shrink-0">⇄</span>
       </button>
     </div>
     <div class="px-5 pb-1">
@@ -1393,6 +1461,118 @@ function renderSwimmerDetail() {
   `;
 }
 
+// ----- Screen: Course converter (SCM ↔ LCM) -----
+// Result block only — recomputed live on time input without a full re-render.
+function convResultHtml() {
+  const c = state.convForm;
+  const toCourse = c.from === 'LCM' ? 'SCM' : 'LCM';
+  const secs = Math.max(0, c.seconds || 0);
+  const rec = (convRatios[c.stroke] && convRatios[c.stroke][c.sex]) ? convRatios[c.stroke][c.sex][c.distance] : null;
+  if (!rec) {
+    return `<div class="bg-white border border-slate-200 rounded-2xl p-6 text-center">
+      <div class="text-slate-700 font-semibold text-sm mb-1">No conversion for this event</div>
+      <div class="text-slate-500 text-sm leading-relaxed">${c.distance} m ${c.stroke} isn't a standard SCM/LCM pair in the World Aquatics data. Try Free (50–1500), Fly/Back/Breast (50/100/200), or IM (200/400).</div>
+    </div>`;
+  }
+  if (!secs) {
+    return `<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-6 text-center text-sm text-muted">Enter a ${c.from} time above to see the predicted ${toCourse} time.</div>`;
+  }
+  let mean, fast, slow, fastLabel, slowLabel;
+  if (c.from === 'SCM') {           // SCM → LCM: multiply by ratio
+    mean = secs * rec.mean; fast = secs * rec.q25; slow = secs * rec.q75;
+    fastLabel = 'favours LCM'; slowLabel = 'favours SCM';
+  } else {                          // LCM → SCM: divide by ratio
+    mean = secs / rec.mean; fast = secs / rec.q75; slow = secs / rec.q25;
+    fastLabel = 'favours SCM'; slowLabel = 'favours LCM';
+  }
+  const cap = 'text-[9px] uppercase tracking-wide text-faint';
+  return `
+    <div class="bg-white border border-slate-200 rounded-2xl p-5">
+      <div class="label-cap text-muted mb-1">Predicted ${toCourse} · ${c.distance} m ${c.stroke} ${c.sex === 'M' ? 'Men' : 'Women'}</div>
+      <div class="hero-time text-4xl leading-tight text-center my-2">${formatTime(mean)}</div>
+      <div class="relative">
+        <div class="range-track"><div class="range-fill" style="left:12%; right:12%;"></div><div class="range-tick" style="left:50%;"></div></div>
+        <div class="flex justify-between items-baseline text-[11px] text-muted mt-1.5">
+          <span><span class="mono">${formatTime(fast)}</span> <span class="${cap}">${fastLabel}</span></span>
+          <span><span class="${cap}">${slowLabel}</span> <span class="mono">${formatTime(slow)}</span></span>
+        </div>
+      </div>
+      <div class="text-center text-[10px] text-faint mt-3 leading-snug">Central = trimmed-mean ratio · range = swimmer who favours LCM ↔ favours SCM (Q25–Q75) · n=${rec.n} paired athletes</div>
+    </div>`;
+}
+
+function renderConverter() {
+  const c = state.convForm;
+  const strokes = ['Free', 'Back', 'Breast', 'Fly', 'IM'];
+  const distances = [50, 100, 200, 400, 800, 1500];
+  const secs = Math.max(0, c.seconds || 0);
+  const cmin = Math.floor(secs / 60);
+  const csec = Math.floor(secs % 60);
+  const chh = Math.round((secs - Math.floor(secs)) * 100);
+  return `
+    <div class="statusbar"></div>
+    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <div class="flex-1 min-w-0">
+        <div class="text-lg font-semibold">Course converter</div>
+        <div class="text-xs text-muted truncate">SCM ↔ LCM · World Aquatics top-200 ratios</div>
+      </div>
+    </div>
+    <div class="scrollable px-5 py-4 space-y-6">
+      <div>
+        <div class="label-cap mb-2">Stroke</div>
+        <div class="flex gap-2 flex-wrap">
+          ${strokes.map(s => `<span class="pill ${c.stroke === s ? 'active' : ''}" data-cstroke="${s}">${s}</span>`).join('')}
+        </div>
+      </div>
+      <div class="flex gap-3">
+        <div class="flex-1">
+          <div class="label-cap mb-2">Sex</div>
+          <div class="seg-group">
+            <div class="seg ${c.sex === 'M' ? 'active' : ''}" data-csex="M">Men</div>
+            <div class="seg ${c.sex === 'F' ? 'active' : ''}" data-csex="F">Women</div>
+          </div>
+        </div>
+        <div class="flex-1">
+          <div class="label-cap mb-2">Direction</div>
+          <div class="seg-group">
+            <div class="seg ${c.from === 'LCM' ? 'active' : ''}" data-convfrom="LCM">LCM→SCM</div>
+            <div class="seg ${c.from === 'SCM' ? 'active' : ''}" data-convfrom="SCM">SCM→LCM</div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="label-cap mb-2">Distance</div>
+        <div class="flex gap-2 flex-wrap">
+          ${distances.map(d => `<span class="pill ${c.distance === d ? 'active' : ''}" data-cdist="${d}">${d}</span>`).join('')}
+        </div>
+      </div>
+      <div>
+        <div class="label-cap mb-2">${c.from} time to convert</div>
+        <div class="bg-gradient-to-br from-cyan-50 to-white border-2 border-cyan-200 rounded-2xl px-4 py-5 focus-within:border-cyan-500 transition">
+          <div class="flex items-end justify-center gap-1">
+            <div class="text-center">
+              <input data-cmin inputmode="numeric" maxlength="2" value="${cmin}" class="time-seg" aria-label="Minutes" />
+              <div class="time-seg-label">min</div>
+            </div>
+            <div class="time-seg-sep">:</div>
+            <div class="text-center">
+              <input data-csec inputmode="numeric" maxlength="2" value="${String(csec).padStart(2, '0')}" class="time-seg" aria-label="Seconds" />
+              <div class="time-seg-label">sec</div>
+            </div>
+            <div class="time-seg-sep">.</div>
+            <div class="text-center">
+              <input data-chh inputmode="numeric" maxlength="2" value="${String(chh).padStart(2, '0')}" class="time-seg" aria-label="Hundredths" />
+              <div class="time-seg-label">hund.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="conv-result">${convResultHtml()}</div>
+    </div>
+  `;
+}
+
 // ----- Screen 2: Quick Calc form -----
 function renderQuickCalc() {
   const f = state.form;
@@ -1544,12 +1724,22 @@ function rangeBar(lo, hi, mid) {
 function renderIM400Splits(r) {
   const strokes = ['Fly', 'Back', 'Breast', 'Free'];
   const cap = 'text-[9px] uppercase tracking-wide text-faint';
+  let cumMed = 0, cumFast = 0, cumSlow = 0; // cumulative at each 100 mark
   return strokes.map((stk, j) => {
     const a = 2 * j, b = 2 * j + 1;
     const h = r.splits[a] + r.splits[b];                              // 100 median = sum of its 50s
     const hlo = r.hundoLo ? r.hundoLo[j] : (r.lo[a] + r.lo[b]);       // dedicated 100 IQR
     const hhi = r.hundoHi ? r.hundoHi[j] : (r.hi[a] + r.hi[b]);
     const lg = stk.toLowerCase();
+    // Cumulative to this 100 mark (median bracketed + fast/slow range). Skip the first 100 (fly),
+    // where cumulative just repeats the split; the last (free) lands on the target.
+    cumMed += h; cumFast += hlo; cumSlow += hhi;
+    const cumBlock = j > 0
+      ? `<div class="text-center mt-1.5 leading-tight">
+           <div class="text-[10px] text-faint mono">(${formatTime(cumMed)})</div>
+           <div class="text-[11px] text-slate-600 mono font-semibold">${formatTime(cumFast)} – ${formatTime(cumSlow)}</div>
+         </div>`
+      : '';
     const sub = [a, b].map((idx, si) => `
       <div class="px-4 py-2.5 flex items-center gap-3">
         <span class="label-cap text-faint flex-shrink-0" style="width:46px;">${si === 0 ? '1st 50' : '2nd 50'}</span>
@@ -1571,6 +1761,7 @@ function renderIM400Splits(r) {
             <span><span class="mono">${formatTime(hlo)}</span> <span class="${cap}">better ${lg}</span></span>
             <span><span class="${cap}">worse ${lg}</span> <span class="mono">${formatTime(hhi)}</span></span>
           </div>
+          ${cumBlock}
         </div>
         <div class="bg-slate-50/70">${sub}</div>
       </div>`;
@@ -1614,7 +1805,7 @@ function renderPredictedSplits() {
     const showCum = isDistanceCollapsed ? (isFirstRow || isLastRow) : !isFirstRow;
     const cumBlock = showCum
       ? `<div class="text-center mt-1.5 leading-tight">
-           <div class="text-[10px] text-faint">cum <span class="mono">(${formatTime(cumRun)})</span></div>
+           <div class="text-[10px] text-faint mono">(${formatTime(cumRun)})</div>
            <div class="text-[11px] text-slate-600 mono font-semibold">${formatTime(fastCum)} – ${formatTime(slowCum)}</div>
          </div>`
       : '';
@@ -2467,6 +2658,15 @@ document.addEventListener('click', (e) => {
       if (state.view === 'race-entry') seedRaceTimes();
       render(); return;
     }
+    // Course-converter selectors (separate state so they don't touch the predictor form).
+    const cstroke = e.target.closest('[data-cstroke]');
+    if (cstroke) { state.convForm.stroke = cstroke.getAttribute('data-cstroke'); render(); return; }
+    const csex = e.target.closest('[data-csex]');
+    if (csex) { state.convForm.sex = csex.getAttribute('data-csex'); render(); return; }
+    const cdist = e.target.closest('[data-cdist]');
+    if (cdist) { state.convForm.distance = parseInt(cdist.getAttribute('data-cdist'), 10); render(); return; }
+    const cfrom = e.target.closest('[data-convfrom]');
+    if (cfrom) { state.convForm.from = cfrom.getAttribute('data-convfrom'); render(); return; }
     const action = e.target.closest('[data-action]');
     if (action) {
       handleAction(action.getAttribute('data-action'), action);
@@ -2560,6 +2760,7 @@ function handleAction(action, el) {
       navigate('predicted-splits');
       break;
     case 'toggle-edit': state.editing = !state.editing; render(); break;
+    case 'converter': navigate('converter'); break;
     case 'back': back(); break;
     case 'squad': navigate('squad-targets'); break;
     case 'settings': showToast('Settings — not in v1 mock'); break;
