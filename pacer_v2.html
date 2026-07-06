@@ -981,11 +981,117 @@ const convRatios = {
   },
 };
 
+// Elite stroke rate (cycles/min) per event & sex: mean + min–max across Paris 2024 + Fukuoka 2023
+// 8-swimmer finals. Whole-event average (not per-split; not IQR — min/max of finalists). No IM data.
+const srRef = {
+  Free: {
+    50: { M: { avg: 62.2, min: 59.4, max: 66.5 }, F: { avg: 59.3, min: 55.2, max: 63.5 } },
+    100: { M: { avg: 51.4, min: 48.0, max: 54.8 }, F: { avg: 51.0, min: 48.3, max: 53.6 } },
+    200: { M: { avg: 42.7, min: 38.5, max: 46.0 }, F: { avg: 44.5, min: 40.3, max: 47.8 } },
+    400: { M: { avg: 41.5, min: 36.2, max: 45.6 }, F: { avg: 44.5, min: 41.9, max: 48.2 } },
+    800: { M: { avg: 40.9, min: 37.6, max: 44.5 }, F: { avg: 43.9, min: 40.0, max: 49.8 } },
+    1500: { M: { avg: 39.2, min: 35.3, max: 44.2 }, F: { avg: 44.9, min: 40.6, max: 48.9 } },
+  },
+  Fly: {
+    50: { M: { avg: 64.7, min: 60.5, max: 70.4 }, F: { avg: 64.6, min: 60.0, max: 69.9 } },
+    100: { M: { avg: 56.4, min: 52.9, max: 59.9 }, F: { avg: 57.1, min: 52.9, max: 60.5 } },
+    200: { M: { avg: 50.9, min: 48.1, max: 54.1 }, F: { avg: 51.8, min: 49.2, max: 55.1 } },
+  },
+  Back: {
+    50: { M: { avg: 58.2, min: 51.8, max: 65.5 }, F: { avg: 56.3, min: 52.0, max: 62.1 } },
+    100: { M: { avg: 49.3, min: 45.0, max: 55.1 }, F: { avg: 49.2, min: 43.9, max: 54.0 } },
+    200: { M: { avg: 42.6, min: 40.1, max: 45.2 }, F: { avg: 42.8, min: 38.7, max: 47.4 } },
+  },
+  Breast: {
+    50: { M: { avg: 67.0, min: 61.3, max: 73.8 }, F: { avg: 64.6, min: 61.2, max: 69.2 } },
+    100: { M: { avg: 52.7, min: 47.6, max: 58.3 }, F: { avg: 49.8, min: 46.0, max: 53.8 } },
+    200: { M: { avg: 40.7, min: 34.8, max: 50.5 }, F: { avg: 38.5, min: 35.9, max: 41.5 } },
+  },
+};
+
+// 50m LCM sub-split ratios (fraction of the 50 time) + fixed 1st/2nd-25 stroke rates, per stroke/sex.
+// From Paris 2024 + Fukuoka 2023 finals (University of Toronto 50m pacing library).
+const fiftyRatios = {
+  Free: {
+    M: { first25: 0.450687, second25: 0.549313, r15: 0.241013, r15_25: 0.209674, r25_45: 0.443697, turn: 0.408787, sr1: 63.3, sr2: 61 },
+    F: { first25: 0.461789, second25: 0.538211, r15: 0.254532, r15_25: 0.207258, r25_45: 0.436377, turn: 0.410385, sr1: 60.5, sr2: 58 },
+  },
+  Fly: {
+    M: { first25: 0.449699, second25: 0.550301, r15: 0.234773, r15_25: 0.214927, r25_45: 0.444031, turn: 0.422799, sr1: 65.3, sr2: 64 },
+    F: { first25: 0.453617, second25: 0.546383, r15: 0.241306, r15_25: 0.212311, r25_45: 0.439152, turn: 0.431471, sr1: 65.5, sr2: 63.6 },
+  },
+  Back: {
+    M: { first25: 0.45737, second25: 0.54263, r15: 0.246681, r15_25: 0.210688, r25_45: 0.438622, turn: 0.391992, sr1: 59.3, sr2: 57.1 },
+    F: { first25: 0.461658, second25: 0.538342, r15: 0.250297, r15_25: 0.211362, r25_45: 0.435819, turn: 0.394353, sr1: 57.2, sr2: 55.4 },
+  },
+  Breast: {
+    M: { first25: 0.448553, second25: 0.551447, r15: 0.231678, r15_25: 0.216874, r25_45: 0.446659, turn: 0.429144, sr1: 67.1, sr2: 66.9 },
+    F: { first25: 0.455781, second25: 0.544219, r15: 0.243846, r15_25: 0.211935, r25_45: 0.440674, turn: 0.427289, sr1: 64.8, sr2: 64.4 },
+  },
+};
+
+// Adjacent-distance ratios (World Aquatics dual top-200 cohorts). Key: sex|stroke|pool|dShort|dLong.
+// up = predict the LONGER time from the shorter (×mean); down = predict the SHORTER from the longer.
+const adjRatios = {
+  'F|Back|LCM|100|200': { up: { mean: 2.16866, q25: 2.1611, q75: 2.18209, n: 47 }, down: { mean: 0.46788, q25: 0.46593, q75: 0.46986, n: 63 } },
+  'F|Back|LCM|50|100': { up: { mean: 2.15873, q25: 2.14835, q75: 2.17539, n: 53 }, down: { mean: 0.47038, q25: 0.46869, q75: 0.47364, n: 72 } },
+  'F|Back|SCM|100|200': { up: { mean: 2.19505, q25: 2.18185, q75: 2.20949, n: 38 }, down: { mean: 0.46427, q25: 0.46235, q75: 0.46745, n: 73 } },
+  'F|Back|SCM|50|100': { up: { mean: 2.17572, q25: 2.16649, q75: 2.18815, n: 55 }, down: { mean: 0.46805, q25: 0.46565, q75: 0.47083, n: 76 } },
+  'F|Breast|LCM|100|200': { up: { mean: 2.1778, q25: 2.16707, q75: 2.19258, n: 45 }, down: { mean: 0.46813, q25: 0.46579, q75: 0.47002, n: 70 } },
+  'F|Breast|LCM|50|100': { up: { mean: 2.1938, q25: 2.18383, q75: 2.20793, n: 50 }, down: { mean: 0.46263, q25: 0.46089, q75: 0.46439, n: 71 } },
+  'F|Breast|SCM|100|200': { up: { mean: 2.17547, q25: 2.16559, q75: 2.19009, n: 54 }, down: { mean: 0.46826, q25: 0.46617, q75: 0.47117, n: 68 } },
+  'F|Breast|SCM|50|100': { up: { mean: 2.17975, q25: 2.17079, q75: 2.19184, n: 61 }, down: { mean: 0.46618, q25: 0.46416, q75: 0.46954, n: 74 } },
+  'F|Fly|LCM|100|200': { up: { mean: 2.22539, q25: 2.22043, q75: 2.23781, n: 19 }, down: { mean: 0.45708, q25: 0.45462, q75: 0.46049, n: 47 } },
+  'F|Fly|LCM|50|100': { up: { mean: 2.2408, q25: 2.23128, q75: 2.25452, n: 52 }, down: { mean: 0.45481, q25: 0.45302, q75: 0.45774, n: 46 } },
+  'F|Fly|SCM|100|200': { up: { mean: 2.23331, q25: 2.22847, q75: 2.24069, n: 16 }, down: { mean: 0.45748, q25: 0.45439, q75: 0.46112, n: 48 } },
+  'F|Fly|SCM|50|100': { up: { mean: 2.24263, q25: 2.23051, q75: 2.26184, n: 46 }, down: { mean: 0.45429, q25: 0.45186, q75: 0.45737, n: 67 } },
+  'F|Free|LCM|100|200': { up: { mean: 2.19344, q25: 2.18088, q75: 2.20859, n: 35 }, down: { mean: 0.46486, q25: 0.46322, q75: 0.46701, n: 47 } },
+  'F|Free|LCM|200|400': { up: { mean: 2.11976, q25: 2.11279, q75: 2.13712, n: 33 }, down: { mean: 0.47867, q25: 0.47657, q75: 0.48062, n: 55 } },
+  'F|Free|LCM|400|800': { up: { mean: 2.0693, q25: 2.06291, q75: 2.0796, n: 53 }, down: { mean: 0.4891, q25: 0.48781, q75: 0.49103, n: 77 } },
+  'F|Free|LCM|50|100': { up: { mean: 2.19749, q25: 2.19011, q75: 2.20868, n: 57 }, down: { mean: 0.46213, q25: 0.46062, q75: 0.46469, n: 60 } },
+  'F|Free|LCM|800|1500': { up: { mean: 1.92788, q25: 1.9222, q75: 1.93447, n: 43 }, down: { mean: 0.52521, q25: 0.52316, q75: 0.52756, n: 90 } },
+  'F|Free|SCM|100|200': { up: { mean: 2.19452, q25: 2.1795, q75: 2.2094, n: 32 }, down: { mean: 0.4644, q25: 0.46194, q75: 0.4685, n: 50 } },
+  'F|Free|SCM|200|400': { up: { mean: 2.13416, q25: 2.12124, q75: 2.14886, n: 26 }, down: { mean: 0.47801, q25: 0.47562, q75: 0.48117, n: 54 } },
+  'F|Free|SCM|400|800': { up: { mean: 2.07981, q25: 2.07245, q75: 2.08984, n: 33 }, down: { mean: 0.48803, q25: 0.48629, q75: 0.48986, n: 74 } },
+  'F|Free|SCM|50|100': { up: { mean: 2.20208, q25: 2.1899, q75: 2.2162, n: 57 }, down: { mean: 0.46159, q25: 0.45998, q75: 0.46395, n: 66 } },
+  'F|Free|SCM|800|1500': { up: { mean: 1.94331, q25: 1.93598, q75: 1.95295, n: 16 }, down: { mean: 0.52365, q25: 0.52155, q75: 0.5265, n: 67 } },
+  'F|IM|LCM|200|400': { up: { mean: 2.13545, q25: 2.12764, q75: 2.14445, n: 45 }, down: { mean: 0.47573, q25: 0.47398, q75: 0.47785, n: 59 } },
+  'F|IM|SCM|100|200': { up: { mean: 2.18514, q25: 2.17251, q75: 2.201, n: 40 }, down: { mean: 0.46714, q25: 0.46489, q75: 0.46925, n: 66 } },
+  'F|IM|SCM|200|400': { up: { mean: 2.13725, q25: 2.12808, q75: 2.15859, n: 46 }, down: { mean: 0.47582, q25: 0.47332, q75: 0.47913, n: 61 } },
+  'M|Back|LCM|100|200': { up: { mean: 2.19834, q25: 2.19027, q75: 2.20702, n: 40 }, down: { mean: 0.46214, q25: 0.46029, q75: 0.46415, n: 52 } },
+  'M|Back|LCM|50|100': { up: { mean: 2.17288, q25: 2.16047, q75: 2.18815, n: 60 }, down: { mean: 0.46775, q25: 0.4658, q75: 0.46984, n: 61 } },
+  'M|Back|SCM|100|200': { up: { mean: 2.22291, q25: 2.2132, q75: 2.23237, n: 41 }, down: { mean: 0.45893, q25: 0.4564, q75: 0.4621, n: 64 } },
+  'M|Back|SCM|50|100': { up: { mean: 2.19169, q25: 2.1806, q75: 2.20151, n: 56 }, down: { mean: 0.46431, q25: 0.46185, q75: 0.46784, n: 74 } },
+  'M|Breast|LCM|100|200': { up: { mean: 2.18619, q25: 2.17684, q75: 2.19669, n: 36 }, down: { mean: 0.46428, q25: 0.46198, q75: 0.46723, n: 58 } },
+  'M|Breast|LCM|50|100': { up: { mean: 2.21226, q25: 2.20392, q75: 2.23168, n: 54 }, down: { mean: 0.4582, q25: 0.45624, q75: 0.4608, n: 58 } },
+  'M|Breast|SCM|100|200': { up: { mean: 2.18988, q25: 2.1806, q75: 2.20497, n: 40 }, down: { mean: 0.46417, q25: 0.46192, q75: 0.46679, n: 68 } },
+  'M|Breast|SCM|50|100': { up: { mean: 2.19323, q25: 2.18366, q75: 2.20489, n: 57 }, down: { mean: 0.46233, q25: 0.46053, q75: 0.46455, n: 69 } },
+  'M|Fly|LCM|100|200': { up: { mean: 2.26888, q25: 2.25534, q75: 2.28399, n: 21 }, down: { mean: 0.44926, q25: 0.44731, q75: 0.45289, n: 36 } },
+  'M|Fly|LCM|50|100': { up: { mean: 2.22851, q25: 2.21905, q75: 2.24219, n: 40 }, down: { mean: 0.45581, q25: 0.4538, q75: 0.45837, n: 56 } },
+  'M|Fly|SCM|100|200': { up: { mean: 2.26043, q25: 2.24746, q75: 2.29134, n: 17 }, down: { mean: 0.45216, q25: 0.44988, q75: 0.45478, n: 53 } },
+  'M|Fly|SCM|50|100': { up: { mean: 2.23765, q25: 2.22927, q75: 2.25296, n: 44 }, down: { mean: 0.45353, q25: 0.45124, q75: 0.45634, n: 73 } },
+  'M|Free|LCM|100|200': { up: { mean: 2.23132, q25: 2.22689, q75: 2.23731, n: 8 }, down: { mean: 0.45841, q25: 0.45525, q75: 0.46101, n: 27 } },
+  'M|Free|LCM|200|400': { up: { mean: 2.14001, q25: 2.13833, q75: 2.1536, n: 14 }, down: { mean: 0.47148, q25: 0.47048, q75: 0.47295, n: 27 } },
+  'M|Free|LCM|400|800': { up: { mean: 2.08673, q25: 2.08143, q75: 2.09394, n: 34 }, down: { mean: 0.48564, q25: 0.48383, q75: 0.4879, n: 25 } },
+  'M|Free|LCM|50|100': { up: { mean: 2.22093, q25: 2.20702, q75: 2.23194, n: 41 }, down: { mean: 0.45696, q25: 0.4554, q75: 0.45995, n: 54 } },
+  'M|Free|LCM|800|1500': { up: { mean: 1.91689, q25: 1.91394, q75: 1.91965, n: 60 }, down: { mean: 0.52607, q25: 0.52496, q75: 0.52736, n: 78 } },
+  'M|Free|SCM|100|200': { up: { mean: 2.22797, q25: 2.21929, q75: 2.24472, n: 24 }, down: { mean: 0.457, q25: 0.45495, q75: 0.46051, n: 48 } },
+  'M|Free|SCM|200|400': { up: { mean: 2.15567, q25: 2.14596, q75: 2.1638, n: 33 }, down: { mean: 0.47095, q25: 0.4694, q75: 0.47263, n: 50 } },
+  'M|Free|SCM|400|800': { up: { mean: 2.11369, q25: 2.10532, q75: 2.12294, n: 42 }, down: { mean: 0.48325, q25: 0.4803, q75: 0.48568, n: 47 } },
+  'M|Free|SCM|50|100': { up: { mean: 2.22471, q25: 2.2156, q75: 2.23649, n: 44 }, down: { mean: 0.45786, q25: 0.45574, q75: 0.46025, n: 55 } },
+  'M|Free|SCM|800|1500': { up: { mean: 1.91403, q25: 1.90829, q75: 1.91913, n: 72 }, down: { mean: 0.53063, q25: 0.52868, q75: 0.53197, n: 62 } },
+  'M|IM|LCM|200|400': { up: { mean: 2.16031, q25: 2.15048, q75: 2.17297, n: 40 }, down: { mean: 0.47057, q25: 0.4684, q75: 0.47286, n: 62 } },
+  'M|IM|SCM|100|200': { up: { mean: 2.20335, q25: 2.19021, q75: 2.22159, n: 32 }, down: { mean: 0.46336, q25: 0.46147, q75: 0.46567, n: 64 } },
+  'M|IM|SCM|200|400': { up: { mean: 2.16869, q25: 2.15991, q75: 2.18205, n: 42 }, down: { mean: 0.46985, q25: 0.46797, q75: 0.47226, n: 65 } },
+};
+
 const state = {
   view: 'roster',
   history: [],
   swimmer: null, // active swimmer if any
   convForm: { stroke: 'Free', sex: 'M', distance: 100, from: 'LCM', seconds: 0 }, // course converter
+  fiftyForm: { stroke: 'Free', sex: 'M', seconds: 0 }, // 50m LCM split calculator
+  adjForm: { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 100, seconds: 0 }, // adjacent-events predictor
   form: {
     stroke: 'Free', sex: 'M', pool: 'LCM', distance: 200,
     targetSeconds: 120, name: '',
@@ -1028,6 +1134,51 @@ function showToast(msg) {
 
 // Small trash glyph reused on delete buttons.
 const TRASH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>';
+
+// ----- Export saved swimmers to CSV (client-side, opens in Excel) -----
+function csvCell(v) {
+  v = (v == null ? '' : String(v));
+  return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+}
+function downloadFile(filename, content, mime) {
+  const blob = new Blob(['﻿' + content], { type: mime + ';charset=utf-8;' }); // BOM → Excel reads accents
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+}
+function exportSavedCsv() {
+  if (!state.saved.length) { showToast('No saved swimmers to export'); return; }
+  const header = ['Swimmer', 'Type', 'Stroke', 'Distance', 'Pool', 'Sex', 'Round', 'Date', 'Target', 'Actual total', 'Delta vs target', 'Splits'];
+  const lines = [header];
+  const sorted = state.saved.slice().sort((a, b) =>
+    (a.name || '').localeCompare(b.name || '') || ((a.kind === 'race' ? 1 : 0) - (b.kind === 'race' ? 1 : 0)));
+  sorted.forEach(s => {
+    const isRace = s.kind === 'race';
+    const sexL = s.sex === 'M' ? 'Men' : 'Women';
+    const target = s.targetSeconds != null ? formatTime(s.targetSeconds) : '';
+    let actual = '', delta = '', splits = '';
+    if (isRace) {
+      const c = buildRaceComparison(s);
+      if (c) {
+        actual = formatTime(c.actualTotal);
+        delta = (c.delta >= 0 ? '+' : '') + c.delta.toFixed(2);
+        splits = c.rows.filter(r => r.actual != null && !/total/i.test(r.label))
+          .map(r => `${r.label} ${formatTime(r.actual)}`).join(' | ');
+      }
+    } else {
+      const r = predict(s.stroke, s.sex, s.pool, s.distance, s.targetSeconds);
+      if (r && r.splits) splits = r.splits.map((x, i) => `${(i + 1) * (r.segLen || 50)}m ${formatTime(x)}`).join(' | ');
+    }
+    lines.push([s.name, isRace ? 'Race' : 'Pace plan', s.stroke, s.distance, s.pool, sexL,
+      isRace ? (s.round || '') : '', isRace ? (s.date || '') : '', target, actual, delta, splits]);
+  });
+  const csv = lines.map(row => row.map(csvCell).join(',')).join('\r\n');
+  const stamp = new Date().toISOString().slice(0, 10);
+  downloadFile(`pacer_swimmers_${stamp}.csv`, csv, 'text/csv');
+  showToast(`Exported ${state.saved.length} saved ${state.saved.length === 1 ? 'entry' : 'entries'}`);
+}
 
 // ----- Delete: one saved event (pace plan or race) -----
 function deleteEvent(id) {
@@ -1105,6 +1256,8 @@ function render() {
     case 'race-compare': html = renderRaceCompare(); break;
     case 'squad-targets': html = renderSquadTargets(); break;
     case 'converter': html = renderConverter(); break;
+    case 'fifty': html = renderFifty(); break;
+    case 'adjacent': html = renderAdjacent(); break;
     default: html = '<div class="p-8 text-slate-500">Unknown view</div>';
   }
   host.innerHTML = html;
@@ -1187,6 +1340,32 @@ function render() {
       });
     });
   }
+  // Generic segmented-time binder used by the 50 m and adjacent screens (live-updates a result box).
+  const bindSegTime = (minSel, secSel, hhSel, setSeconds, resultSel, resultHtml) => {
+    const mn = host.querySelector(minSel), sc = host.querySelector(secSel), hh = host.querySelector(hhSel);
+    if (!mn || !sc || !hh) return;
+    const box = resultSel ? host.querySelector(resultSel) : null;
+    const sync = () => {
+      const m = parseInt(mn.value || '0', 10) || 0, s = parseInt(sc.value || '0', 10) || 0, h = parseInt(hh.value || '0', 10) || 0;
+      setSeconds(m * 60 + s + h / 100);
+      if (box) box.innerHTML = resultHtml();
+    };
+    [mn, sc, hh].forEach((el) => {
+      el.addEventListener('focus', () => el.select());
+      el.addEventListener('input', () => {
+        el.value = el.value.replace(/\D/g, '').slice(0, 2);
+        sync();
+        if (el === mn && el.value.length === 2) { sc.focus(); sc.select(); }
+        else if (el === sc && el.value.length === 2) { hh.focus(); hh.select(); }
+      });
+      el.addEventListener('blur', () => {
+        if ((el === sc || el === hh) && el.value !== '') el.value = el.value.padStart(2, '0');
+        sync();
+      });
+    });
+  };
+  bindSegTime('[data-fmin]', '[data-fsec]', '[data-fhh]', (v) => { state.fiftyForm.seconds = v; }, '#fifty-result', fiftyResultHtml);
+  bindSegTime('[data-amin]', '[data-asec]', '[data-ahh]', (v) => { state.adjForm.seconds = v; }, '#adj-result', adjResultHtml);
   // Race-entry segmented time boxes (min:sec.hh) — one group per row, keyed into state.raceForm.times.
   host.querySelectorAll('[data-tkey]').forEach((grp) => {
     const key = grp.getAttribute('data-tkey');
@@ -1295,13 +1474,27 @@ function renderRoster() {
         <div class="text-[11px] text-muted mt-0.5 leading-snug">Compare a swim to the plan</div>
       </button>
     </div>
-    <div class="px-5 pb-2">
+    <div class="px-5 pb-2 space-y-2">
       <button class="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3.5 text-left hover:border-cyan-300 hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm flex items-center justify-between gap-3" data-action="converter">
         <div>
           <div class="font-bold text-slate-800 text-[15px]">Course converter</div>
           <div class="text-[11px] text-muted mt-0.5 leading-snug">Convert a time between SCM &amp; LCM</div>
         </div>
         <span class="text-cyan-600 text-xl leading-none flex-shrink-0">⇄</span>
+      </button>
+      <button class="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3.5 text-left hover:border-cyan-300 hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm flex items-center justify-between gap-3" data-action="adjacent">
+        <div>
+          <div class="font-bold text-slate-800 text-[15px]">Adjacent events</div>
+          <div class="text-[11px] text-muted mt-0.5 leading-snug">Predict the event up &amp; down from your main</div>
+        </div>
+        <span class="text-cyan-600 text-xl leading-none flex-shrink-0">↕</span>
+      </button>
+      <button class="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3.5 text-left hover:border-cyan-300 hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm flex items-center justify-between gap-3" data-action="fifty-splits">
+        <div>
+          <div class="font-bold text-slate-800 text-[15px]">50 m LCM splits</div>
+          <div class="text-[11px] text-muted mt-0.5 leading-snug">Sub-splits, checkpoints &amp; stroke rate</div>
+        </div>
+        <span class="text-cyan-600 text-lg leading-none flex-shrink-0">½</span>
       </button>
     </div>
     <div class="px-5 pb-1">
@@ -1312,7 +1505,10 @@ function renderRoster() {
     </div>
     ${hasSaved ? `<div class="px-5 pt-3 pb-1 flex items-center justify-between">
       <span class="label-cap">Saved swimmers</span>
-      <button class="text-xs font-semibold ${editing ? 'text-cyan-700' : 'text-slate-400'} hover:text-cyan-700 transition" data-action="toggle-edit">${editing ? 'Done' : 'Edit'}</button>
+      <div class="flex items-center gap-3">
+        <button class="text-xs font-semibold text-slate-400 hover:text-cyan-700 transition" data-action="export-csv">Export CSV</button>
+        <button class="text-xs font-semibold ${editing ? 'text-cyan-700' : 'text-slate-400'} hover:text-cyan-700 transition" data-action="toggle-edit">${editing ? 'Done' : 'Edit'}</button>
+      </div>
     </div>` : ''}
     <div class="scrollable px-3 pb-4">
       ${hasSaved ? `<div>${savedRows}</div>` : emptyState}
@@ -1573,6 +1769,190 @@ function renderConverter() {
   `;
 }
 
+// ----- Screen: 50 m LCM split calculator -----
+function fiftyResultHtml() {
+  const f = state.fiftyForm;
+  const T = Math.max(0, f.seconds || 0);
+  const rr = fiftyRatios[f.stroke] && fiftyRatios[f.stroke][f.sex];
+  if (!rr) return `<div class="bg-white border border-slate-200 rounded-2xl p-6 text-center text-sm text-muted">No 50 m data for this stroke.</div>`;
+  if (!T) return `<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-6 text-center text-sm text-muted">Enter a 50 m LCM time above to see the splits.</div>`;
+  const s1 = rr.first25 * T, s2 = rr.second25 * T;
+  const cp = {
+    '15 m': rr.r15 * T,
+    '20 m': rr.r15 * T + rr.r15_25 * T * 0.5,
+    '25 m': rr.first25 * T,
+    '30 m': rr.first25 * T + rr.second25 * T * 0.2,
+    '35 m': rr.first25 * T + rr.second25 * T * 0.4,
+    '40 m': rr.first25 * T + rr.second25 * T * 0.6,
+    '45 m': rr.first25 * T + rr.second25 * T * 0.8,
+  };
+  const topSpeed = rr.r15_25 * T * 1.5, speedEnd = rr.r25_45 * T * 0.75, turn = rr.turn * T;
+  const cpRows = Object.entries(cp).map(([m, v]) =>
+    `<div class="flex justify-between px-3 py-2 border-b border-slate-100 last:border-0"><span class="text-sm text-muted">${m}</span><span class="mono font-semibold text-slate-800">${v.toFixed(2)}</span></div>`).join('');
+  return `
+    <div class="bg-white border border-slate-200 rounded-2xl p-4">
+      <div class="grid grid-cols-2 gap-3 text-center">
+        <div><div class="label-cap text-muted mb-1">1st 25 m</div><div class="hero-time text-3xl">${s1.toFixed(2)}</div></div>
+        <div><div class="label-cap text-muted mb-1">2nd 25 m</div><div class="hero-time text-3xl">${s2.toFixed(2)}</div></div>
+      </div>
+      <div class="text-center text-[11px] text-muted mt-2">Stroke rate: 1st 25 <span class="mono font-semibold text-slate-700">${rr.sr1}</span> · 2nd 25 <span class="mono font-semibold text-slate-700">${rr.sr2}</span> cyc/min</div>
+    </div>
+    <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+      <div class="label-cap text-muted px-3 pt-3 pb-1">Cumulative checkpoints (from start)</div>
+      ${cpRows}
+    </div>
+    <div class="bg-white border border-slate-200 rounded-2xl p-4 space-y-2">
+      <div class="label-cap text-muted mb-1">Speed windows (elapsed)</div>
+      <div class="flex justify-between text-sm"><span class="text-muted">Top speed (15→30 m)</span><span class="mono font-semibold">${topSpeed.toFixed(2)} s</span></div>
+      <div class="flex justify-between text-sm"><span class="text-muted">Speed endurance (30→45 m)</span><span class="mono font-semibold">${speedEnd.toFixed(2)} s</span></div>
+      <div class="flex justify-between text-sm"><span class="text-muted">Turn (5 m in + 15 m out)</span><span class="mono font-semibold">${turn.toFixed(2)} s</span></div>
+    </div>
+    <div class="text-center text-[10px] text-faint leading-snug">Ratios: Paris 2024 + Fukuoka 2023 finals · University of Toronto 50 m pacing library</div>
+  `;
+}
+
+function renderFifty() {
+  const f = state.fiftyForm;
+  const strokes = ['Free', 'Back', 'Breast', 'Fly'];
+  const secs = Math.max(0, f.seconds || 0);
+  const fmin = Math.floor(secs / 60), fsec = Math.floor(secs % 60), fhh = Math.round((secs - Math.floor(secs)) * 100);
+  return `
+    <div class="statusbar"></div>
+    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <div class="flex-1 min-w-0">
+        <div class="text-lg font-semibold">50 m LCM splits</div>
+        <div class="text-xs text-muted truncate">Sub-splits, checkpoints, stroke rate</div>
+      </div>
+    </div>
+    <div class="scrollable px-5 py-4 space-y-6">
+      <div>
+        <div class="label-cap mb-2">Stroke</div>
+        <div class="flex gap-2 flex-wrap">
+          ${strokes.map(s => `<span class="pill ${f.stroke === s ? 'active' : ''}" data-fstroke="${s}">${s}</span>`).join('')}
+        </div>
+      </div>
+      <div>
+        <div class="label-cap mb-2">Sex</div>
+        <div class="seg-group" style="max-width:220px;">
+          <div class="seg ${f.sex === 'M' ? 'active' : ''}" data-fsex="M">Men</div>
+          <div class="seg ${f.sex === 'F' ? 'active' : ''}" data-fsex="F">Women</div>
+        </div>
+      </div>
+      <div>
+        <div class="label-cap mb-2">50 m LCM time</div>
+        <div class="bg-gradient-to-br from-cyan-50 to-white border-2 border-cyan-200 rounded-2xl px-4 py-5 focus-within:border-cyan-500 transition">
+          <div class="flex items-end justify-center gap-1">
+            <div class="text-center"><input data-fmin inputmode="numeric" maxlength="2" value="${fmin}" class="time-seg" aria-label="Minutes" /><div class="time-seg-label">min</div></div>
+            <div class="time-seg-sep">:</div>
+            <div class="text-center"><input data-fsec inputmode="numeric" maxlength="2" value="${String(fsec).padStart(2, '0')}" class="time-seg" aria-label="Seconds" /><div class="time-seg-label">sec</div></div>
+            <div class="time-seg-sep">.</div>
+            <div class="text-center"><input data-fhh inputmode="numeric" maxlength="2" value="${String(fhh).padStart(2, '0')}" class="time-seg" aria-label="Hundredths" /><div class="time-seg-label">hund.</div></div>
+          </div>
+        </div>
+      </div>
+      <div id="fifty-result" class="space-y-3">${fiftyResultHtml()}</div>
+    </div>
+  `;
+}
+
+// ----- Screen: Adjacent-events predictor -----
+function adjResultHtml() {
+  const f = state.adjForm;
+  const T = Math.max(0, f.seconds || 0);
+  const ladder = [50, 100, 200, 400, 800, 1500];
+  const idx = ladder.indexOf(f.distance);
+  if (!T) return `<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-6 text-center text-sm text-muted">Enter your ${f.distance} m time above to predict the neighbouring events.</div>`;
+  const cap = 'text-[9px] uppercase tracking-wide text-faint';
+  const mk = (dist, dir, r) => {
+    const mean = T * r.mean, fast = T * r.q25, slow = T * r.q75;
+    return `
+      <div class="bg-white border border-slate-200 rounded-2xl p-4">
+        <div class="label-cap text-muted mb-1">${dist} m ${f.stroke} · ${dir}</div>
+        <div class="hero-time text-3xl text-center leading-tight my-1">${formatTime(mean)}</div>
+        <div class="flex justify-between items-baseline text-[11px] text-muted mt-1">
+          <span><span class="mono">${formatTime(fast)}</span> <span class="${cap}">faster</span></span>
+          <span><span class="${cap}">slower</span> <span class="mono">${formatTime(slow)}</span></span>
+        </div>
+        <div class="text-center text-[10px] text-faint mt-2">Q25–Q75 · n=${r.n} dual-ranked athletes</div>
+      </div>`;
+  };
+  const cards = [];
+  if (idx > 0) {
+    const dp = ladder[idx - 1];
+    const rec = adjRatios[`${f.sex}|${f.stroke}|${f.pool}|${dp}|${f.distance}`];
+    if (rec) cards.push(mk(dp, 'shorter', rec.down));
+  }
+  if (idx >= 0 && idx < ladder.length - 1) {
+    const dn = ladder[idx + 1];
+    const rec = adjRatios[`${f.sex}|${f.stroke}|${f.pool}|${f.distance}|${dn}`];
+    if (rec) cards.push(mk(dn, 'longer', rec.up));
+  }
+  if (!cards.length) return `<div class="bg-white border border-slate-200 rounded-2xl p-6 text-center"><div class="text-slate-700 font-semibold text-sm mb-1">No adjacent events on the ladder</div><div class="text-slate-500 text-sm leading-relaxed">There's no neighbouring ${f.stroke} ${f.pool} event with dual-ranked data for the ${f.distance} m. Try a different distance or stroke.</div></div>`;
+  return cards.join('');
+}
+
+function renderAdjacent() {
+  const f = state.adjForm;
+  const strokes = ['Free', 'Back', 'Breast', 'Fly', 'IM'];
+  const distances = [50, 100, 200, 400, 800, 1500];
+  const secs = Math.max(0, f.seconds || 0);
+  const amin = Math.floor(secs / 60), asec = Math.floor(secs % 60), ahh = Math.round((secs - Math.floor(secs)) * 100);
+  return `
+    <div class="statusbar"></div>
+    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <div class="flex-1 min-w-0">
+        <div class="text-lg font-semibold">Adjacent events</div>
+        <div class="text-xs text-muted truncate">Predict the next event up &amp; down from your main</div>
+      </div>
+    </div>
+    <div class="scrollable px-5 py-4 space-y-6">
+      <div>
+        <div class="label-cap mb-2">Main stroke</div>
+        <div class="flex gap-2 flex-wrap">
+          ${strokes.map(s => `<span class="pill ${f.stroke === s ? 'active' : ''}" data-astroke="${s}">${s}</span>`).join('')}
+        </div>
+      </div>
+      <div class="flex gap-3">
+        <div class="flex-1">
+          <div class="label-cap mb-2">Sex</div>
+          <div class="seg-group">
+            <div class="seg ${f.sex === 'M' ? 'active' : ''}" data-asex="M">Men</div>
+            <div class="seg ${f.sex === 'F' ? 'active' : ''}" data-asex="F">Women</div>
+          </div>
+        </div>
+        <div class="flex-1">
+          <div class="label-cap mb-2">Pool</div>
+          <div class="seg-group">
+            <div class="seg ${f.pool === 'LCM' ? 'active' : ''}" data-apool="LCM">LCM</div>
+            <div class="seg ${f.pool === 'SCM' ? 'active' : ''}" data-apool="SCM">SCM</div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="label-cap mb-2">Main distance</div>
+        <div class="flex gap-2 flex-wrap">
+          ${distances.map(d => `<span class="pill ${f.distance === d ? 'active' : ''}" data-adist="${d}">${d}</span>`).join('')}
+        </div>
+      </div>
+      <div>
+        <div class="label-cap mb-2">Your ${f.distance} m time</div>
+        <div class="bg-gradient-to-br from-cyan-50 to-white border-2 border-cyan-200 rounded-2xl px-4 py-5 focus-within:border-cyan-500 transition">
+          <div class="flex items-end justify-center gap-1">
+            <div class="text-center"><input data-amin inputmode="numeric" maxlength="2" value="${amin}" class="time-seg" aria-label="Minutes" /><div class="time-seg-label">min</div></div>
+            <div class="time-seg-sep">:</div>
+            <div class="text-center"><input data-asec inputmode="numeric" maxlength="2" value="${String(asec).padStart(2, '0')}" class="time-seg" aria-label="Seconds" /><div class="time-seg-label">sec</div></div>
+            <div class="time-seg-sep">.</div>
+            <div class="text-center"><input data-ahh inputmode="numeric" maxlength="2" value="${String(ahh).padStart(2, '0')}" class="time-seg" aria-label="Hundredths" /><div class="time-seg-label">hund.</div></div>
+          </div>
+        </div>
+      </div>
+      <div id="adj-result" class="space-y-3">${adjResultHtml()}</div>
+    </div>
+  `;
+}
+
 // ----- Screen 2: Quick Calc form -----
 function renderQuickCalc() {
   const f = state.form;
@@ -1766,6 +2146,27 @@ function renderIM400Splits(r) {
         <div class="bg-slate-50/70">${sub}</div>
       </div>`;
   }).join('');
+}
+
+// Elite stroke-rate card for the Predicted splits screen (mean + min–max of finalists).
+// Whole-event average; no IM data. The 50 also shows the 1st/2nd-25 rates.
+function srCardHtml(r) {
+  const rec = srRef[r.stroke] && srRef[r.stroke][r.distance] && srRef[r.stroke][r.distance][r.sex];
+  if (!rec) return '';
+  const fifty = (r.distance === 50 && fiftyRatios[r.stroke]) ? fiftyRatios[r.stroke][r.sex] : null;
+  const fiftyLine = fifty
+    ? `<div class="text-[11px] text-muted mt-2 text-center">1st 25 <span class="mono font-semibold text-slate-700">${fifty.sr1}</span> · 2nd 25 <span class="mono font-semibold text-slate-700">${fifty.sr2}</span> cyc/min</div>`
+    : '';
+  return `
+    <div class="bg-white rounded-2xl border border-slate-200 px-4 py-4">
+      <div class="label-cap mb-2 text-muted">Elite stroke rate</div>
+      <div class="text-center">
+        <div class="hero-time text-3xl leading-tight">${rec.avg.toFixed(1)}<span class="text-sm text-muted font-normal"> cyc/min</span></div>
+        <div class="text-[11px] text-muted mt-1">range <span class="mono">${rec.min.toFixed(1)}–${rec.max.toFixed(1)}</span></div>
+      </div>
+      ${fiftyLine}
+      <div class="text-center text-[10px] text-faint mt-2 leading-snug">Mean & min–max of finalists · Paris 2024 + Fukuoka 2023 (LCM)</div>
+    </div>`;
 }
 
 function renderPredictedSplits() {
@@ -1965,6 +2366,7 @@ function renderPredictedSplits() {
         </div>
         ${(isIM && r.distance === 400) ? renderIM400Splits(r) : splitRows}
       </div>
+      ${srCardHtml(r)}
       ${pb50Card}
       ${state.swimmer ? `
         <button class="w-full bg-cyan-600 text-white rounded-xl py-4 text-sm font-semibold hover:bg-cyan-700 transition" data-action="set-as-target">Set as ${state.swimmer.name.split(' ')[0]}'s race target</button>
@@ -2667,6 +3069,20 @@ document.addEventListener('click', (e) => {
     if (cdist) { state.convForm.distance = parseInt(cdist.getAttribute('data-cdist'), 10); render(); return; }
     const cfrom = e.target.closest('[data-convfrom]');
     if (cfrom) { state.convForm.from = cfrom.getAttribute('data-convfrom'); render(); return; }
+    // 50 m LCM calculator selectors
+    const fstroke = e.target.closest('[data-fstroke]');
+    if (fstroke) { state.fiftyForm.stroke = fstroke.getAttribute('data-fstroke'); render(); return; }
+    const fsex = e.target.closest('[data-fsex]');
+    if (fsex) { state.fiftyForm.sex = fsex.getAttribute('data-fsex'); render(); return; }
+    // Adjacent-events selectors
+    const astroke = e.target.closest('[data-astroke]');
+    if (astroke) { state.adjForm.stroke = astroke.getAttribute('data-astroke'); render(); return; }
+    const asex = e.target.closest('[data-asex]');
+    if (asex) { state.adjForm.sex = asex.getAttribute('data-asex'); render(); return; }
+    const apool = e.target.closest('[data-apool]');
+    if (apool) { state.adjForm.pool = apool.getAttribute('data-apool'); render(); return; }
+    const adist = e.target.closest('[data-adist]');
+    if (adist) { state.adjForm.distance = parseInt(adist.getAttribute('data-adist'), 10); render(); return; }
     const action = e.target.closest('[data-action]');
     if (action) {
       handleAction(action.getAttribute('data-action'), action);
@@ -2760,7 +3176,10 @@ function handleAction(action, el) {
       navigate('predicted-splits');
       break;
     case 'toggle-edit': state.editing = !state.editing; render(); break;
+    case 'export-csv': exportSavedCsv(); break;
     case 'converter': navigate('converter'); break;
+    case 'fifty-splits': navigate('fifty'); break;
+    case 'adjacent': navigate('adjacent'); break;
     case 'back': back(); break;
     case 'squad': navigate('squad-targets'); break;
     case 'settings': showToast('Settings — not in v1 mock'); break;
