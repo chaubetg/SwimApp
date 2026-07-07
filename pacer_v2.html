@@ -1133,7 +1133,7 @@ const state = {
   history: [],
   swimmer: null, // active swimmer if any
   convForm: { stroke: 'Free', sex: 'M', distance: 100, from: 'LCM', seconds: 0, name: '' }, // course converter
-  fiftyForm: { stroke: 'Free', sex: 'M', seconds: 0, name: '' }, // 50m LCM split calculator
+  fiftyForm: { stroke: 'Free', sex: 'M', seconds: 0, name: '', best: {} }, // 50m LCM split calculator (best = swimmer's clocked times per row)
   adjForm: { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 100, seconds: 0, name: '' }, // adjacent-events predictor
   form: {
     stroke: 'Free', sex: 'M', pool: 'LCM', distance: 200,
@@ -1468,6 +1468,21 @@ function render() {
     const form = k === 'conv' ? state.convForm : k === 'fifty' ? state.fiftyForm : state.adjForm;
     el.addEventListener('input', () => { form.name = el.value; });
   });
+  // 50 m "best time" inputs — delegated on the (persistent) result box so listeners survive its
+  // live innerHTML updates. Store on input; recompute Δ% + colours on focus-out.
+  const fr = host.querySelector('#fifty-result');
+  if (fr && !fr._bestBound) {
+    fr._bestBound = true;
+    fr.addEventListener('input', (e) => {
+      const el = e.target.closest('[data-best]'); if (!el) return;
+      const key = el.getAttribute('data-best'); const v = parseFloat(el.value);
+      if (el.value.trim() === '') delete state.fiftyForm.best[key];
+      else if (!isNaN(v)) state.fiftyForm.best[key] = v;
+    });
+    fr.addEventListener('focusout', (e) => {
+      if (e.target.closest('[data-best]')) fr.innerHTML = fiftyResultHtml();
+    });
+  }
   // Race-entry segmented time boxes (min:sec.hh) — one group per row, keyed into state.raceForm.times.
   host.querySelectorAll('[data-tkey]').forEach((grp) => {
     const key = grp.getAttribute('data-tkey');
@@ -2019,39 +2034,61 @@ function fiftyResultHtml() {
   if (!T) return `<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-6 text-center text-sm text-muted">Enter a 50 m LCM time above to see the splits.</div>`;
   const s1 = rr.first25 * T, s2 = rr.second25 * T;
   const iq = fiftyIqr[f.stroke] && fiftyIqr[f.stroke][f.sex];
-  const d1 = v => v.toFixed(1);
-  const rangeUnder = (lo, hi) => iq ? `<div class="text-[11px] text-muted mono mt-0.5">(${d1(lo)} – ${d1(hi)})</div>` : '';
-  const cp = {
-    '15 m': rr.r15 * T,
-    '20 m': rr.r15 * T + rr.r15_25 * T * 0.5,
-    '25 m': rr.first25 * T,
-    '30 m': rr.first25 * T + rr.second25 * T * 0.2,
-    '35 m': rr.first25 * T + rr.second25 * T * 0.4,
-    '40 m': rr.first25 * T + rr.second25 * T * 0.6,
-    '45 m': rr.first25 * T + rr.second25 * T * 0.8,
-  };
+  const d1 = v => (v == null ? '—' : v.toFixed(1));
+  const best = f.best || (f.best = {});
   const topSpeed = rr.r15_25 * T * 1.5, speedEnd = rr.r25_45 * T * 0.75, turn = rr.turn * T;
+  const cp = {
+    '15 m': rr.r15 * T, '20 m': rr.r15 * T + rr.r15_25 * T * 0.5, '25 m': rr.first25 * T,
+    '30 m': rr.first25 * T + rr.second25 * T * 0.2, '35 m': rr.first25 * T + rr.second25 * T * 0.4,
+    '40 m': rr.first25 * T + rr.second25 * T * 0.6, '45 m': rr.first25 * T + rr.second25 * T * 0.8,
+  };
   const cpRows = Object.entries(cp).map(([m, v]) =>
     `<div class="flex justify-between px-3 py-2 border-b border-slate-100 last:border-0"><span class="text-sm text-muted">${m}</span><span class="mono font-semibold text-slate-800">${d1(v)}</span></div>`).join('');
+
+  // Comparison rows: predicted mean + optional IQR range + the swimmer's best (input) + Δ% vs mean.
+  const rows = [
+    { key: 's1', label: '1st 25 m', sub: 'clock to the head', pred: s1, lo: iq ? iq.f1lo * T : null, hi: iq ? iq.f1hi * T : null },
+    { key: 's2', label: '2nd 25 m', pred: s2, lo: iq ? iq.f2lo * T : null, hi: iq ? iq.f2hi * T : null },
+    { key: 'mm25', label: 'min–max 25 m', sub: 'fastest flying 25', pred: null },
+    { key: 'uw', label: 'Top Speed UW', sub: '5–20 m', pred: topSpeed, sw: 'win' },
+    { key: 'sw', label: 'Top Speed SW', sub: '15→30 m', pred: topSpeed, sw: 'win' },
+    { key: 'se', label: 'Speed endurance', sub: '2nd 15 m of 2×25 m FAST @20s', pred: speedEnd, sw: 'win' },
+    { key: 'turn', label: 'Turn', sub: '5 m in + 15 m out', pred: turn, sw: 'win' },
+  ];
+  // Rank the filled rows by Δ% for the colour coding (worst gap = red, best = bright green).
+  const scored = rows.filter(r => r.pred != null && best[r.key] > 0)
+    .map(r => ({ key: r.key, pct: (best[r.key] - r.pred) / r.pred * 100 }))
+    .sort((a, b) => a.pct - b.pct);
+  const colorFor = {}; const n = scored.length;
+  if (n >= 1) { colorFor[scored[n - 1].key] = 'bg-rose-500 text-white'; colorFor[scored[0].key] = 'bg-emerald-500 text-white'; }
+  if (n >= 4) { colorFor[scored[n - 2].key] = 'bg-rose-100 text-rose-700'; colorFor[scored[1].key] = 'bg-emerald-100 text-emerald-800'; }
+  const GT = 'display:grid;grid-template-columns:1fr 3.6rem 3.2rem 2.9rem;gap:6px;align-items:center;';
+  const rowHtml = r => {
+    const pctVal = (r.pred != null && best[r.key] > 0) ? (best[r.key] - r.pred) / r.pred * 100 : null;
+    const pctStr = pctVal == null ? '—' : `${pctVal >= 0 ? '+' : ''}${pctVal.toFixed(1)}%`;
+    const cls = colorFor[r.key] || 'bg-slate-50 text-slate-400';
+    const range = (r.lo != null && r.hi != null) ? `<div class="text-[9px] text-faint mono leading-tight">${d1(r.lo)}–${d1(r.hi)}</div>` : '';
+    return `<div style="${GT}" class="px-3 py-2 border-b border-slate-100 last:border-0">
+      <div><div class="text-sm font-semibold text-slate-800 leading-tight">${r.label}</div>${r.sub ? `<div class="text-[10px] text-faint leading-tight">${r.sub}</div>` : ''}</div>
+      <div class="text-right"><div class="mono text-sm font-semibold text-slate-700">${d1(r.pred)}</div>${range}</div>
+      <input data-best="${r.key}" inputmode="decimal" value="${best[r.key] != null ? best[r.key] : ''}" placeholder="best" class="w-full bg-slate-100 rounded-lg px-1.5 py-1.5 text-sm text-right outline-none focus:ring-2 focus:ring-cyan-300" />
+      <div class="text-center text-[11px] font-bold rounded-lg py-1.5 ${cls}">${pctStr}</div>
+    </div>`;
+  };
+  const header = `<div style="${GT}" class="px-3 pt-3 pb-1"><span class="label-cap text-muted">Split</span><span class="label-cap text-muted text-right">Pred</span><span class="label-cap text-muted text-center">Best</span><span class="label-cap text-muted text-center">Δ%</span></div>`;
   return `
-    <div class="bg-white border border-slate-200 rounded-2xl p-4">
-      <div class="grid grid-cols-2 gap-3 text-center">
-        <div><div class="label-cap text-muted mb-1">1st 25 m</div><div class="hero-time text-3xl">${d1(s1)}</div>${rangeUnder(iq ? iq.f1lo * T : 0, iq ? iq.f1hi * T : 0)}</div>
-        <div><div class="label-cap text-muted mb-1">2nd 25 m</div><div class="hero-time text-3xl">${d1(s2)}</div>${rangeUnder(iq ? iq.f2lo * T : 0, iq ? iq.f2hi * T : 0)}</div>
-      </div>
-      <div class="text-center text-[11px] text-muted mt-2">Stroke rate: 1st 25 <span class="mono font-semibold text-slate-700">${Math.round(rr.sr1)}</span> · 2nd 25 <span class="mono font-semibold text-slate-700">${Math.round(rr.sr2)}</span> cyc/min</div>
+    <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+      ${header}
+      ${rows.filter(r => !r.sw).map(rowHtml).join('')}
+      <div class="px-3 pt-2 pb-1 bg-slate-50/70 label-cap text-muted">Speed windows (elapsed)</div>
+      ${rows.filter(r => r.sw).map(rowHtml).join('')}
     </div>
+    <div class="text-center text-[11px] text-muted">Stroke rate: 1st 25 <span class="mono font-semibold text-slate-700">${Math.round(rr.sr1)}</span> · 2nd 25 <span class="mono font-semibold text-slate-700">${Math.round(rr.sr2)}</span> cyc/min</div>
     <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden">
       <div class="label-cap text-muted px-3 pt-3 pb-1">Cumulative checkpoints (from start)</div>
       ${cpRows}
     </div>
-    <div class="bg-white border border-slate-200 rounded-2xl p-4 space-y-2">
-      <div class="label-cap text-muted mb-1">Speed windows (elapsed)</div>
-      <div class="flex justify-between text-sm"><span class="text-muted">Top speed (15→30 m)</span><span class="mono font-semibold">${d1(topSpeed)} s</span></div>
-      <div class="flex justify-between text-sm"><span class="text-muted">Speed endurance (30→45 m)</span><span class="mono font-semibold">${d1(speedEnd)} s</span></div>
-      <div class="flex justify-between text-sm"><span class="text-muted">Turn (5 m in + 15 m out)</span><span class="mono font-semibold">${d1(turn)} s</span></div>
-    </div>
-    <div class="text-center text-[10px] text-faint leading-snug">1st/2nd-25 range ≈ middle 50% (from split-ratio SD) · Paris 2024 + Fukuoka 2023 · UofT 50 m library</div>
+    <div class="text-center text-[10px] text-faint leading-snug">Δ% = your best vs the mean predicted (＋ = slower). Red = biggest gap to work on · green = strongest. UW expected = SW · 1st/2nd-25 range ≈ middle 50%.</div>
   `;
 }
 
@@ -3280,7 +3317,7 @@ document.addEventListener('click', (e) => {
           state.convForm = { stroke: entry.stroke, sex: entry.sex, distance: entry.distance, from: entry.from, seconds: entry.seconds, name: entry.name, sid: entry.sid };
           navigate('converter', { reviewId: entry.id });
         } else if (entry.kind === 'fifty') {
-          state.fiftyForm = { stroke: entry.stroke, sex: entry.sex, seconds: entry.seconds, name: entry.name, sid: entry.sid };
+          state.fiftyForm = { stroke: entry.stroke, sex: entry.sex, seconds: entry.seconds, name: entry.name, sid: entry.sid, best: { ...(entry.best || {}) } };
           navigate('fifty', { reviewId: entry.id });
         } else if (entry.kind === 'adjacent') {
           state.adjForm = { stroke: entry.stroke, sex: entry.sex, pool: entry.pool, distance: entry.distance, seconds: entry.seconds, name: entry.name, sid: entry.sid };
@@ -3456,7 +3493,7 @@ function handleAction(action, el) {
       if (!(f.name || '').trim()) { showToast('Add a swimmer name to save'); break; }
       if (!f.seconds) { showToast('Enter a time first'); break; }
       const upd = upsertSaved({ id: 'ff' + Date.now().toString(36), sid: resolveSid(f), kind: 'fifty', name: f.name.trim(),
-        stroke: f.stroke, sex: f.sex, distance: 50, seconds: f.seconds });
+        stroke: f.stroke, sex: f.sex, distance: 50, seconds: f.seconds, best: { ...(f.best || {}) } });
       showToast(`${upd ? 'Updated' : 'Saved'} ${f.name.trim()} · 50 m`);
       break;
     }
@@ -3476,7 +3513,7 @@ function handleAction(action, el) {
     }
     case 'add-fifty': {
       const sid = state.savedSid; const evs = entriesOf(sid); const last = evs[evs.length - 1];
-      state.fiftyForm = { stroke: 'Free', sex: last ? last.sex : 'M', seconds: 0, name: swimmerName(sid), sid };
+      state.fiftyForm = { stroke: 'Free', sex: last ? last.sex : 'M', seconds: 0, name: swimmerName(sid), sid, best: {} };
       navigate('fifty'); break;
     }
     case 'add-convert': {
