@@ -1043,6 +1043,29 @@ const srRef = {
   },
 };
 
+const srPer50 = {  // per-50 stroke rate (cyc/min): avg + min–max of finalists, Paris24+Fukuoka23
+  Free: {
+    100: { M: [{ avg: 51.7, lo: 47, hi: 58.1 }, { avg: 51.1, lo: 47, hi: 55.9 }], F: [{ avg: 51.7, lo: 46.9, hi: 55.9 }, { avg: 50.2, lo: 45.6, hi: 52.5 }] },
+    200: { M: [{ avg: 43.8, lo: 38.2, hi: 49.1 }, { avg: 41.1, lo: 37.5, hi: 44.9 }, { avg: 41.6, lo: 36, hi: 46 }, { avg: 44.5, lo: 37.9, hi: 48.2 }], F: [{ avg: 45.6, lo: 39.1, hi: 50.5 }, { avg: 42.9, lo: 36.1, hi: 48.5 }, { avg: 43.8, lo: 38.5, hi: 47.8 }, { avg: 45.5, lo: 39, hi: 48.1 }] },
+  },
+  Fly: {
+    100: { M: [{ avg: 56.7, lo: 53.2, hi: 62.9 }, { avg: 56, lo: 52.1, hi: 59.4 }], F: [{ avg: 57.5, lo: 51.9, hi: 66.1 }, { avg: 56.7, lo: 51.1, hi: 61.3 }] },
+    200: { M: [{ avg: 52.2, lo: 47.7, hi: 56.5 }, { avg: 49.5, lo: 44.6, hi: 52.7 }, { avg: 50, lo: 46.4, hi: 54 }, { avg: 51.7, lo: 47.5, hi: 55.4 }], F: [{ avg: 52.9, lo: 48.5, hi: 58 }, { avg: 50.9, lo: 47.2, hi: 55.1 }, { avg: 51.3, lo: 49, hi: 54.7 }, { avg: 52.2, lo: 48.9, hi: 54.9 }] },
+  },
+  Back: {
+    100: { M: [{ avg: 49.8, lo: 44.5, hi: 61.3 }, { avg: 48.8, lo: 45, hi: 56.6 }], F: [{ avg: 50.2, lo: 43.8, hi: 55.5 }, { avg: 48.3, lo: 43.1, hi: 53.9 }] },
+    200: { M: [{ avg: 43.8, lo: 38.6, hi: 50.2 }, { avg: 40.3, lo: 36.5, hi: 44.4 }, { avg: 41.4, lo: 38.3, hi: 45.5 }, { avg: 45, lo: 40.6, hi: 49.1 }], F: [{ avg: 45.1, lo: 39.5, hi: 49.5 }, { avg: 41.5, lo: 36.5, hi: 46.8 }, { avg: 41.9, lo: 36.7, hi: 47 }, { avg: 42.5, lo: 39.4, hi: 47.4 }] },
+  },
+  Breast: {
+    100: { M: [{ avg: 51.6, lo: 45, hi: 61 }, { avg: 53.9, lo: 45.6, hi: 61 }], F: [{ avg: 48.9, lo: 44.2, hi: 55.9 }, { avg: 50.6, lo: 45, hi: 58.3 }] },
+    200: { M: [{ avg: 38.8, lo: 31.1, hi: 52.4 }, { avg: 36.2, lo: 28.9, hi: 50.3 }, { avg: 38.7, lo: 31.7, hi: 52.9 }, { avg: 46.8, lo: 38.5, hi: 57.3 }], F: [{ avg: 36.3, lo: 32.3, hi: 43.4 }, { avg: 33.6, lo: 29.9, hi: 39 }, { avg: 35.6, lo: 31.5, hi: 41.6 }, { avg: 39.6, lo: 32.9, hi: 46.2 }] },
+  },
+  IM: {
+    200: { M: [{ avg: 53.3, lo: 49.9, hi: 58.9 }, { avg: 43.9, lo: 38.5, hi: 48.6 }, { avg: 38.9, lo: 34.1, hi: 45.9 }, { avg: 45.6, lo: 40.9, hi: 50.7 }], F: [{ avg: 54.4, lo: 48.6, hi: 60.2 }, { avg: 40.7, lo: 38, hi: 43.5 }, { avg: 37.2, lo: 31.9, hi: 43 }, { avg: 44.2, lo: 41.5, hi: 47.2 }] },
+    400: { M: [{ avg: 50.7, lo: 45.4, hi: 56.8 }, { avg: 47.8, lo: 43.5, hi: 53 }, { avg: 37.5, lo: 32.4, hi: 43.8 }, { avg: 36.1, lo: 31.7, hi: 40.5 }, { avg: 34, lo: 30.6, hi: 38.1 }, { avg: 34.8, lo: 30.6, hi: 37.9 }, { avg: 41.8, lo: 35.7, hi: 46.5 }, { avg: 43.2, lo: 36, hi: 48.6 }], F: [{ avg: 51.6, lo: 45.4, hi: 55.7 }, { avg: 49.2, lo: 44.1, hi: 52 }, { avg: 37.7, lo: 33.6, hi: 40.7 }, { avg: 36.6, lo: 31.4, hi: 39.8 }, { avg: 34.2, lo: 28.9, hi: 40.8 }, { avg: 34.3, lo: 29.4, hi: 40.6 }, { avg: 40.8, lo: 37.1, hi: 43.8 }, { avg: 41.6, lo: 37.8, hi: 44.6 }] },
+  },
+};
+
 // 50m LCM sub-split ratios (fraction of the 50 time) + fixed 1st/2nd-25 stroke rates, per stroke/sex.
 // From Paris 2024 + Fukuoka 2023 finals (University of Toronto 50m pacing library).
 const fiftyRatios = {
@@ -2393,6 +2416,7 @@ function rangeBar(lo, hi, mid) {
 // 400 IM: grouped by stroke — each stroke's 100 (headline, dedicated IQR) with its two 50s below.
 function renderIM400Splits(r) {
   const strokes = ['Fly', 'Back', 'Breast', 'Free'];
+  const per50im = srPer50.IM && srPer50.IM[400] && srPer50.IM[400][r.sex]; // per-50 SR for the 8 legs
   const cap = 'text-[9px] uppercase tracking-wide text-faint';
   let cumMed = 0, cumFast = 0, cumSlow = 0; // cumulative at each 100 mark
   return strokes.map((stk, j) => {
@@ -2412,7 +2436,10 @@ function renderIM400Splits(r) {
       : '';
     const sub = [a, b].map((idx, si) => `
       <div class="px-4 py-2.5 flex items-center gap-3">
-        <span class="label-cap text-faint flex-shrink-0" style="width:46px;">${si === 0 ? '1st 50' : '2nd 50'}</span>
+        <div class="flex-shrink-0" style="width:46px;">
+          <span class="label-cap text-faint">${si === 0 ? '1st 50' : '2nd 50'}</span>
+          ${per50im && per50im[idx] ? `<div class="text-[9px] text-faint">SR ${Math.round(per50im[idx].avg)}</div>` : ''}
+        </div>
         <div class="flex-1">
           ${rangeBar(r.lo[idx], r.hi[idx], r.splits[idx])}
           <div class="flex justify-between text-[10px] text-faint mt-1 mono"><span>${formatTime(r.lo[idx])}</span><span>${formatTime(r.hi[idx])}</span></div>
@@ -2441,6 +2468,8 @@ function renderIM400Splits(r) {
 // Elite stroke-rate card for the Predicted splits screen (mean + min–max of finalists).
 // Whole-event average; no IM data. The 50 also shows the 1st/2nd-25 rates.
 function srCardHtml(r) {
+  // Suppressed when per-50 SR is available (that's shown on each split row instead).
+  if (srPer50[r.stroke] && srPer50[r.stroke][r.distance] && srPer50[r.stroke][r.distance][r.sex]) return '';
   const rec = srRef[r.stroke] && srRef[r.stroke][r.distance] && srRef[r.stroke][r.distance][r.sex];
   if (!rec) return '';
   const fifty = (r.distance === 50 && fiftyRatios[r.stroke]) ? fiftyRatios[r.stroke][r.sex] : null;
@@ -2478,6 +2507,7 @@ function renderPredictedSplits() {
 
   const isIM = r.stroke === 'IM';
   const rows = buildDisplaySegments(r);
+  const per50 = srPer50[r.stroke] && srPer50[r.stroke][r.distance] && srPer50[r.stroke][r.distance][r.sex]; // per-50 SR (100/200/IM)
   const isDistanceCollapsed = r.distance >= 400 && !isIM; // shown as First / Middle / Last
   let cumRun = 0, fastCum = 0, slowCum = 0;
   const splitRows = rows.map((row, i) => {
@@ -2522,6 +2552,7 @@ function renderPredictedSplits() {
         <div class="text-center mb-1.5">
           <span class="label-cap text-faint">${row.label}</span>
           <div class="hero-time text-2xl leading-tight">${formatTime(row.time)}</div>
+          ${per50 && per50[i] ? `<div class="text-[10px] text-faint">SR ~${Math.round(per50[i].avg)} cyc/min</div>` : ''}
         </div>
         <div class="relative">
           <div class="range-track">
