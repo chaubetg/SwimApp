@@ -938,10 +938,44 @@ function generateInsights(prediction, actualSplits, swimmer) {
 // swimmer later and pull their splits. Multiple entries per name are allowed.
 const SAVED_KEY = 'pacer_saved_v2';
 function loadSaved() {
-  try { return JSON.parse(localStorage.getItem(SAVED_KEY) || '[]'); } catch (e) { return []; }
+  let arr;
+  try { arr = JSON.parse(localStorage.getItem(SAVED_KEY) || '[]'); } catch (e) { arr = []; }
+  return migrateSids(arr);
 }
 function persistSaved() {
   try { localStorage.setItem(SAVED_KEY, JSON.stringify(state.saved)); } catch (e) {}
+}
+function newSid() { return 'sw' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5); }
+// Back-compat: entries used to be grouped by name. Give any entry without a swimmer id (sid) one,
+// grouping legacy entries by their existing name so previously-saved swimmers stay intact.
+function migrateSids(arr) {
+  const byName = {};
+  (arr || []).forEach(e => {
+    if (!e || e.sid) return;
+    const k = e.name || '';
+    if (!byName[k]) byName[k] = newSid();
+    e.sid = byName[k];
+  });
+  return arr || [];
+}
+function entriesOf(sid) { return state.saved.filter(s => s.sid === sid); }
+function swimmerName(sid) { const e = entriesOf(sid); return e.length ? e[e.length - 1].name : ''; }
+// Which swimmer a save belongs to: an explicit id (from a card or picked suggestion) wins; otherwise
+// attach to an existing swimmer if exactly one has this name; otherwise it's a brand-new swimmer.
+// (To keep two same-named swimmers separate, rename one — they then hold different ids.)
+function resolveSid(form) {
+  if (form && form.sid) return form.sid;
+  const nm = (form && form.name || '').trim();
+  const sids = [...new Set(state.saved.filter(s => (s.name || '') === nm).map(s => s.sid))];
+  return sids.length === 1 ? sids[0] : newSid();
+}
+// Save a new entry, or update the one being reviewed (edit-in-place). Keeps its id + sid on update.
+function upsertSaved(entry) {
+  if (state.reviewId) {
+    const i = state.saved.findIndex(x => x.id === state.reviewId);
+    if (i >= 0) { entry.id = state.reviewId; entry.sid = state.saved[i].sid; state.saved[i] = entry; persistSaved(); return true; }
+  }
+  state.saved.push(entry); persistSaved(); return false;
 }
 // match if any name token (first or last) starts with the typed query
 function nameMatches(name, q) {
@@ -1030,6 +1064,15 @@ const fiftyRatios = {
   },
 };
 
+// IQR-style range (mean ∓ 0.6745·SD, i.e. ~middle 50%) for the 1st/2nd-25 split *ratios*.
+// LCM 50s rarely publish 25m splits, so the ratio dataset reports mean+SD, not raw quartiles.
+const fiftyIqr = {
+  Free: { M: { f1lo: 0.446668, f1hi: 0.454706, f2lo: 0.545294, f2hi: 0.553332 }, F: { f1lo: 0.458383, f1hi: 0.465195, f2lo: 0.534805, f2hi: 0.541617 } },
+  Fly: { M: { f1lo: 0.445794, f1hi: 0.453604, f2lo: 0.546396, f2hi: 0.554206 }, F: { f1lo: 0.449052, f1hi: 0.458182, f2lo: 0.541818, f2hi: 0.550948 } },
+  Back: { M: { f1lo: 0.453228, f1hi: 0.461512, f2lo: 0.538488, f2hi: 0.546772 }, F: { f1lo: 0.459398, f1hi: 0.463918, f2lo: 0.536082, f2hi: 0.540602 } },
+  Breast: { M: { f1lo: 0.444089, f1hi: 0.453017, f2lo: 0.546983, f2hi: 0.555911 }, F: { f1lo: 0.452332, f1hi: 0.45923, f2lo: 0.54077, f2hi: 0.547668 } },
+};
+
 // Adjacent-distance ratios (World Aquatics dual top-200 cohorts). Key: sex|stroke|pool|dShort|dLong.
 // up = predict the LONGER time from the shorter (×mean); down = predict the SHORTER from the longer.
 const adjRatios = {
@@ -1100,7 +1143,8 @@ const state = {
   splitView: '100', // distance events (400+): show '50' or '100' checkpoints
   saved: loadSaved(), // persisted split predictions, searchable by name
   search: '', // roster search query
-  savedName: null, // selected swimmer name on the saved-events menu
+  savedSid: null, // selected swimmer id on the saved-events menu
+  reviewId: null, // id of a saved entry opened for review/edit (Save becomes Update)
   // --- Race analysis ---
   raceForm: { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 200, name: '', round: 'Prelim',
               targetSeconds: 120, times: {} }, // times keyed by row/field -> seconds
@@ -1114,6 +1158,7 @@ function navigate(view, opts = {}) {
   if (!skipHistory && state.view !== view) state.history.push(state.view);
   state.view = view;
   state.editing = false; // leave edit mode whenever we change screens
+  state.reviewId = null; // default: a fresh open is a new entry (review-clicks pass reviewId in opts)
   Object.assign(state, rest);
   render();
 }
@@ -1250,11 +1295,12 @@ function deleteEvent(id) {
 }
 
 // ----- Delete: a whole swimmer (all their plans + races) -----
-function deleteSwimmer(name) {
-  const n = state.saved.filter(x => x.name === name).length;
-  if (!n) return;
-  if (!confirm(`Delete ${name} and all ${n} saved ${n === 1 ? 'item' : 'items'}?\n\nThis can't be undone.`)) return;
-  state.saved = state.saved.filter(x => x.name !== name);
+function deleteSwimmer(sid) {
+  const evs = state.saved.filter(x => x.sid === sid);
+  if (!evs.length) return;
+  const name = evs[evs.length - 1].name || 'this swimmer';
+  if (!confirm(`Delete ${name} and all ${evs.length} saved ${evs.length === 1 ? 'item' : 'items'}?\n\nThis can't be undone.`)) return;
+  state.saved = state.saved.filter(x => x.sid !== sid);
   persistSaved();
   navigate('roster'); // also clears edit mode
   showToast(`Deleted ${name}`);
@@ -1307,6 +1353,7 @@ function render() {
     case 'converter': html = renderConverter(); break;
     case 'fifty': html = renderFifty(); break;
     case 'adjacent': html = renderAdjacent(); break;
+    case 'trends': html = renderTrends(); break;
     default: html = '<div class="p-8 text-slate-500">Unknown view</div>';
   }
   host.innerHTML = html;
@@ -1461,10 +1508,19 @@ function render() {
     };
     nameInput.addEventListener('input', showSuggest);
     nameInput.addEventListener('focus', showSuggest);
+    // Typing a name = a new swimmer (clear any linked id); picking a suggestion re-links to that swimmer.
+    nameInput.addEventListener('input', () => { state.form.sid = null; });
     nameInput.addEventListener('blur', () => setTimeout(() => box && box.classList.add('hidden'), 150));
     if (box) box.addEventListener('mousedown', (e) => {
       const opt = e.target.closest('[data-suggest]');
-      if (opt) { e.preventDefault(); nameInput.value = opt.getAttribute('data-suggest'); state.form.name = nameInput.value; box.classList.add('hidden'); }
+      if (opt) {
+        e.preventDefault();
+        const nm = opt.getAttribute('data-suggest');
+        nameInput.value = nm; state.form.name = nm;
+        const match = state.saved.filter(s => s.name === nm);
+        state.form.sid = match.length ? match[match.length - 1].sid : null;
+        box.classList.add('hidden');
+      }
     });
   }
   // Roster search: live-filter rows by name (token prefix), no full re-render so focus is kept.
@@ -1482,17 +1538,17 @@ function render() {
 
 // ----- Screen 1: Roster -----
 function renderRoster() {
-  // Saved split predictions — one row per unique name (most recently saved first).
-  // Tapping a name opens that swimmer's list of saved events.
-  const seen = new Set(); const orderedNames = [];
-  state.saved.slice().reverse().forEach(s => { if (!seen.has(s.name)) { seen.add(s.name); orderedNames.push(s.name); } });
+  // One row per swimmer (by stable id, most recently saved first) so same-name swimmers don't merge.
+  const seen = new Set(); const orderedSids = [];
+  state.saved.slice().reverse().forEach(s => { if (s.sid && !seen.has(s.sid)) { seen.add(s.sid); orderedSids.push(s.sid); } });
   const editing = state.editing;
-  const savedRows = orderedNames.map(name => {
-    const evs = state.saved.filter(s => s.name === name);
+  const savedRows = orderedSids.map(sid => {
+    const evs = state.saved.filter(s => s.sid === sid);
+    const name = evs[evs.length - 1].name || '';
     const nm = name.replace(/"/g, '&quot;');
-    const navAttrs = editing ? '' : `data-savedname="${nm}" data-name="${nm}"`;
+    const navAttrs = editing ? '' : `data-savedsid="${sid}" data-name="${nm}"`;
     const trailing = editing
-      ? `<button class="w-9 h-9 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center hover:bg-rose-100 active:scale-95 transition flex-shrink-0" data-del-swimmer="${nm}" aria-label="Delete ${nm}">${TRASH_SVG}</button>`
+      ? `<button class="w-9 h-9 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center hover:bg-rose-100 active:scale-95 transition flex-shrink-0" data-del-swimmer="${sid}" aria-label="Delete ${nm}">${TRASH_SVG}</button>`
       : `<span class="text-slate-300 text-2xl">›</span>`;
     return `
     <div class="roster-row px-3 py-3.5 flex items-center gap-3 ${editing ? '' : 'clickable'} rounded-xl" ${navAttrs} style="min-height: 60px;">
@@ -1580,9 +1636,10 @@ function renderRoster() {
 
 // ----- Screen: Saved swimmer — list of that name's saved events -----
 function renderSavedSwimmer() {
-  const name = state.savedName;
-  const all = name ? state.saved.filter(s => s.name === name) : [];
+  const sid = state.savedSid;
+  const all = sid ? state.saved.filter(s => s.sid === sid) : [];
   if (!all.length) return renderRoster();
+  const name = all[all.length - 1].name || '';
   const editing = state.editing;
   const plans   = all.filter(s => !s.kind || s.kind === 'plan');
   const races   = all.filter(s => s.kind === 'race');
@@ -1682,9 +1739,11 @@ function renderSavedSwimmer() {
       <button class="text-sm font-semibold ${editing ? 'text-cyan-700' : 'text-slate-400'} hover:text-cyan-700 transition px-1" data-action="toggle-edit">${editing ? 'Done' : 'Edit'}</button>
     </div>
     ${editing ? `
-    <div class="px-5 pb-2">
-      <button class="w-full bg-rose-50 text-rose-700 border border-rose-200 rounded-xl py-3 text-sm font-semibold hover:bg-rose-100 active:scale-[0.99] transition flex items-center justify-center gap-2" data-del-swimmer="${(name || '').replace(/"/g, '&quot;')}">${TRASH_SVG} Delete this swimmer</button>
+    <div class="px-5 pb-2 space-y-2">
+      <button class="w-full bg-white border border-slate-200 text-slate-700 rounded-xl py-3 text-sm font-semibold hover:bg-slate-50 active:scale-[0.99] transition" data-action="rename-swimmer">Rename swimmer</button>
+      <button class="w-full bg-rose-50 text-rose-700 border border-rose-200 rounded-xl py-3 text-sm font-semibold hover:bg-rose-100 active:scale-[0.99] transition flex items-center justify-center gap-2" data-del-swimmer="${sid}">${TRASH_SVG} Delete this swimmer</button>
     </div>` : `
+    ${trendableCount(all) >= 2 ? `<div class="px-5 pb-2"><button class="w-full bg-white border border-cyan-300 text-cyan-800 rounded-xl py-2.5 text-sm font-semibold hover:bg-cyan-50 active:scale-[0.99] transition" data-action="trends">📈 View trends</button></div>` : ''}
     <div class="px-5 pb-2 flex flex-wrap gap-2">
       <button class="bg-cyan-600 text-white rounded-xl px-3 py-2 text-xs font-semibold hover:bg-cyan-700 active:scale-[0.99] transition" data-action="add-event">+ Pace plan</button>
       <button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-race">+ Race</button>
@@ -1699,6 +1758,71 @@ function renderSavedSwimmer() {
       ${section('Adjacent events', adjRows)}
       ${section('50 m LCM splits', fiftyRows)}
       ${section('Course conversions', convRows)}
+    </div>
+  `;
+}
+
+// ----- Screen: Trends (per-swimmer race progression) -----
+function trendableCount(entries) { return entries.filter(s => s.kind === 'race').length; }
+
+// Minimal dependency-free line chart. races: [{date,total,target}], lower line = faster.
+function trendChartSvg(races, targetRef) {
+  const W = 300, H = 130, padL = 8, padR = 8, padT = 14, padB = 22;
+  const vals = races.map(r => r.total);
+  let vmin = Math.min(...vals), vmax = Math.max(...vals);
+  if (targetRef != null) { vmin = Math.min(vmin, targetRef); vmax = Math.max(vmax, targetRef); }
+  if (vmax - vmin < 0.5) { vmax += 0.5; vmin -= 0.5; }
+  const range = vmax - vmin;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const x = i => padL + (races.length === 1 ? plotW / 2 : (i / (races.length - 1)) * plotW);
+  const yy = v => padT + ((vmax - v) / range) * plotH; // faster (smaller time) sits lower
+  const pts = races.map((r, i) => `${x(i).toFixed(1)},${yy(r.total).toFixed(1)}`).join(' ');
+  const dots = races.map((r, i) => `<circle cx="${x(i).toFixed(1)}" cy="${yy(r.total).toFixed(1)}" r="3.5" fill="#0891b2"/>`).join('');
+  const tline = targetRef != null ? `<line x1="${padL}" y1="${yy(targetRef).toFixed(1)}" x2="${W - padR}" y2="${yy(targetRef).toFixed(1)}" stroke="#f59e0b" stroke-width="1" stroke-dasharray="4 3"/>` : '';
+  const labels = races.map((r, i) => `<text x="${x(i).toFixed(1)}" y="${H - 8}" font-size="8" fill="#94a3b8" text-anchor="middle">${r.date || ''}</text>`).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block">${tline}<polyline points="${pts}" fill="none" stroke="#0891b2" stroke-width="2"/>${dots}${labels}</svg>`;
+}
+
+function renderTrends() {
+  const sid = state.savedSid;
+  const name = swimmerName(sid);
+  const races = entriesOf(sid).filter(s => s.kind === 'race');
+  const groups = {};
+  races.forEach(s => { const k = `${s.distance} ${s.stroke} ${s.pool}`; (groups[k] = groups[k] || []).push(s); });
+  const cards = Object.keys(groups).map(k => {
+    const list = groups[k].map(s => { const c = buildRaceComparison(s); return { date: s.date, total: c ? c.actualTotal : 0, target: s.targetSeconds }; }).filter(r => r.total > 0);
+    if (list.length < 2) {
+      const r = list[0];
+      return `<div class="bg-white border border-slate-200 rounded-2xl p-4">
+        <div class="font-semibold text-[15px] mb-1">${k}</div>
+        <div class="text-xs text-muted">${r ? `One race · ${formatTime(r.total)}` : 'No data'} — add another to see a trend.</div>
+      </div>`;
+    }
+    const first = list[0].total, last = list[list.length - 1].total, best = Math.min(...list.map(r => r.total));
+    const drop = first - last;
+    const targetRef = list[list.length - 1].target;
+    return `<div class="bg-white border border-slate-200 rounded-2xl p-4">
+      <div class="flex items-baseline justify-between mb-0.5">
+        <div class="font-semibold text-[15px]">${k}</div>
+        <div class="text-xs ${drop >= 0 ? 'text-emerald-700' : 'text-rose-600'} font-semibold">${drop >= 0 ? '−' : '+'}${Math.abs(drop).toFixed(2)}s</div>
+      </div>
+      <div class="text-[11px] text-muted mb-2">best <span class="mono font-semibold text-slate-700">${formatTime(best)}</span> · ${list.length} races · <span class="text-amber-600">– – target</span></div>
+      ${trendChartSvg(list, targetRef)}
+    </div>`;
+  }).join('');
+
+  return `
+    <div class="statusbar"></div>
+    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <div class="flex-1 min-w-0">
+        <div class="text-lg font-semibold truncate">${name}</div>
+        <div class="text-xs text-muted">Race trends</div>
+      </div>
+    </div>
+    <div class="scrollable px-5 py-3 space-y-3 bg-slate-50">
+      ${cards || '<div class="text-center text-sm text-muted p-8">Save at least two races in the same event to see a trend.</div>'}
+      <div class="text-center text-[10px] text-faint leading-snug">A descending line means dropping time (getting faster) · dashed = target</div>
     </div>
   `;
 }
@@ -1879,7 +2003,7 @@ function renderConverter() {
         <div class="label-cap mb-2 text-muted">Save to a swimmer</div>
         <div class="flex gap-2">
           <input data-toolname data-form="conv" value="${(c.name || '').replace(/"/g, '&quot;')}" placeholder="Swimmer name" class="flex-1 bg-slate-100 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300" />
-          <button class="px-4 py-2.5 bg-cyan-600 text-white rounded-xl text-sm font-semibold hover:bg-cyan-700 active:scale-95 transition" data-action="save-conv">Save</button>
+          <button class="px-4 py-2.5 bg-cyan-600 text-white rounded-xl text-sm font-semibold hover:bg-cyan-700 active:scale-95 transition" data-action="save-conv">${state.reviewId ? 'Update' : 'Save'}</button>
         </div>
       </div>
     </div>
@@ -1894,6 +2018,9 @@ function fiftyResultHtml() {
   if (!rr) return `<div class="bg-white border border-slate-200 rounded-2xl p-6 text-center text-sm text-muted">No 50 m data for this stroke.</div>`;
   if (!T) return `<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-6 text-center text-sm text-muted">Enter a 50 m LCM time above to see the splits.</div>`;
   const s1 = rr.first25 * T, s2 = rr.second25 * T;
+  const iq = fiftyIqr[f.stroke] && fiftyIqr[f.stroke][f.sex];
+  const d1 = v => v.toFixed(1);
+  const rangeUnder = (lo, hi) => iq ? `<div class="text-[11px] text-muted mono mt-0.5">(${d1(lo)} – ${d1(hi)})</div>` : '';
   const cp = {
     '15 m': rr.r15 * T,
     '20 m': rr.r15 * T + rr.r15_25 * T * 0.5,
@@ -1905,12 +2032,12 @@ function fiftyResultHtml() {
   };
   const topSpeed = rr.r15_25 * T * 1.5, speedEnd = rr.r25_45 * T * 0.75, turn = rr.turn * T;
   const cpRows = Object.entries(cp).map(([m, v]) =>
-    `<div class="flex justify-between px-3 py-2 border-b border-slate-100 last:border-0"><span class="text-sm text-muted">${m}</span><span class="mono font-semibold text-slate-800">${v.toFixed(2)}</span></div>`).join('');
+    `<div class="flex justify-between px-3 py-2 border-b border-slate-100 last:border-0"><span class="text-sm text-muted">${m}</span><span class="mono font-semibold text-slate-800">${d1(v)}</span></div>`).join('');
   return `
     <div class="bg-white border border-slate-200 rounded-2xl p-4">
       <div class="grid grid-cols-2 gap-3 text-center">
-        <div><div class="label-cap text-muted mb-1">1st 25 m</div><div class="hero-time text-3xl">${s1.toFixed(2)}</div></div>
-        <div><div class="label-cap text-muted mb-1">2nd 25 m</div><div class="hero-time text-3xl">${s2.toFixed(2)}</div></div>
+        <div><div class="label-cap text-muted mb-1">1st 25 m</div><div class="hero-time text-3xl">${d1(s1)}</div>${rangeUnder(iq ? iq.f1lo * T : 0, iq ? iq.f1hi * T : 0)}</div>
+        <div><div class="label-cap text-muted mb-1">2nd 25 m</div><div class="hero-time text-3xl">${d1(s2)}</div>${rangeUnder(iq ? iq.f2lo * T : 0, iq ? iq.f2hi * T : 0)}</div>
       </div>
       <div class="text-center text-[11px] text-muted mt-2">Stroke rate: 1st 25 <span class="mono font-semibold text-slate-700">${Math.round(rr.sr1)}</span> · 2nd 25 <span class="mono font-semibold text-slate-700">${Math.round(rr.sr2)}</span> cyc/min</div>
     </div>
@@ -1920,11 +2047,11 @@ function fiftyResultHtml() {
     </div>
     <div class="bg-white border border-slate-200 rounded-2xl p-4 space-y-2">
       <div class="label-cap text-muted mb-1">Speed windows (elapsed)</div>
-      <div class="flex justify-between text-sm"><span class="text-muted">Top speed (15→30 m)</span><span class="mono font-semibold">${topSpeed.toFixed(2)} s</span></div>
-      <div class="flex justify-between text-sm"><span class="text-muted">Speed endurance (30→45 m)</span><span class="mono font-semibold">${speedEnd.toFixed(2)} s</span></div>
-      <div class="flex justify-between text-sm"><span class="text-muted">Turn (5 m in + 15 m out)</span><span class="mono font-semibold">${turn.toFixed(2)} s</span></div>
+      <div class="flex justify-between text-sm"><span class="text-muted">Top speed (15→30 m)</span><span class="mono font-semibold">${d1(topSpeed)} s</span></div>
+      <div class="flex justify-between text-sm"><span class="text-muted">Speed endurance (30→45 m)</span><span class="mono font-semibold">${d1(speedEnd)} s</span></div>
+      <div class="flex justify-between text-sm"><span class="text-muted">Turn (5 m in + 15 m out)</span><span class="mono font-semibold">${d1(turn)} s</span></div>
     </div>
-    <div class="text-center text-[10px] text-faint leading-snug">Ratios: Paris 2024 + Fukuoka 2023 finals · University of Toronto 50 m pacing library</div>
+    <div class="text-center text-[10px] text-faint leading-snug">1st/2nd-25 range ≈ middle 50% (from split-ratio SD) · Paris 2024 + Fukuoka 2023 · UofT 50 m library</div>
   `;
 }
 
@@ -1973,7 +2100,7 @@ function renderFifty() {
         <div class="label-cap mb-2 text-muted">Save to a swimmer</div>
         <div class="flex gap-2">
           <input data-toolname data-form="fifty" value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="Swimmer name" class="flex-1 bg-slate-100 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300" />
-          <button class="px-4 py-2.5 bg-cyan-600 text-white rounded-xl text-sm font-semibold hover:bg-cyan-700 active:scale-95 transition" data-action="save-fifty">Save</button>
+          <button class="px-4 py-2.5 bg-cyan-600 text-white rounded-xl text-sm font-semibold hover:bg-cyan-700 active:scale-95 transition" data-action="save-fifty">${state.reviewId ? 'Update' : 'Save'}</button>
         </div>
       </div>
     </div>
@@ -1987,18 +2114,13 @@ function adjResultHtml() {
   const ladder = [50, 100, 200, 400, 800, 1500];
   const idx = ladder.indexOf(f.distance);
   if (!T) return `<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-6 text-center text-sm text-muted">Enter your ${f.distance} m time above to predict the neighbouring events.</div>`;
-  const cap = 'text-[9px] uppercase tracking-wide text-faint';
   const mk = (dist, dir, r) => {
-    const mean = T * r.mean, fast = T * r.q25, slow = T * r.q75;
+    const mean = T * r.mean;
     return `
       <div class="bg-white border border-slate-200 rounded-2xl p-4">
         <div class="label-cap text-muted mb-1">${dist} m ${f.stroke} · ${dir}</div>
         <div class="hero-time text-3xl text-center leading-tight my-1">${formatTime(mean)}</div>
-        <div class="flex justify-between items-baseline text-[11px] text-muted mt-1">
-          <span><span class="mono">${formatTime(fast)}</span> <span class="${cap}">faster</span></span>
-          <span><span class="${cap}">slower</span> <span class="mono">${formatTime(slow)}</span></span>
-        </div>
-        <div class="text-center text-[10px] text-faint mt-2">Q25–Q75 · n=${r.n} dual-ranked athletes</div>
+        <div class="text-center text-[10px] text-faint mt-1">n=${r.n} dual-ranked athletes</div>
       </div>`;
   };
   const cards = [];
@@ -2077,7 +2199,7 @@ function renderAdjacent() {
         <div class="label-cap mb-2 text-muted">Save to a swimmer</div>
         <div class="flex gap-2">
           <input data-toolname data-form="adj" value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="Swimmer name" class="flex-1 bg-slate-100 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300" />
-          <button class="px-4 py-2.5 bg-cyan-600 text-white rounded-xl text-sm font-semibold hover:bg-cyan-700 active:scale-95 transition" data-action="save-adj">Save</button>
+          <button class="px-4 py-2.5 bg-cyan-600 text-white rounded-xl text-sm font-semibold hover:bg-cyan-700 active:scale-95 transition" data-action="save-adj">${state.reviewId ? 'Update' : 'Save'}</button>
         </div>
       </div>
     </div>
@@ -2453,7 +2575,7 @@ function renderPredictedSplits() {
         <div class="text-base font-semibold">${state.swimmer ? state.swimmer.name : (state.form.name || 'Pace plan')}</div>
         <div class="text-xs text-muted truncate">${r.distance} ${r.stroke} · ${r.pool} · ${r.sex === 'M' ? 'Men' : 'Women'}</div>
       </div>
-      <button class="px-3.5 py-2 rounded-full bg-cyan-50 text-cyan-800 text-xs font-semibold hover:bg-cyan-100 transition" data-action="save">Save</button>
+      <button class="px-3.5 py-2 rounded-full bg-cyan-50 text-cyan-800 text-xs font-semibold hover:bg-cyan-100 transition" data-action="save">${state.reviewId ? 'Update' : 'Save'}</button>
     </div>
 
     <!-- Target time hero, with quick nudge controls -->
@@ -3141,9 +3263,9 @@ document.addEventListener('click', (e) => {
       navigate('swimmer-detail', { swimmer: s });
       return;
     }
-    const svn = e.target.closest('[data-savedname]');
+    const svn = e.target.closest('[data-savedsid]');
     if (svn) {
-      state.savedName = svn.getAttribute('data-savedname');
+      state.savedSid = svn.getAttribute('data-savedsid');
       navigate('saved-swimmer');
       return;
     }
@@ -3155,19 +3277,19 @@ document.addEventListener('click', (e) => {
           state.race = entry;
           navigate('race-analysis');
         } else if (entry.kind === 'convert') {
-          state.convForm = { stroke: entry.stroke, sex: entry.sex, distance: entry.distance, from: entry.from, seconds: entry.seconds, name: entry.name };
-          navigate('converter');
+          state.convForm = { stroke: entry.stroke, sex: entry.sex, distance: entry.distance, from: entry.from, seconds: entry.seconds, name: entry.name, sid: entry.sid };
+          navigate('converter', { reviewId: entry.id });
         } else if (entry.kind === 'fifty') {
-          state.fiftyForm = { stroke: entry.stroke, sex: entry.sex, seconds: entry.seconds, name: entry.name };
-          navigate('fifty');
+          state.fiftyForm = { stroke: entry.stroke, sex: entry.sex, seconds: entry.seconds, name: entry.name, sid: entry.sid };
+          navigate('fifty', { reviewId: entry.id });
         } else if (entry.kind === 'adjacent') {
-          state.adjForm = { stroke: entry.stroke, sex: entry.sex, pool: entry.pool, distance: entry.distance, seconds: entry.seconds, name: entry.name };
-          navigate('adjacent');
+          state.adjForm = { stroke: entry.stroke, sex: entry.sex, pool: entry.pool, distance: entry.distance, seconds: entry.seconds, name: entry.name, sid: entry.sid };
+          navigate('adjacent', { reviewId: entry.id });
         } else {
           state.swimmer = null;
-          state.form = { stroke: entry.stroke, sex: entry.sex, pool: entry.pool, distance: entry.distance, targetSeconds: entry.targetSeconds, name: entry.name };
+          state.form = { stroke: entry.stroke, sex: entry.sex, pool: entry.pool, distance: entry.distance, targetSeconds: entry.targetSeconds, name: entry.name, sid: entry.sid };
           state.result = predict(entry.stroke, entry.sex, entry.pool, entry.distance, entry.targetSeconds);
-          navigate('predicted-splits');
+          navigate('predicted-splits', { reviewId: entry.id });
         }
       }
       return;
@@ -3251,14 +3373,13 @@ function handleAction(action, el) {
       navigate('quick-calc');
       break;
     case 'add-event': {
-      // From a saved swimmer's menu: open the predictor with their name (and sex/pool from their latest event).
-      const evs = state.saved.filter(s => s.name === state.savedName);
-      const last = evs[evs.length - 1];
+      // From a saved swimmer's menu: open the predictor tied to that swimmer (id + name, sex/pool from latest).
+      const sid = state.savedSid; const evs = entriesOf(sid); const last = evs[evs.length - 1];
       state.swimmer = null;
       state.form = {
         stroke: 'Free', distance: 200, targetSeconds: 120,
-        sex: last ? last.sex : 'M', pool: last ? last.pool : 'LCM',
-        name: state.savedName || '',
+        sex: last ? last.sex : 'M', pool: (last && last.pool) || 'LCM',
+        name: swimmerName(sid), sid,
       };
       navigate('quick-calc');
       break;
@@ -3271,13 +3392,12 @@ function handleAction(action, el) {
       navigate('race-entry');
       break;
     case 'add-race': {
-      const evs = state.saved.filter(s => s.name === state.savedName);
-      const last = evs[evs.length - 1];
+      const sid = state.savedSid; const evs = entriesOf(sid); const last = evs[evs.length - 1];
       state.swimmer = null;
       state.form = {
-        stroke: last ? last.stroke : 'Free', sex: last ? last.sex : 'M', pool: last ? last.pool : 'LCM',
+        stroke: last ? last.stroke : 'Free', sex: last ? last.sex : 'M', pool: (last && last.pool) || 'LCM',
         distance: last ? last.distance : 200, targetSeconds: (last && last.targetSeconds) || 120,
-        name: state.savedName || '',
+        name: swimmerName(sid), sid,
       };
       state.raceForm = { round: 'Prelim', times: {} };
       seedRaceTimes();
@@ -3287,7 +3407,7 @@ function handleAction(action, el) {
     case 'analyze-race': {
       const f = state.form, rf = state.raceForm;
       state.race = {
-        id: 'rc' + Date.now().toString(36), kind: 'race', name: (f.name || '').trim(),
+        id: 'rc' + Date.now().toString(36), kind: 'race', name: (f.name || '').trim(), sid: f.sid,
         stroke: f.stroke, sex: f.sex, pool: f.pool, distance: f.distance,
         targetSeconds: rf.times.target ?? f.targetSeconds,
         times: { ...rf.times }, round: rf.round || 'Prelim',
@@ -3300,7 +3420,7 @@ function handleAction(action, el) {
       const r = state.race;
       if (!r) break;
       if (!(r.name || '').trim()) { showToast('Add a swimmer name to save this race'); break; }
-      if (!state.saved.find(x => x.id === r.id)) { state.saved.push(r); persistSaved(); }
+      if (!state.saved.find(x => x.id === r.id)) { r.sid = resolveSid(r); state.saved.push(r); persistSaved(); }
       showToast(`Saved ${r.name} · ${r.round} ${r.distance} ${r.stroke}`);
       break;
     }
@@ -3321,47 +3441,58 @@ function handleAction(action, el) {
     case 'converter': navigate('converter'); break;
     case 'fifty-splits': navigate('fifty'); break;
     case 'adjacent': navigate('adjacent'); break;
+    case 'trends': navigate('trends'); break;
     case 'save-conv': {
       const c = state.convForm;
       if (!(c.name || '').trim()) { showToast('Add a swimmer name to save'); break; }
       if (!c.seconds) { showToast('Enter a time first'); break; }
-      state.saved.push({ id: 'cv' + Date.now().toString(36), kind: 'convert', name: c.name.trim(),
+      const upd = upsertSaved({ id: 'cv' + Date.now().toString(36), sid: resolveSid(c), kind: 'convert', name: c.name.trim(),
         stroke: c.stroke, sex: c.sex, distance: c.distance, from: c.from, seconds: c.seconds });
-      persistSaved(); showToast(`Saved ${c.name.trim()} · conversion`);
+      showToast(`${upd ? 'Updated' : 'Saved'} ${c.name.trim()} · conversion`);
       break;
     }
     case 'save-fifty': {
       const f = state.fiftyForm;
       if (!(f.name || '').trim()) { showToast('Add a swimmer name to save'); break; }
       if (!f.seconds) { showToast('Enter a time first'); break; }
-      state.saved.push({ id: 'ff' + Date.now().toString(36), kind: 'fifty', name: f.name.trim(),
+      const upd = upsertSaved({ id: 'ff' + Date.now().toString(36), sid: resolveSid(f), kind: 'fifty', name: f.name.trim(),
         stroke: f.stroke, sex: f.sex, distance: 50, seconds: f.seconds });
-      persistSaved(); showToast(`Saved ${f.name.trim()} · 50 m`);
+      showToast(`${upd ? 'Updated' : 'Saved'} ${f.name.trim()} · 50 m`);
       break;
     }
     case 'save-adj': {
       const f = state.adjForm;
       if (!(f.name || '').trim()) { showToast('Add a swimmer name to save'); break; }
       if (!f.seconds) { showToast('Enter a time first'); break; }
-      state.saved.push({ id: 'aj' + Date.now().toString(36), kind: 'adjacent', name: f.name.trim(),
+      const upd = upsertSaved({ id: 'aj' + Date.now().toString(36), sid: resolveSid(f), kind: 'adjacent', name: f.name.trim(),
         stroke: f.stroke, sex: f.sex, pool: f.pool, distance: f.distance, seconds: f.seconds });
-      persistSaved(); showToast(`Saved ${f.name.trim()} · adjacent`);
+      showToast(`${upd ? 'Updated' : 'Saved'} ${f.name.trim()} · adjacent`);
       break;
     }
     case 'add-adjacent': {
-      const evs = state.saved.filter(s => s.name === state.savedName); const last = evs[evs.length - 1];
-      state.adjForm = { stroke: 'Free', sex: last ? last.sex : 'M', pool: (last && last.pool) || 'LCM', distance: 100, seconds: 0, name: state.savedName || '' };
+      const sid = state.savedSid; const evs = entriesOf(sid); const last = evs[evs.length - 1];
+      state.adjForm = { stroke: 'Free', sex: last ? last.sex : 'M', pool: (last && last.pool) || 'LCM', distance: 100, seconds: 0, name: swimmerName(sid), sid };
       navigate('adjacent'); break;
     }
     case 'add-fifty': {
-      const evs = state.saved.filter(s => s.name === state.savedName); const last = evs[evs.length - 1];
-      state.fiftyForm = { stroke: 'Free', sex: last ? last.sex : 'M', seconds: 0, name: state.savedName || '' };
+      const sid = state.savedSid; const evs = entriesOf(sid); const last = evs[evs.length - 1];
+      state.fiftyForm = { stroke: 'Free', sex: last ? last.sex : 'M', seconds: 0, name: swimmerName(sid), sid };
       navigate('fifty'); break;
     }
     case 'add-convert': {
-      const evs = state.saved.filter(s => s.name === state.savedName); const last = evs[evs.length - 1];
-      state.convForm = { stroke: 'Free', sex: last ? last.sex : 'M', distance: 100, from: 'LCM', seconds: 0, name: state.savedName || '' };
+      const sid = state.savedSid; const evs = entriesOf(sid); const last = evs[evs.length - 1];
+      state.convForm = { stroke: 'Free', sex: last ? last.sex : 'M', distance: 100, from: 'LCM', seconds: 0, name: swimmerName(sid), sid };
       navigate('converter'); break;
+    }
+    case 'rename-swimmer': {
+      const sid = state.savedSid; if (!sid) break;
+      const cur = swimmerName(sid);
+      const nn = (prompt('Rename swimmer', cur) || '').trim();
+      if (!nn || nn === cur) break;
+      state.saved.forEach(s => { if (s.sid === sid) s.name = nn; });
+      persistSaved(); render();
+      showToast(`Renamed to ${nn}`);
+      break;
     }
     case 'back': back(); break;
     case 'squad': navigate('squad-targets'); break;
@@ -3372,10 +3503,9 @@ function handleAction(action, el) {
       if (!nm) { showToast('Add a swimmer name to save'); break; }
       if (!state.result) { showToast('Nothing to save'); break; }
       const r = state.result;
-      state.saved.push({ id: 'sv' + Date.now().toString(36), name: nm,
+      const upd = upsertSaved({ id: 'sv' + Date.now().toString(36), sid: resolveSid(state.form), name: nm,
         stroke: r.stroke, sex: r.sex, pool: r.pool, distance: r.distance, targetSeconds: r.targetSeconds });
-      persistSaved();
-      showToast(`Saved ${nm} · ${r.distance} ${r.stroke}`);
+      showToast(`${upd ? 'Updated' : 'Saved'} ${nm} · ${r.distance} ${r.stroke}`);
       break;
     }
     case 'set-as-target': showToast(`Saved to ${state.swimmer.name}'s next race`); break;
@@ -3503,6 +3633,7 @@ function runDemo(flow) {
 // ============================================================
 // BOOT
 // ============================================================
+persistSaved(); // lock in any sids assigned by migration so they stay stable across reloads
 render();
 </script>
 
