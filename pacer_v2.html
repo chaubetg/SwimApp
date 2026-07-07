@@ -1089,9 +1089,9 @@ const state = {
   view: 'roster',
   history: [],
   swimmer: null, // active swimmer if any
-  convForm: { stroke: 'Free', sex: 'M', distance: 100, from: 'LCM', seconds: 0 }, // course converter
-  fiftyForm: { stroke: 'Free', sex: 'M', seconds: 0 }, // 50m LCM split calculator
-  adjForm: { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 100, seconds: 0 }, // adjacent-events predictor
+  convForm: { stroke: 'Free', sex: 'M', distance: 100, from: 'LCM', seconds: 0, name: '' }, // course converter
+  fiftyForm: { stroke: 'Free', sex: 'M', seconds: 0, name: '' }, // 50m LCM split calculator
+  adjForm: { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 100, seconds: 0, name: '' }, // adjacent-events predictor
   form: {
     stroke: 'Free', sex: 'M', pool: 'LCM', distance: 200,
     targetSeconds: 120, name: '',
@@ -1141,51 +1141,100 @@ function csvCell(v) {
   return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
 }
 function downloadFile(filename, content, mime) {
-  const blob = new Blob(['﻿' + content], { type: mime + ';charset=utf-8;' }); // BOM → Excel reads accents
+  const blob = new Blob([content], { type: mime + ';charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = filename;
   document.body.appendChild(a); a.click();
   setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
 }
-function exportSavedCsv() {
+// --- Analysis CSV: tidy "long" format, one row per split (numeric seconds for pivots/charts) ---
+function exportAnalysisCsv() {
   if (!state.saved.length) { showToast('No saved swimmers to export'); return; }
-  const header = ['Swimmer', 'Type', 'Stroke', 'Distance', 'Pool', 'Sex', 'Round', 'Date', 'Target', 'Actual total', 'Delta vs target', 'Splits'];
+  const header = ['entry_id', 'swimmer', 'sex', 'type', 'stroke', 'distance', 'pool', 'round', 'date',
+    'target_s', 'actual_total_s', 'delta_s', 'segment', 'segment_m', 'split_s', 'cumulative_s'];
   const lines = [header];
+  const fmt = (v) => (v == null || v === '' || isNaN(v)) ? '' : (+v).toFixed(2);
+  const segM = (label) => { const m = String(label).match(/(\d+)\s*m/); return m ? +m[1] : ''; };
+  const kindOf = (s) => s.kind === 'race' ? 'race' : (!s.kind || s.kind === 'plan' ? 'plan' : s.kind);
   const sorted = state.saved.slice().sort((a, b) =>
-    (a.name || '').localeCompare(b.name || '') || ((a.kind === 'race' ? 1 : 0) - (b.kind === 'race' ? 1 : 0)));
+    (a.name || '').localeCompare(b.name || '') || String(a.kind || '').localeCompare(String(b.kind || '')));
   sorted.forEach(s => {
-    const isRace = s.kind === 'race';
-    const sexL = s.sex === 'M' ? 'Men' : 'Women';
-    const target = s.targetSeconds != null ? formatTime(s.targetSeconds) : '';
-    let actual = '', delta = '', splits = '';
-    if (isRace) {
-      const c = buildRaceComparison(s);
-      if (c) {
-        actual = formatTime(c.actualTotal);
-        delta = (c.delta >= 0 ? '+' : '') + c.delta.toFixed(2);
-        splits = c.rows.filter(r => r.actual != null && !/total/i.test(r.label))
-          .map(r => `${r.label} ${formatTime(r.actual)}`).join(' | ');
-      }
+    const type = kindOf(s);
+    const base = [s.id, s.name, s.sex, type, s.stroke, s.distance ?? '', s.pool ?? '',
+      s.kind === 'race' ? (s.round || '') : '', s.kind === 'race' ? (s.date || '') : ''];
+    if (s.kind === 'race') {
+      const c = buildRaceComparison(s); if (!c) return;
+      let cum = 0;
+      c.rows.forEach(r => {
+        if (r.actual == null || /total/i.test(r.label)) return;
+        cum += r.actual;
+        lines.push([...base, fmt(s.targetSeconds), fmt(c.actualTotal), (c.delta >= 0 ? '+' : '') + c.delta.toFixed(2),
+          r.label, segM(r.label), r.actual.toFixed(2), cum.toFixed(2)]);
+      });
+    } else if (type === 'plan') {
+      const r = predict(s.stroke, s.sex, s.pool, s.distance, s.targetSeconds); if (!r || !r.splits) return;
+      let cum = 0; const seg = r.segLen || 50;
+      r.splits.forEach((x, i) => { cum += x; const m = (i + 1) * seg;
+        lines.push([...base, fmt(s.targetSeconds), '', '', `${m}m`, m, x.toFixed(2), cum.toFixed(2)]); });
     } else {
-      const r = predict(s.stroke, s.sex, s.pool, s.distance, s.targetSeconds);
-      if (r && r.splits) splits = r.splits.map((x, i) => `${(i + 1) * (r.segLen || 50)}m ${formatTime(x)}`).join(' | ');
+      // tool saves (convert / fifty / adjacent): one summary row with the input time
+      lines.push([...base, fmt(s.seconds), '', '', '(input)', s.distance ?? '', fmt(s.seconds), '']);
     }
-    lines.push([s.name, isRace ? 'Race' : 'Pace plan', s.stroke, s.distance, s.pool, sexL,
-      isRace ? (s.round || '') : '', isRace ? (s.date || '') : '', target, actual, delta, splits]);
   });
-  const csv = lines.map(row => row.map(csvCell).join(',')).join('\r\n');
+  const csv = '﻿' + lines.map(row => row.map(csvCell).join(',')).join('\r\n'); // BOM → Excel reads accents
   const stamp = new Date().toISOString().slice(0, 10);
-  downloadFile(`pacer_swimmers_${stamp}.csv`, csv, 'text/csv');
+  downloadFile(`pacer_analysis_${stamp}.csv`, csv, 'text/csv');
   showToast(`Exported ${state.saved.length} saved ${state.saved.length === 1 ? 'entry' : 'entries'}`);
+}
+
+// --- Backup: lossless JSON of everything saved (exact round-trip for restore / device moves) ---
+function exportBackupJson() {
+  if (!state.saved.length) { showToast('Nothing to back up'); return; }
+  const payload = { app: 'pacer', schema: 2, exported: new Date().toISOString(), saved: state.saved };
+  const stamp = new Date().toISOString().slice(0, 10);
+  downloadFile(`pacer_backup_${stamp}.json`, JSON.stringify(payload, null, 2), 'application/json');
+  showToast(`Backed up ${state.saved.length} ${state.saved.length === 1 ? 'entry' : 'entries'}`);
+}
+
+// --- Import a backup JSON: merge by id (adds new, keeps existing) ---
+function triggerImport() {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.json,application/json'; inp.style.display = 'none';
+  inp.addEventListener('change', () => {
+    const file = inp.files && inp.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => importBackupData(reader.result);
+    reader.readAsText(file);
+  });
+  document.body.appendChild(inp);
+  inp.click();
+  setTimeout(() => inp.remove(), 1000);
+}
+function importBackupData(text) {
+  let data;
+  try { data = JSON.parse(String(text).replace(/^﻿/, '')); } catch (e) { showToast('Could not read that file'); return; }
+  const arr = Array.isArray(data) ? data : (data && Array.isArray(data.saved) ? data.saved : null);
+  if (!arr) { showToast('Not a Pacer backup file'); return; }
+  const existing = new Set(state.saved.map(s => s.id));
+  let added = 0;
+  arr.forEach(e => {
+    if (e && e.id && e.name && !existing.has(e.id)) { state.saved.push(e); existing.add(e.id); added++; }
+  });
+  persistSaved();
+  render();
+  showToast(added ? `Imported ${added} ${added === 1 ? 'entry' : 'entries'}` : 'Nothing new to import');
 }
 
 // ----- Delete: one saved event (pace plan or race) -----
 function deleteEvent(id) {
   const entry = state.saved.find(x => x.id === id);
   if (!entry) return;
-  const label = entry.kind === 'race'
-    ? `${entry.round} ${entry.distance} ${entry.stroke} race`
+  const label = entry.kind === 'race' ? `${entry.round} ${entry.distance} ${entry.stroke} race`
+    : entry.kind === 'fifty' ? `50 m ${entry.stroke} splits`
+    : entry.kind === 'adjacent' ? `${entry.distance} m ${entry.stroke} adjacent`
+    : entry.kind === 'convert' ? `${entry.distance} m ${entry.stroke} conversion`
     : `${entry.distance} ${entry.stroke} pace plan`;
   if (!confirm(`Delete ${entry.name}'s ${label}?\n\nThis can't be undone.`)) return;
   const name = entry.name;
@@ -1366,6 +1415,12 @@ function render() {
   };
   bindSegTime('[data-fmin]', '[data-fsec]', '[data-fhh]', (v) => { state.fiftyForm.seconds = v; }, '#fifty-result', fiftyResultHtml);
   bindSegTime('[data-amin]', '[data-asec]', '[data-ahh]', (v) => { state.adjForm.seconds = v; }, '#adj-result', adjResultHtml);
+  // Tool "save to swimmer" name inputs → the tool form's .name (silent, keeps focus).
+  host.querySelectorAll('[data-toolname]').forEach((el) => {
+    const k = el.getAttribute('data-form');
+    const form = k === 'conv' ? state.convForm : k === 'fifty' ? state.fiftyForm : state.adjForm;
+    el.addEventListener('input', () => { form.name = el.value; });
+  });
   // Race-entry segmented time boxes (min:sec.hh) — one group per row, keyed into state.raceForm.times.
   host.querySelectorAll('[data-tkey]').forEach((grp) => {
     const key = grp.getAttribute('data-tkey');
@@ -1456,6 +1511,7 @@ function renderRoster() {
       <div class="w-14 h-14 rounded-2xl bg-cyan-50 flex items-center justify-center text-2xl mb-3">🏊</div>
       <div class="text-sm font-semibold text-slate-600">No swimmers yet</div>
       <div class="text-xs mt-1.5 leading-relaxed max-w-[220px]">Tap <span class="font-semibold text-cyan-700">Split predictor</span>, enter a goal time and a name, then <span class="font-semibold">Save</span> to build your roster.</div>
+      <button class="mt-4 text-xs font-semibold text-cyan-700 hover:underline" data-action="import-json">Import a backup</button>
     </div>`;
 
   return `
@@ -1505,10 +1561,15 @@ function renderRoster() {
     </div>
     ${hasSaved ? `<div class="px-5 pt-3 pb-1 flex items-center justify-between">
       <span class="label-cap">Saved swimmers</span>
-      <div class="flex items-center gap-3">
-        <button class="text-xs font-semibold text-slate-400 hover:text-cyan-700 transition" data-action="export-csv">Export CSV</button>
-        <button class="text-xs font-semibold ${editing ? 'text-cyan-700' : 'text-slate-400'} hover:text-cyan-700 transition" data-action="toggle-edit">${editing ? 'Done' : 'Edit'}</button>
-      </div>
+      <button class="text-xs font-semibold ${editing ? 'text-cyan-700' : 'text-slate-400'} hover:text-cyan-700 transition" data-action="toggle-edit">${editing ? 'Done' : 'Edit'}</button>
+    </div>
+    <div class="px-5 pb-1 flex items-center gap-2 text-[11px] text-slate-400">
+      <span class="uppercase tracking-wide text-faint text-[10px]">Data</span>
+      <button class="font-semibold hover:text-cyan-700 transition" data-action="export-csv">Analysis CSV</button>
+      <span class="text-slate-200">·</span>
+      <button class="font-semibold hover:text-cyan-700 transition" data-action="backup-json">Backup</button>
+      <span class="text-slate-200">·</span>
+      <button class="font-semibold hover:text-cyan-700 transition" data-action="import-json">Import</button>
     </div>` : ''}
     <div class="scrollable px-3 pb-4">
       ${hasSaved ? `<div>${savedRows}</div>` : emptyState}
@@ -1523,18 +1584,25 @@ function renderSavedSwimmer() {
   const all = name ? state.saved.filter(s => s.name === name) : [];
   if (!all.length) return renderRoster();
   const editing = state.editing;
-  const preds = all.filter(s => s.kind !== 'race');
-  const races = all.filter(s => s.kind === 'race');
+  const plans   = all.filter(s => !s.kind || s.kind === 'plan');
+  const races   = all.filter(s => s.kind === 'race');
+  const adj     = all.filter(s => s.kind === 'adjacent');
+  const fifties = all.filter(s => s.kind === 'fifty');
+  const convs   = all.filter(s => s.kind === 'convert');
 
-  const predRows = preds.slice().reverse().map(s => `
-    <div class="px-3 py-3.5 flex items-center gap-3 ${editing ? '' : 'clickable'} rounded-xl border-b border-slate-100" ${editing ? '' : `data-saved="${s.id}"`} style="min-height: 56px;">
+  // Shared row scaffolding: clickable to review (data-saved), or a trash button in edit mode.
+  const delBtn = (id, label) => `<button class="w-9 h-9 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center hover:bg-rose-100 active:scale-95 transition flex-shrink-0" data-del-event="${id}" aria-label="Delete ${label}">${TRASH_SVG}</button>`;
+  const rowOpen = (id) => `<div class="px-3 py-3.5 flex items-center gap-3 ${editing ? '' : 'clickable'} rounded-xl border-b border-slate-100" ${editing ? '' : `data-saved="${id}"`} style="min-height: 56px;">`;
+  const arrow = (t) => `<span class="text-cyan-700 text-sm font-bold">${t}</span>`;
+  const sexL = (s) => s.sex === 'M' ? 'Men' : 'Women';
+
+  const predRows = plans.slice().reverse().map(s => `
+    ${rowOpen(s.id)}
       <div class="flex-1 min-w-0">
-        <div class="font-semibold text-[15px]">${s.distance} ${s.stroke} <span class="text-xs font-normal text-muted">${s.pool} · ${s.sex === 'M' ? 'Men' : 'Women'}</span></div>
+        <div class="font-semibold text-[15px]">${s.distance} ${s.stroke} <span class="text-xs font-normal text-muted">${s.pool} · ${sexL(s)}</span></div>
         <div class="text-xs text-muted mt-0.5">Target <span class="mono font-semibold text-slate-700">${formatTime(s.targetSeconds)}</span></div>
       </div>
-      ${editing
-        ? `<button class="w-9 h-9 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center hover:bg-rose-100 active:scale-95 transition flex-shrink-0" data-del-event="${s.id}" aria-label="Delete pace plan">${TRASH_SVG}</button>`
-        : `<span class="text-cyan-700 text-sm font-bold">Splits →</span>`}
+      ${editing ? delBtn(s.id, 'pace plan') : arrow('Splits →')}
     </div>`).join('');
 
   const raceRowsHtml = races.slice().reverse().map(s => {
@@ -1542,15 +1610,43 @@ function renderSavedSwimmer() {
     const tot = c ? c.actualTotal : 0, d = c ? c.delta : 0;
     const dc = d > 0 ? 'text-rose-600' : 'text-emerald-700';
     return `
-    <div class="px-3 py-3.5 flex items-center gap-3 ${editing ? '' : 'clickable'} rounded-xl border-b border-slate-100" ${editing ? '' : `data-saved="${s.id}"`} style="min-height: 56px;">
+    ${rowOpen(s.id)}
       <span class="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded flex-shrink-0 ${s.round === 'Final' ? 'bg-cyan-100 text-cyan-800' : 'bg-slate-100 text-slate-600'}">${s.round}</span>
       <div class="flex-1 min-w-0">
         <div class="font-semibold text-[15px]">${s.distance} ${s.stroke} <span class="text-xs font-normal text-muted">${s.pool}${s.date ? ' · ' + s.date : ''}</span></div>
         <div class="text-xs text-muted mt-0.5"><span class="mono font-semibold text-slate-700">${formatTime(tot)}</span> <span class="${dc} font-semibold">(${d >= 0 ? '+' : ''}${d.toFixed(2)})</span></div>
       </div>
-      ${editing
-        ? `<button class="w-9 h-9 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center hover:bg-rose-100 active:scale-95 transition flex-shrink-0" data-del-event="${s.id}" aria-label="Delete race">${TRASH_SVG}</button>`
-        : `<span class="text-slate-300 text-2xl">›</span>`}
+      ${editing ? delBtn(s.id, 'race') : `<span class="text-slate-300 text-2xl">›</span>`}
+    </div>`;
+  }).join('');
+
+  const adjRows = adj.slice().reverse().map(s => `
+    ${rowOpen(s.id)}
+      <div class="flex-1 min-w-0">
+        <div class="font-semibold text-[15px]">${s.distance} ${s.stroke} <span class="text-xs font-normal text-muted">${s.pool} · ${sexL(s)}</span></div>
+        <div class="text-xs text-muted mt-0.5">From <span class="mono font-semibold text-slate-700">${formatTime(s.seconds)}</span></div>
+      </div>
+      ${editing ? delBtn(s.id, 'adjacent') : arrow('Neighbours →')}
+    </div>`).join('');
+
+  const fiftyRows = fifties.slice().reverse().map(s => `
+    ${rowOpen(s.id)}
+      <div class="flex-1 min-w-0">
+        <div class="font-semibold text-[15px]">50 m ${s.stroke} <span class="text-xs font-normal text-muted">${sexL(s)}</span></div>
+        <div class="text-xs text-muted mt-0.5">LCM <span class="mono font-semibold text-slate-700">${formatTime(s.seconds)}</span></div>
+      </div>
+      ${editing ? delBtn(s.id, '50 m splits') : arrow('Splits →')}
+    </div>`).join('');
+
+  const convRows = convs.slice().reverse().map(s => {
+    const to = s.from === 'LCM' ? 'SCM' : 'LCM';
+    return `
+    ${rowOpen(s.id)}
+      <div class="flex-1 min-w-0">
+        <div class="font-semibold text-[15px]">${s.distance} ${s.stroke} <span class="text-xs font-normal text-muted">${s.from}→${to}</span></div>
+        <div class="text-xs text-muted mt-0.5">${s.from} <span class="mono font-semibold text-slate-700">${formatTime(s.seconds)}</span></div>
+      </div>
+      ${editing ? delBtn(s.id, 'conversion') : arrow('Convert →')}
     </div>`;
   }).join('');
 
@@ -1566,13 +1662,22 @@ function renderSavedSwimmer() {
     }
   }
 
+  const section = (label, rows) => rows ? `<div class="px-2 pt-3 pb-1"><span class="label-cap">${label}</span></div>${rows}` : '';
+  const subtitle = [
+    plans.length ? `${plans.length} plan${plans.length === 1 ? '' : 's'}` : '',
+    races.length ? `${races.length} race${races.length === 1 ? '' : 's'}` : '',
+    adj.length ? `${adj.length} adjacent` : '',
+    fifties.length ? `${fifties.length} × 50 m` : '',
+    convs.length ? `${convs.length} conversion${convs.length === 1 ? '' : 's'}` : '',
+  ].filter(Boolean).join(' · ') || 'no saved items';
+
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3">
       <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0">
         <div class="text-lg font-semibold truncate">${name}</div>
-        <div class="text-xs text-muted">${preds.length} plan${preds.length === 1 ? '' : 's'} · ${races.length} race${races.length === 1 ? '' : 's'}</div>
+        <div class="text-xs text-muted truncate">${subtitle}</div>
       </div>
       <button class="text-sm font-semibold ${editing ? 'text-cyan-700' : 'text-slate-400'} hover:text-cyan-700 transition px-1" data-action="toggle-edit">${editing ? 'Done' : 'Edit'}</button>
     </div>
@@ -1580,14 +1685,20 @@ function renderSavedSwimmer() {
     <div class="px-5 pb-2">
       <button class="w-full bg-rose-50 text-rose-700 border border-rose-200 rounded-xl py-3 text-sm font-semibold hover:bg-rose-100 active:scale-[0.99] transition flex items-center justify-center gap-2" data-del-swimmer="${(name || '').replace(/"/g, '&quot;')}">${TRASH_SVG} Delete this swimmer</button>
     </div>` : `
-    <div class="px-5 pb-2 grid grid-cols-2 gap-2">
-      <button class="bg-white border border-slate-200 rounded-xl py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-event">+ Pace plan</button>
-      <button class="bg-cyan-600 text-white rounded-xl py-3 text-sm font-semibold hover:bg-cyan-700 active:scale-[0.99] transition shadow-md shadow-cyan-600/20" data-action="add-race">+ Race</button>
+    <div class="px-5 pb-2 flex flex-wrap gap-2">
+      <button class="bg-cyan-600 text-white rounded-xl px-3 py-2 text-xs font-semibold hover:bg-cyan-700 active:scale-[0.99] transition" data-action="add-event">+ Pace plan</button>
+      <button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-race">+ Race</button>
+      <button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-adjacent">+ Adjacent</button>
+      <button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-fifty">+ 50 m</button>
+      <button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-convert">+ Conversion</button>
     </div>
     ${compareBtn}`}
     <div class="scrollable px-3 pb-2 bg-slate-50">
-      ${races.length ? `<div class="px-2 pt-2 pb-1"><span class="label-cap">Races</span></div>${raceRowsHtml}` : ''}
-      ${preds.length ? `<div class="px-2 pt-3 pb-1"><span class="label-cap">Pace plans</span></div>${predRows}` : ''}
+      ${section('Races', raceRowsHtml)}
+      ${section('Pace plans', predRows)}
+      ${section('Adjacent events', adjRows)}
+      ${section('50 m LCM splits', fiftyRows)}
+      ${section('Course conversions', convRows)}
     </div>
   `;
 }
@@ -1764,6 +1875,13 @@ function renderConverter() {
         </div>
       </div>
       <div id="conv-result">${convResultHtml()}</div>
+      <div class="bg-white border border-slate-200 rounded-2xl p-4">
+        <div class="label-cap mb-2 text-muted">Save to a swimmer</div>
+        <div class="flex gap-2">
+          <input data-toolname data-form="conv" value="${(c.name || '').replace(/"/g, '&quot;')}" placeholder="Swimmer name" class="flex-1 bg-slate-100 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300" />
+          <button class="px-4 py-2.5 bg-cyan-600 text-white rounded-xl text-sm font-semibold hover:bg-cyan-700 active:scale-95 transition" data-action="save-conv">Save</button>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -1851,6 +1969,13 @@ function renderFifty() {
         </div>
       </div>
       <div id="fifty-result" class="space-y-3">${fiftyResultHtml()}</div>
+      <div class="bg-white border border-slate-200 rounded-2xl p-4">
+        <div class="label-cap mb-2 text-muted">Save to a swimmer</div>
+        <div class="flex gap-2">
+          <input data-toolname data-form="fifty" value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="Swimmer name" class="flex-1 bg-slate-100 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300" />
+          <button class="px-4 py-2.5 bg-cyan-600 text-white rounded-xl text-sm font-semibold hover:bg-cyan-700 active:scale-95 transition" data-action="save-fifty">Save</button>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -1948,6 +2073,13 @@ function renderAdjacent() {
         </div>
       </div>
       <div id="adj-result" class="space-y-3">${adjResultHtml()}</div>
+      <div class="bg-white border border-slate-200 rounded-2xl p-4">
+        <div class="label-cap mb-2 text-muted">Save to a swimmer</div>
+        <div class="flex gap-2">
+          <input data-toolname data-form="adj" value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="Swimmer name" class="flex-1 bg-slate-100 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300" />
+          <button class="px-4 py-2.5 bg-cyan-600 text-white rounded-xl text-sm font-semibold hover:bg-cyan-700 active:scale-95 transition" data-action="save-adj">Save</button>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -3022,6 +3154,15 @@ document.addEventListener('click', (e) => {
         if (entry.kind === 'race') {
           state.race = entry;
           navigate('race-analysis');
+        } else if (entry.kind === 'convert') {
+          state.convForm = { stroke: entry.stroke, sex: entry.sex, distance: entry.distance, from: entry.from, seconds: entry.seconds, name: entry.name };
+          navigate('converter');
+        } else if (entry.kind === 'fifty') {
+          state.fiftyForm = { stroke: entry.stroke, sex: entry.sex, seconds: entry.seconds, name: entry.name };
+          navigate('fifty');
+        } else if (entry.kind === 'adjacent') {
+          state.adjForm = { stroke: entry.stroke, sex: entry.sex, pool: entry.pool, distance: entry.distance, seconds: entry.seconds, name: entry.name };
+          navigate('adjacent');
         } else {
           state.swimmer = null;
           state.form = { stroke: entry.stroke, sex: entry.sex, pool: entry.pool, distance: entry.distance, targetSeconds: entry.targetSeconds, name: entry.name };
@@ -3174,10 +3315,54 @@ function handleAction(action, el) {
       navigate('predicted-splits');
       break;
     case 'toggle-edit': state.editing = !state.editing; render(); break;
-    case 'export-csv': exportSavedCsv(); break;
+    case 'export-csv': exportAnalysisCsv(); break;
+    case 'backup-json': exportBackupJson(); break;
+    case 'import-json': triggerImport(); break;
     case 'converter': navigate('converter'); break;
     case 'fifty-splits': navigate('fifty'); break;
     case 'adjacent': navigate('adjacent'); break;
+    case 'save-conv': {
+      const c = state.convForm;
+      if (!(c.name || '').trim()) { showToast('Add a swimmer name to save'); break; }
+      if (!c.seconds) { showToast('Enter a time first'); break; }
+      state.saved.push({ id: 'cv' + Date.now().toString(36), kind: 'convert', name: c.name.trim(),
+        stroke: c.stroke, sex: c.sex, distance: c.distance, from: c.from, seconds: c.seconds });
+      persistSaved(); showToast(`Saved ${c.name.trim()} · conversion`);
+      break;
+    }
+    case 'save-fifty': {
+      const f = state.fiftyForm;
+      if (!(f.name || '').trim()) { showToast('Add a swimmer name to save'); break; }
+      if (!f.seconds) { showToast('Enter a time first'); break; }
+      state.saved.push({ id: 'ff' + Date.now().toString(36), kind: 'fifty', name: f.name.trim(),
+        stroke: f.stroke, sex: f.sex, distance: 50, seconds: f.seconds });
+      persistSaved(); showToast(`Saved ${f.name.trim()} · 50 m`);
+      break;
+    }
+    case 'save-adj': {
+      const f = state.adjForm;
+      if (!(f.name || '').trim()) { showToast('Add a swimmer name to save'); break; }
+      if (!f.seconds) { showToast('Enter a time first'); break; }
+      state.saved.push({ id: 'aj' + Date.now().toString(36), kind: 'adjacent', name: f.name.trim(),
+        stroke: f.stroke, sex: f.sex, pool: f.pool, distance: f.distance, seconds: f.seconds });
+      persistSaved(); showToast(`Saved ${f.name.trim()} · adjacent`);
+      break;
+    }
+    case 'add-adjacent': {
+      const evs = state.saved.filter(s => s.name === state.savedName); const last = evs[evs.length - 1];
+      state.adjForm = { stroke: 'Free', sex: last ? last.sex : 'M', pool: (last && last.pool) || 'LCM', distance: 100, seconds: 0, name: state.savedName || '' };
+      navigate('adjacent'); break;
+    }
+    case 'add-fifty': {
+      const evs = state.saved.filter(s => s.name === state.savedName); const last = evs[evs.length - 1];
+      state.fiftyForm = { stroke: 'Free', sex: last ? last.sex : 'M', seconds: 0, name: state.savedName || '' };
+      navigate('fifty'); break;
+    }
+    case 'add-convert': {
+      const evs = state.saved.filter(s => s.name === state.savedName); const last = evs[evs.length - 1];
+      state.convForm = { stroke: 'Free', sex: last ? last.sex : 'M', distance: 100, from: 'LCM', seconds: 0, name: state.savedName || '' };
+      navigate('converter'); break;
+    }
     case 'back': back(); break;
     case 'squad': navigate('squad-targets'); break;
     case 'settings': showToast('Settings — not in v1 mock'); break;
