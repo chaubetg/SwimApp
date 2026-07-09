@@ -2113,9 +2113,9 @@ const mmScmMid50 = { Free:{M:0.5117,F:0.5116}, Back:{M:0.5080,F:0.5064}, Fly:{M:
 const mmScm2nd25hi = { Free:{M:0.2555,F:0.2538}, Back:{M:0.2544,F:0.2530}, Fly:{M:0.2565,F:0.2607}, Breast:{M:0.2598,F:0.2596} }; // MAX 2nd-25 (upper range = slowest still counting)
 const mmScmMid50hi = { Free:{M:0.5174,F:0.5144}, Back:{M:0.5153,F:0.5117}, Fly:{M:0.5186,F:0.5199}, Breast:{M:0.5223,F:0.5208} }; // MAX middle-50 (upper range)
 const mmLcm2ndMax  = { Free:{M:0.5289,F:0.5285}, Back:{M:0.5276,F:0.5296}, Fly:{M:0.5479,F:0.5478}, Breast:{M:0.5457,F:0.5454} }; // MAX 2nd-50 of a 100 LCM (upper range)
-const mmScoreBand  = { // min–max SCORE IQR: ×target using q25/q75 of score/first-50 ratio across finalists (n=16)
-  Free:{M:{lo:0.987,hi:1.026},F:{lo:0.989,hi:1.017}}, Back:{M:{lo:0.974,hi:1.010},F:{lo:0.987,hi:1.033}},
-  Fly:{M:{lo:0.976,hi:1.007},F:{lo:0.983,hi:1.012}}, Breast:{M:{lo:0.981,hi:1.029},F:{lo:0.979,hi:1.024}} };
+const mmScoreBand  = { // min–max SCORE band: min → upper-IQR (lo=min/median, hi=q75/median of score/first-50 ratio, n=16)
+  Free:{M:{lo:0.9637,hi:1.0262},F:{lo:0.9526,hi:1.0172}}, Back:{M:{lo:0.9464,hi:1.0104},F:{lo:0.9409,hi:1.0332}},
+  Fly:{M:{lo:0.9614,hi:1.0071},F:{lo:0.9518,hi:1.0121}}, Breast:{M:{lo:0.9329,hi:1.0288},F:{lo:0.9567,hi:1.0236}} };
 
 // Derive both 100s + the three test targets & pace-lock times from state.effForm.
 function effCompute() {
@@ -2173,7 +2173,7 @@ function effResultHtml() {
         <div class="flex items-end gap-4 mt-1.5">
           <div>
             <div class="hero-time text-3xl leading-none">${s1(t.score)}</div>
-            <div class="text-[11px] text-muted mono mt-0.5">IQR ${s1(t.scoreLo)}–${s1(t.scoreHi)}</div>
+            <div class="text-[11px] text-muted mono mt-0.5">range ${s1(t.scoreLo)}–${s1(t.scoreHi)}</div>
             <div class="text-[10px] uppercase tracking-wide text-faint mt-0.5">min–max score</div>
           </div>
           <div class="flex-1">
