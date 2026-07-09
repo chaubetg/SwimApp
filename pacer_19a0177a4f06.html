@@ -2056,6 +2056,13 @@ function renderConverter() {
 }
 
 // ----- Screen: 50 m LCM split calculator -----
+const uwKuw = {  // 15 m underwater target = k_uw × 50 PB (10 m for breast). FFN livrets Paris24+Fukuoka23.
+  Free:   { M: 0.345, F: 0.349, dist: 15 },  // free uses fly's UW model (own 9 m breakout too biased)
+  Fly:    { M: 0.324, F: 0.332, dist: 15 },
+  Back:   { M: 0.278, F: 0.275, dist: 15 },
+  Breast: { M: 0.212, F: 0.206, dist: 10 },  // breast: one long pullout ~10 m, no 15 m extrapolation
+};
+
 function fiftyResultHtml() {
   const f = state.fiftyForm;
   const T = Math.max(0, f.seconds || 0);
@@ -2067,6 +2074,7 @@ function fiftyResultHtml() {
   const d1 = v => (v == null ? '—' : v.toFixed(1));
   const best = f.best || (f.best = {});
   const topSpeed = rr.r15_25 * T * 1.5, speedEnd = rr.r25_45 * T * 0.75, turn = rr.turn * T;
+  const uk = uwKuw[f.stroke]; const uwTarget = uk ? uk[f.sex] * T : null; const uwDist = uk ? uk.dist : 15;
   const cp = {
     '15 m': rr.r15 * T, '20 m': rr.r15 * T + rr.r15_25 * T * 0.5, '25 m': rr.first25 * T,
     '30 m': rr.first25 * T + rr.second25 * T * 0.2, '35 m': rr.first25 * T + rr.second25 * T * 0.4,
@@ -2080,6 +2088,8 @@ function fiftyResultHtml() {
     { key: 's1', label: '1st 25 m', sub: 'clock to the head', pred: s1, lo: iq ? iq.f1lo * T : null, hi: iq ? iq.f1hi * T : null },
     { key: 's2', label: '2nd 25 m', pred: s2, lo: iq ? iq.f2lo * T : null, hi: iq ? iq.f2hi * T : null },
     { key: 'mm25', label: 'min–max 25 m', sub: 'fastest flying 25', pred: null },
+    { key: 'uwt', label: `Underwater ${uwDist} m`, sub: 'target from 50 PB (kick)', pred: uwTarget, sw: 'win' },
+    { key: 'sw15', label: `Swim ${uwDist} m`, sub: 'push — compare to underwater', pred: null, sw: 'win' },
     { key: 'uw', label: 'Top Speed UW', sub: '5–20 m', pred: topSpeed, sw: 'win' },
     { key: 'sw', label: 'Top Speed SW', sub: '15→30 m', pred: topSpeed, sw: 'win' },
     { key: 'se', label: 'Speed endurance', sub: '2nd 15 m of 2×25 m FAST @20s', pred: speedEnd, sw: 'win' },
@@ -2105,6 +2115,17 @@ function fiftyResultHtml() {
       <div class="text-center text-[11px] font-bold rounded-lg py-1.5 ${cls}">${pctStr}</div>
     </div>`;
   };
+  // Underwater vs surface-swim over the same distance (the swimmer's own two times).
+  const uwActual = best.uwt > 0 ? best.uwt : null;
+  const swActual = best.sw15 > 0 ? best.sw15 : null;
+  let uwCompare = '';
+  if (uwActual != null && swActual != null) {
+    const diff = swActual - uwActual; // positive → underwater is faster than swimming
+    const faster = diff >= 0;
+    uwCompare = `<div class="rounded-2xl px-4 py-3 text-center text-sm font-semibold ${faster ? 'bg-emerald-50 text-emerald-800' : 'bg-rose-50 text-rose-700'}">Underwater is <span class="mono">${Math.abs(diff).toFixed(1)} s</span> ${faster ? 'faster than' : 'slower than'} swimming ${uwDist} m${faster ? ' — a weapon' : ' — break out earlier / train UW'}</div>`;
+  } else if (uwActual != null || swActual != null) {
+    uwCompare = `<div class="text-center text-[11px] text-muted">Enter both Underwater and Swim ${uwDist} m (Best column) to compare.</div>`;
+  }
   const header = `<div style="${GT}" class="px-3 pt-3 pb-1"><span class="label-cap text-muted">Split</span><span class="label-cap text-muted text-right">Pred</span><span class="label-cap text-muted text-center">Best</span><span class="label-cap text-muted text-center">Δ%</span></div>`;
   return `
     <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden">
@@ -2113,6 +2134,7 @@ function fiftyResultHtml() {
       <div class="px-3 pt-2 pb-1 bg-slate-50/70 label-cap text-muted">Speed windows (elapsed)</div>
       ${rows.filter(r => r.sw).map(rowHtml).join('')}
     </div>
+    ${uwCompare}
     <div class="text-center text-[11px] text-muted">Stroke rate: 1st 25 <span class="mono font-semibold text-slate-700">${Math.round(rr.sr1)}</span> · 2nd 25 <span class="mono font-semibold text-slate-700">${Math.round(rr.sr2)}</span> cyc/min</div>
     <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden">
       <div class="label-cap text-muted px-3 pt-3 pb-1">Cumulative checkpoints (from start)</div>
