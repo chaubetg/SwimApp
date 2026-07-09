@@ -861,7 +861,14 @@ function getRatios(stroke, sex, pool, distance) {
 }
 
 function predict(stroke, sex, pool, distance, targetSeconds) {
-  const r = getRatios(stroke, sex, pool, distance);
+  let r = getRatios(stroke, sex, pool, distance);
+  // 50 m LCM has no pacing table — build the two 25s from the 50 m LCM sub-split ratios.
+  if (!r && distance === 50 && pool === 'LCM' && fiftyRatios[stroke] && fiftyRatios[stroke][sex]) {
+    const fr = fiftyRatios[stroke][sex], iq = fiftyIqr[stroke] && fiftyIqr[stroke][sex];
+    r = { median: [fr.first25, fr.second25],
+          q25: iq ? [iq.f1lo, iq.f2lo] : [fr.first25, fr.second25],
+          q75: iq ? [iq.f1hi, iq.f2hi] : [fr.first25, fr.second25], n: null };
+  }
   if (!r) return null;
   // Defensive renormalisation so the predicted splits sum to exactly the target.
   const sum = r.median.reduce((a, b) => a + b, 0);
@@ -1068,6 +1075,13 @@ const fiftyRatios = {
     M: { first25: 0.448553, second25: 0.551447, r15: 0.231678, r15_25: 0.216874, r25_45: 0.446659, turn: 0.429144, sr1: 67.1, sr2: 66.9 },
     F: { first25: 0.455781, second25: 0.544219, r15: 0.243846, r15_25: 0.211935, r25_45: 0.440674, turn: 0.427289, sr1: 64.8, sr2: 64.4 },
   },
+};
+
+const fiftyIqr = {
+  Free: { M: { f1lo: 0.446668, f1hi: 0.454706, f2lo: 0.545294, f2hi: 0.553332 }, F: { f1lo: 0.458383, f1hi: 0.465195, f2lo: 0.534805, f2hi: 0.541617 } },
+  Fly: { M: { f1lo: 0.445794, f1hi: 0.453604, f2lo: 0.546396, f2hi: 0.554206 }, F: { f1lo: 0.449052, f1hi: 0.458182, f2lo: 0.541818, f2hi: 0.550948 } },
+  Back: { M: { f1lo: 0.453228, f1hi: 0.461512, f2lo: 0.538488, f2hi: 0.546772 }, F: { f1lo: 0.459398, f1hi: 0.463918, f2lo: 0.536082, f2hi: 0.540602 } },
+  Breast: { M: { f1lo: 0.444089, f1hi: 0.453017, f2lo: 0.546983, f2hi: 0.555911 }, F: { f1lo: 0.452332, f1hi: 0.45923, f2lo: 0.54077, f2hi: 0.547668 } },
 };
 
 

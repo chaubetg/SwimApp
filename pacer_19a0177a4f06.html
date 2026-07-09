@@ -861,7 +861,14 @@ function getRatios(stroke, sex, pool, distance) {
 }
 
 function predict(stroke, sex, pool, distance, targetSeconds) {
-  const r = getRatios(stroke, sex, pool, distance);
+  let r = getRatios(stroke, sex, pool, distance);
+  // 50 m LCM has no pacing table — build the two 25s from the 50 m LCM sub-split ratios.
+  if (!r && distance === 50 && pool === 'LCM' && fiftyRatios[stroke] && fiftyRatios[stroke][sex]) {
+    const fr = fiftyRatios[stroke][sex], iq = fiftyIqr[stroke] && fiftyIqr[stroke][sex];
+    r = { median: [fr.first25, fr.second25],
+          q25: iq ? [iq.f1lo, iq.f2lo] : [fr.first25, fr.second25],
+          q75: iq ? [iq.f1hi, iq.f2hi] : [fr.first25, fr.second25], n: null };
+  }
   if (!r) return null;
   // Defensive renormalisation so the predicted splits sum to exactly the target.
   const sum = r.median.reduce((a, b) => a + b, 0);
