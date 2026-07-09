@@ -2110,8 +2110,12 @@ const mmElite   = { // elite reference scores (n=16 finals): l = 50 LCM, s = 50 
   Fly:{M:{l:47.6,s:47.3,q:22.3},F:{l:52.7,s:52.3,q:24.7}}, Breast:{M:{l:53.0,s:52.6,q:24.8},F:{l:57.2,s:56.7,q:26.8}} };
 const mmScm2nd25 = { Free:{M:0.2515,F:0.2515}, Back:{M:0.2493,F:0.2484}, Fly:{M:0.2512,F:0.2522}, Breast:{M:0.2554,F:0.2544} }; // 2nd-25 of a 100 SCM (raw per-25, n=24)
 const mmScmMid50 = { Free:{M:0.5117,F:0.5116}, Back:{M:0.5080,F:0.5064}, Fly:{M:0.5139,F:0.5143}, Breast:{M:0.5182,F:0.5151} }; // 2nd+3rd-25 (middle 50) of a 100 SCM
-const mmScm2nd25hi = { Free:{M:0.2524,F:0.2528}, Back:{M:0.2503,F:0.2507}, Fly:{M:0.2541,F:0.2547}, Breast:{M:0.2567,F:0.2561} }; // q75 = slowest 2nd-25 still counting
-const mmScmMid50hi = { Free:{M:0.5138,F:0.5119}, Back:{M:0.5088,F:0.5079}, Fly:{M:0.5166,F:0.5160}, Breast:{M:0.5195,F:0.5167} }; // q75 = slowest middle-50 still counting
+const mmScm2nd25hi = { Free:{M:0.2555,F:0.2538}, Back:{M:0.2544,F:0.2530}, Fly:{M:0.2565,F:0.2607}, Breast:{M:0.2598,F:0.2596} }; // MAX 2nd-25 (upper range = slowest still counting)
+const mmScmMid50hi = { Free:{M:0.5174,F:0.5144}, Back:{M:0.5153,F:0.5117}, Fly:{M:0.5186,F:0.5199}, Breast:{M:0.5223,F:0.5208} }; // MAX middle-50 (upper range)
+const mmLcm2ndMax  = { Free:{M:0.5289,F:0.5285}, Back:{M:0.5276,F:0.5296}, Fly:{M:0.5479,F:0.5478}, Breast:{M:0.5457,F:0.5454} }; // MAX 2nd-50 of a 100 LCM (upper range)
+const mmScoreBand  = { // min–max SCORE IQR: ×target using q25/q75 of score/first-50 ratio across finalists (n=16)
+  Free:{M:{lo:0.987,hi:1.026},F:{lo:0.989,hi:1.017}}, Back:{M:{lo:0.974,hi:1.010},F:{lo:0.987,hi:1.033}},
+  Fly:{M:{lo:0.976,hi:1.007},F:{lo:0.983,hi:1.012}}, Breast:{M:{lo:0.981,hi:1.029},F:{lo:0.979,hi:1.024}} };
 
 // Derive both 100s + the three test targets & pace-lock times from state.effForm.
 function effCompute() {
@@ -2127,14 +2131,15 @@ function effCompute() {
   const lcm2nd = (ratios[st] && ratios[st][sx] && ratios[st][sx].LCM && ratios[st][sx].LCM['100'])
     ? ratios[st][sx].LCM['100'].median[1] : 0.5;
   const el = mmElite[st][sx];
-  const lcm2ndHi = (ratios[st] && ratios[st][sx] && ratios[st][sx].LCM && ratios[st][sx].LCM['100'] && ratios[st][sx].LCM['100'].q75)
-    ? ratios[st][sx].LCM['100'].q75[1] : lcm2nd;
+  const lcm2ndHi = mmLcm2ndMax[st][sx];
+  const bd = mmScoreBand[st][sx];
+  const mk = (key, name, score, pace, paceHi) => ({ key, name, score, scoreLo: score * bd.lo, scoreHi: score * bd.hi, pace, paceHi });
   return {
     secs, mean, T100lcm, T100scm, first50, spc: mmSpc[st],
     tests: [
-      { key:'25scm', name:'Push 25 SCM', score:first50*(r47*22/47),    pace:mmScm2nd25[st][sx]*T100scm, paceHi:mmScm2nd25hi[st][sx]*T100scm },
-      { key:'50scm', name:'Push 50 SCM', score:first50*(r47*46/47)+turn, pace:mmScmMid50[st][sx]*T100scm, paceHi:mmScmMid50hi[st][sx]*T100scm },
-      { key:'50lcm', name:'Push 50 LCM', score:first50*r47,             pace:lcm2nd*T100lcm,             paceHi:lcm2ndHi*T100lcm },
+      mk('25scm', 'Push 25 SCM', first50 * (r47 * 22 / 47),     mmScm2nd25[st][sx] * T100scm, mmScm2nd25hi[st][sx] * T100scm),
+      mk('50scm', 'Push 50 SCM', first50 * (r47 * 46 / 47) + turn, mmScmMid50[st][sx] * T100scm, mmScmMid50hi[st][sx] * T100scm),
+      mk('50lcm', 'Push 50 LCM', first50 * r47,                 lcm2nd * T100lcm,             lcm2ndHi * T100lcm),
     ],
   };
 }
@@ -2168,6 +2173,7 @@ function effResultHtml() {
         <div class="flex items-end gap-4 mt-1.5">
           <div>
             <div class="hero-time text-3xl leading-none">${s1(t.score)}</div>
+            <div class="text-[11px] text-muted mono mt-0.5">IQR ${s1(t.scoreLo)}–${s1(t.scoreHi)}</div>
             <div class="text-[10px] uppercase tracking-wide text-faint mt-0.5">min–max score</div>
           </div>
           <div class="flex-1">
