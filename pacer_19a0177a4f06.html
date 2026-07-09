@@ -1183,8 +1183,8 @@ const state = {
   savedSid: null, // selected swimmer id on the saved-events menu
   reviewId: null, // id of a saved entry opened for review/edit (Save becomes Update)
   // --- Race analysis ---
-  raceForm: { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 200, name: '', round: 'Prelim',
-              targetSeconds: 120, times: {} }, // times keyed by row/field -> seconds
+  raceForm: { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 200, name: '',
+              targetSeconds: 120, times: {}, sr: {}, competition: '', date: '', notes: '' },
   race: null,       // the race object currently being analysed
   compareIds: [],   // two saved-race ids to show side by side
   editing: false,   // roster / saved-swimmer delete mode toggle
@@ -1543,6 +1543,14 @@ function render() {
       });
     });
   });
+  // Race-entry extra fields: per-split SR, competition, date, notes.
+  host.querySelectorAll('[data-race-sr]').forEach((el) => {
+    const key = el.getAttribute('data-race-sr');
+    el.addEventListener('input', () => { (state.raceForm.sr = state.raceForm.sr || {})[key] = el.value; });
+  });
+  const rcomp = host.querySelector('[data-race-comp]'); if (rcomp) rcomp.addEventListener('input', () => { state.raceForm.competition = rcomp.value; });
+  const rdate = host.querySelector('[data-race-date]'); if (rdate) rdate.addEventListener('input', () => { state.raceForm.date = rdate.value; });
+  const rnotes = host.querySelector('[data-race-notes]'); if (rnotes) rnotes.addEventListener('input', () => { state.raceForm.notes = rnotes.value; });
   // Split-predictor name field: autocomplete from previously saved names (first/last prefix).
   const nameInput = host.querySelector('[data-name-input]');
   if (nameInput) {
@@ -1720,9 +1728,8 @@ function renderSavedSwimmer() {
     const dc = d > 0 ? 'text-rose-600' : 'text-emerald-700';
     return `
     ${rowOpen(s.id)}
-      <span class="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded flex-shrink-0 ${s.round === 'Final' ? 'bg-cyan-100 text-cyan-800' : 'bg-slate-100 text-slate-600'}">${s.round}</span>
       <div class="flex-1 min-w-0">
-        <div class="font-semibold text-[15px]">${s.distance} ${s.stroke} <span class="text-xs font-normal text-muted">${s.pool}${s.date ? ' · ' + s.date : ''}</span></div>
+        <div class="font-semibold text-[15px]">${s.distance} ${s.stroke} <span class="text-xs font-normal text-muted">${s.pool}${s.competition ? ' · ' + s.competition : ''}${s.date ? ' · ' + s.date : ''}</span></div>
         <div class="text-xs text-muted mt-0.5"><span class="mono font-semibold text-slate-700">${formatTime(tot)}</span> <span class="${dc} font-semibold">(${d >= 0 ? '+' : ''}${d.toFixed(2)})</span></div>
       </div>
       ${editing ? delBtn(s.id, 'race') : `<span class="text-slate-300 text-2xl">›</span>`}
@@ -1759,17 +1766,7 @@ function renderSavedSwimmer() {
     </div>`;
   }).join('');
 
-  // Compare button when an event has ≥2 races (e.g. prelim + final).
-  let compareBtn = '';
-  const groups = {};
-  races.forEach(s => { const k = `${s.stroke}|${s.distance}|${s.pool}|${s.sex}`; (groups[k] = groups[k] || []).push(s); });
-  for (const k in groups) {
-    if (groups[k].length >= 2) {
-      const g = groups[k].slice(-2);
-      compareBtn = `<div class="px-5 pb-2"><button class="w-full bg-white border border-cyan-300 text-cyan-800 rounded-xl py-3 text-sm font-semibold hover:bg-cyan-50 active:scale-[0.99] transition" data-action="compare-races" data-ids="${g.map(x => x.id).join(',')}">Compare ${g[0].distance} ${g[0].stroke}: ${g[0].round} ↔ ${g[1].round}</button></div>`;
-      break;
-    }
-  }
+  const compareBtn = ''; // compare removed in the simplified race logger
 
   const section = (label, rows) => rows ? `<div class="px-2 pt-3 pb-1"><span class="label-cap">${label}</span></div>${rows}` : '';
   const subtitle = [
@@ -3051,14 +3048,16 @@ function renderRaceEntry() {
   const f = state.form;
   const rf = state.raceForm;
   if (rf.times.target == null) rf.times.target = f.targetSeconds || 120;
+  if (!rf.date) rf.date = new Date().toISOString().slice(0, 10);
   const strokes = ['Free', 'Back', 'Breast', 'Fly', 'IM'];
   const distances = [50, 100, 200, 400, 800, 1500];
   const fields = raceEntryFields(f.stroke, f.distance);
   const distFree = f.stroke !== 'IM' && f.distance >= 400;
   const fieldRows = fields.map(fl => `
-    <div class="flex items-center justify-between gap-3 py-2 border-b border-slate-100">
-      <div class="text-sm font-semibold text-slate-700">${fl.label}</div>
+    <div class="flex items-center gap-2 py-2 border-b border-slate-100 last:border-0">
+      <div class="text-sm font-semibold text-slate-700 flex-shrink-0" style="min-width:46px;">${fl.label}</div>
       ${timeBoxes(fl.key, rf.times[fl.key] ?? 0)}
+      <input data-race-sr="${fl.key}" inputmode="decimal" value="${rf.sr && rf.sr[fl.key] != null ? rf.sr[fl.key] : ''}" placeholder="SR" class="w-11 bg-slate-100 rounded-lg px-1 py-1.5 text-sm text-center outline-none focus:ring-2 focus:ring-cyan-300 flex-shrink-0" />
     </div>`).join('');
   return `
     <div class="statusbar"></div>
@@ -3066,7 +3065,7 @@ function renderRaceEntry() {
       <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0">
         <div class="text-lg font-semibold">Analyze a race</div>
-        <div class="text-xs text-muted truncate">${f.name ? f.name : 'Enter the goal, then what they swam'}</div>
+        <div class="text-xs text-muted truncate">${f.name ? f.name : 'Predicted vs what they swam'}</div>
       </div>
     </div>
     <div class="scrollable px-5 py-4 space-y-5">
@@ -3106,27 +3105,34 @@ function renderRaceEntry() {
           ${distances.map(d => `<span class="pill ${f.distance === d ? 'active' : ''}" data-distance="${d}">${d}</span>`).join('')}
         </div>
       </div>
-      <div>
-        <div class="label-cap mb-2">Round</div>
-        <div class="seg-group" style="max-width:240px;">
-          <div class="seg ${rf.round === 'Prelim' ? 'active' : ''}" data-round="Prelim">Prelim</div>
-          <div class="seg ${rf.round === 'Final' ? 'active' : ''}" data-round="Final">Final</div>
+      <div class="flex gap-3">
+        <div class="flex-1 min-w-0">
+          <div class="label-cap mb-2">Competition</div>
+          <input type="text" data-race-comp value="${(rf.competition || '').replace(/"/g, '&quot;')}" placeholder="e.g. Winter Champs" class="w-full bg-slate-100 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300" />
+        </div>
+        <div style="width:9rem;flex-shrink:0;">
+          <div class="label-cap mb-2">Date</div>
+          <input type="date" data-race-date value="${rf.date || ''}" class="w-full bg-slate-100 rounded-xl px-2 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300" />
         </div>
       </div>
       <div class="bg-gradient-to-br from-cyan-50 to-white border border-cyan-100 rounded-2xl px-4 py-3">
         <div class="flex items-center justify-between gap-3">
-          <div class="label-cap text-cyan-800">Goal / target</div>
+          <div class="label-cap text-cyan-800">Predicted / goal</div>
           ${timeBoxes('target', rf.times.target)}
         </div>
       </div>
       <div>
-        <div class="label-cap mb-2">What they swam ${distFree ? '<span class="text-faint" style="text-transform:none;letter-spacing:0;font-weight:400;">· middle 50s averaged automatically</span>' : ''}</div>
+        <div class="label-cap mb-2">What they swam · time + SR ${distFree ? '<span class="text-faint" style="text-transform:none;letter-spacing:0;font-weight:400;">· middle 50s averaged</span>' : ''}</div>
         <div class="bg-white border border-slate-200 rounded-2xl px-4 py-1">${fieldRows}</div>
+      </div>
+      <div>
+        <div class="label-cap mb-2">Notes</div>
+        <textarea data-race-notes rows="3" placeholder="What happened, technique cues, how it felt…" class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-sm outline-none focus:ring-2 focus:ring-cyan-300 resize-none">${(rf.notes || '').replace(/</g, '&lt;')}</textarea>
       </div>
     </div>
     <div class="border-t border-slate-200 px-5 py-4 pb-5 bg-white flex-shrink-0">
       <button class="w-full bg-cyan-600 text-white font-semibold rounded-xl py-4 text-base hover:bg-cyan-700 active:scale-[0.98] transition shadow-lg shadow-cyan-600/20" data-action="analyze-race">
-        Analyze race →
+        See comparison →
       </button>
     </div>
   `;
@@ -3138,99 +3144,56 @@ function renderRaceAnalysis() {
   if (!race) return renderRoster();
   const c = buildRaceComparison(race);
   if (!c) return `<div class="statusbar"></div><div class="p-8 text-center text-slate-500 text-sm">No pacing data for this event.</div>`;
-  const deltaColor = c.hit ? 'text-emerald-700' : 'text-rose-600';
-  const deltaBg = c.hit ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100';
-
+  const beat = c.delta <= 0.05;
+  const deltaColor = beat ? 'text-emerald-700' : 'text-rose-600';
+  const deltaBg = beat ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100';
+  const sr = race.sr || {};
+  const defs = raceRowDefs(race.stroke, race.distance);
+  const pt = predict(race.stroke, race.sex, race.pool, race.distance, race.targetSeconds);
+  const predAt = defs.map(def => {
+    if (!pt) return null;
+    if (def.kind === 'total') return race.targetSeconds;
+    if (def.kind === 'mid') return pt.splits[1];
+    if (def.kind === 'hundo') return pt.splits[2 * def.idx] + pt.splits[2 * def.idx + 1];
+    const i = def.idxFromEnd != null ? pt.splits.length - 1 - def.idxFromEnd : def.idx;
+    return pt.splits[i];
+  });
+  const GT = 'display:grid;grid-template-columns:1fr 3.3rem 3.3rem 2.9rem 2.3rem;gap:5px;align-items:center;';
+  const head = `<div style="${GT}" class="px-3 pt-3 pb-1"><span class="label-cap text-muted">Split</span><span class="label-cap text-muted" style="text-align:right;">Pred</span><span class="label-cap text-muted" style="text-align:right;">Swam</span><span class="label-cap text-muted" style="text-align:right;">Δ</span><span class="label-cap text-muted" style="text-align:center;">SR</span></div>`;
   const splitRows = c.rows.map((r, i) => {
-    if (r.lo == null) {
-      return `<div class="px-4 py-3 ${i < c.rows.length - 1 ? 'border-b border-slate-100' : ''} flex items-center justify-between">
-        <div class="text-sm font-semibold text-slate-700">${r.label}</div>
-        <div class="hero-time text-xl">${formatTime(r.actual)}</div></div>`;
-    }
-    const aColor = r.cls === 'too-fast' ? 'text-amber-700' : (r.cls === 'too-slow' ? 'text-rose-600' : 'text-slate-900');
-    const dColor = r.cls === 'too-fast' ? 'text-amber-700' : (r.cls === 'too-slow' ? 'text-rose-600' : 'text-emerald-700');
-    const iqr = r.hi - r.lo;
-    const winLo = r.lo - iqr, winHi = r.hi + iqr;
-    const pct = (v) => Math.max(0, Math.min(100, ((v - winLo) / (winHi - winLo)) * 100));
-    return `
-      <div class="px-4 py-3.5 ${i < c.rows.length - 1 ? 'border-b border-slate-100' : ''}">
-        <div class="flex items-baseline justify-between gap-2 mb-2.5">
-          <div class="text-sm font-semibold text-slate-700">${r.label}</div>
-          <div class="flex items-baseline gap-3">
-            <div class="hero-time text-xl ${aColor}">${formatTime(r.actual)}</div>
-            <div class="text-xs ${dColor} font-semibold tnum" style="width:52px;text-align:right;">${r.delta >= 0 ? '+' : ''}${r.delta.toFixed(2)}</div>
-          </div>
-        </div>
-        <div class="relative pb-1">
-          <div class="range-track">
-            <div class="range-fill" style="left: ${pct(r.lo).toFixed(1)}%; right: ${(100 - pct(r.hi)).toFixed(1)}%;"></div>
-            <div class="range-tick" style="left: ${pct(r.pred).toFixed(1)}%;"></div>
-            <div class="range-actual ${r.cls}" style="left: ${pct(r.actual).toFixed(1)}%;"></div>
-          </div>
-          <div class="flex justify-between text-[10px] text-faint mt-1.5 mono">
-            <span>${formatTime(r.lo)}</span><span class="text-faint">predicted ${formatTime(r.pred)}</span><span>${formatTime(r.hi)}</span>
-          </div>
-        </div>
-      </div>`;
+    const def = defs[i], pred = predAt[i];
+    const d = (r.actual != null && pred != null) ? r.actual - pred : null;
+    const dc = d == null ? 'text-slate-400' : (d > 0.05 ? 'text-rose-600' : (d < -0.05 ? 'text-emerald-700' : 'text-slate-500'));
+    return `<div style="${GT}" class="px-3 py-2 border-b border-slate-100 last:border-0">
+      <div class="text-sm font-semibold text-slate-700 leading-tight">${r.label}</div>
+      <div class="mono text-xs text-slate-500" style="text-align:right;">${pred != null ? formatTime(pred) : '—'}</div>
+      <div class="mono text-sm font-semibold text-slate-800" style="text-align:right;">${r.actual != null ? formatTime(r.actual) : '—'}</div>
+      <div class="mono text-xs font-semibold ${dc}" style="text-align:right;">${d != null ? (d >= 0 ? '+' : '') + d.toFixed(2) : ''}</div>
+      <div class="mono text-xs text-slate-600" style="text-align:center;">${sr[def.key] != null && sr[def.key] !== '' ? sr[def.key] : '—'}</div>
+    </div>`;
   }).join('');
-
-  const toneStyles = {
-    amber: { wrap: 'bg-amber-50 border-amber-200', title: 'text-amber-900', body: 'text-amber-800', icon: 'text-amber-600', tag: 'text-amber-900 bg-amber-100' },
-    rose: { wrap: 'bg-rose-50 border-rose-200', title: 'text-rose-900', body: 'text-rose-800', icon: 'text-rose-600', tag: 'text-rose-900 bg-rose-100' },
-    emerald: { wrap: 'bg-emerald-50 border-emerald-200', title: 'text-emerald-900', body: 'text-emerald-800', icon: 'text-emerald-600', tag: 'text-emerald-900 bg-emerald-100' },
-    cyan: { wrap: 'bg-cyan-50 border-cyan-200', title: 'text-cyan-900', body: 'text-cyan-800', icon: 'text-cyan-600', tag: 'text-cyan-900 bg-cyan-100' },
-    slate: { wrap: 'bg-slate-100 border-slate-200', title: 'text-slate-900', body: 'text-slate-700', icon: 'text-slate-500', tag: 'text-slate-700 bg-slate-200' },
-  };
-  const insightCards = c.insights.map(ins => {
-    const t = toneStyles[ins.tone] || toneStyles.slate;
-    return `
-      <div class="${t.wrap} border rounded-xl px-4 py-3.5 flex gap-3">
-        <span class="${t.icon} text-lg leading-none mt-0.5 flex-shrink-0">${ins.icon}</span>
-        <div class="flex-1">
-          <div class="font-semibold text-sm ${t.title}">${ins.title}</div>
-          <div class="text-xs mt-1 leading-relaxed ${t.body}">${ins.body}</div>
-          ${ins.finals ? `<div class="mt-2 inline-block px-2.5 py-1 rounded-md text-[11px] font-semibold ${t.tag}">${ins.finals}</div>` : ''}
-        </div>
-      </div>`;
-  }).join('');
-
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
       <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0">
-        <div class="text-base font-semibold">${race.name || 'Race analysis'}</div>
-        <div class="text-xs text-muted truncate">${race.distance} ${race.stroke} ${race.pool} · ${race.round}${race.date ? ' · ' + race.date : ''}</div>
+        <div class="text-base font-semibold truncate">${race.name || 'Race'}</div>
+        <div class="text-xs text-muted truncate">${race.distance} ${race.stroke} ${race.pool}${race.competition ? ' · ' + race.competition : ''}${race.date ? ' · ' + race.date : ''}</div>
       </div>
       <button class="px-3.5 py-2 rounded-full bg-cyan-50 text-cyan-800 text-xs font-semibold hover:bg-cyan-100 transition" data-action="save-race">Save</button>
     </div>
     <div class="px-5 py-3 bg-white border-b border-slate-100">
       <div class="${deltaBg} border rounded-2xl p-4">
         <div class="grid grid-cols-3 gap-2">
-          <div><div class="label-cap text-muted">Goal</div><div class="hero-time text-xl mt-1">${formatTime(c.target)}</div></div>
+          <div><div class="label-cap text-muted">Predicted</div><div class="hero-time text-xl mt-1">${formatTime(c.target)}</div></div>
           <div class="text-center border-l border-r border-slate-200/60"><div class="label-cap text-muted">Swam</div><div class="hero-time text-xl mt-1">${formatTime(c.actualTotal)}</div></div>
           <div class="text-right"><div class="label-cap ${deltaColor}">Delta</div><div class="hero-time text-xl mt-1 ${deltaColor}">${c.delta >= 0 ? '+' : ''}${c.delta.toFixed(2)}</div></div>
         </div>
       </div>
     </div>
-    <div class="scrollable px-5 py-3 space-y-4 bg-slate-50">
-      <div class="flex items-center justify-center gap-4 text-[11px] text-muted">
-        <span><span class="status-dot too-fast"></span>Too fast</span>
-        <span><span class="status-dot in-range"></span>On range</span>
-        <span><span class="status-dot too-slow"></span>Too slow</span>
-      </div>
-      <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-        <div class="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
-          <div class="label-cap text-muted">Splits</div>
-          <div class="label-cap text-faint">Actual · Δ vs predicted</div>
-        </div>
-        ${splitRows}
-      </div>
-      <div class="space-y-3">
-        <div class="label-cap text-muted px-1">What it says</div>
-        ${insightCards}
-      </div>
-      <div class="bg-slate-50 border border-dashed border-slate-200 rounded-xl px-4 py-3 text-[11px] text-faint text-center">Training suggestions coming in a later version.</div>
+    <div class="scrollable px-5 py-3 space-y-3 bg-slate-50">
+      <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">${head}${splitRows}</div>
+      ${race.notes ? `<div class="bg-white rounded-2xl border border-slate-200 p-4"><div class="label-cap text-muted mb-1">Notes</div><div class="text-sm text-slate-700 leading-relaxed" style="white-space:pre-wrap;">${(race.notes || '').replace(/</g, '&lt;')}</div></div>` : ''}
     </div>
   `;
 }
@@ -3498,7 +3461,7 @@ function handleAction(action, el) {
     case 'new-race':
       state.swimmer = null;
       state.form = { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 200, targetSeconds: 120, name: '' };
-      state.raceForm = { round: 'Prelim', times: {} };
+      state.raceForm = { times: {}, sr: {}, competition: '', date: '', notes: '' };
       seedRaceTimes();
       navigate('race-entry');
       break;
@@ -3510,7 +3473,7 @@ function handleAction(action, el) {
         distance: last ? last.distance : 200, targetSeconds: (last && last.targetSeconds) || 120,
         name: swimmerName(sid), sid,
       };
-      state.raceForm = { round: 'Prelim', times: {} };
+      state.raceForm = { times: {}, sr: {}, competition: '', date: '', notes: '' };
       seedRaceTimes();
       navigate('race-entry');
       break;
@@ -3521,8 +3484,10 @@ function handleAction(action, el) {
         id: 'rc' + Date.now().toString(36), kind: 'race', name: (f.name || '').trim(), sid: f.sid,
         stroke: f.stroke, sex: f.sex, pool: f.pool, distance: f.distance,
         targetSeconds: rf.times.target ?? f.targetSeconds,
-        times: { ...rf.times }, round: rf.round || 'Prelim',
-        date: new Date().toISOString().slice(5, 10).replace('-', '/'),
+        times: { ...rf.times }, sr: { ...(rf.sr || {}) },
+        competition: (rf.competition || '').trim(),
+        date: rf.date || new Date().toISOString().slice(0, 10),
+        notes: (rf.notes || '').trim(),
       };
       navigate('race-analysis');
       break;
@@ -3532,7 +3497,7 @@ function handleAction(action, el) {
       if (!r) break;
       if (!(r.name || '').trim()) { showToast('Add a swimmer name to save this race'); break; }
       if (!state.saved.find(x => x.id === r.id)) { r.sid = resolveSid(r); state.saved.push(r); persistSaved(); }
-      showToast(`Saved ${r.name} · ${r.round} ${r.distance} ${r.stroke}`);
+      showToast(`Saved ${r.name} · ${r.distance} ${r.stroke}`);
       break;
     }
     case 'compare-races': {
