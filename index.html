@@ -2272,8 +2272,8 @@ function renderIM400Splits(r) {
           </div>
           ${rangeBar(hlo, hhi, h)}
           <div class="flex justify-between items-baseline text-[11px] text-muted mt-1.5">
-            <span><span class="mono">${formatTime(hlo)}</span> <span class="${cap}">better ${lg}</span></span>
-            <span><span class="${cap}">worse ${lg}</span> <span class="mono">${formatTime(hhi)}</span></span>
+            <span><span class="mono">${formatTime(hlo)}</span> <span class="${cap}">faster</span></span>
+            <span><span class="${cap}">slower</span> <span class="mono">${formatTime(hhi)}</span></span>
           </div>
           ${cumBlock}
         </div>
@@ -2351,11 +2351,10 @@ function renderPredictedSplits() {
     //  • Opening split → faster = front-end (a front-loaded swimmer goes out fast).
     //  • Closing split → faster = back-end  (a back-loaded swimmer comes home fast) — reversed.
     //  • Everything else (200 middle 50s, all of distance) → neutral faster / slower.
-    //  • IM legs       → "better <leg>" / "worse <leg>" (stroke strength, not pacing position).
+    //  • IM legs       → "faster" / "slower".
     let leftCap = 'front-end', rightCap = 'back-end';
     if (isIM) {
-      const leg = row.label.split(' · ')[0].toLowerCase();
-      leftCap = `better ${leg}`; rightCap = `worse ${leg}`;
+      leftCap = 'faster'; rightCap = 'slower';
     } else if (row.half === 'middle') {
       leftCap = 'faster'; rightCap = 'slower';
     } else if (row.half === 'back') {
