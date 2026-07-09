@@ -4,13 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Pacer — v3 (private preview)</title>
-  <link rel="manifest" href="manifest-v3.webmanifest">
-  <meta name="theme-color" content="#0891b2">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="Pacer+">
-  <link rel="apple-touch-icon" href="icon-192.png">
   <!--
     Pacer — swim race split predictor.
     © 2026 Gaël Chaubet. All rights reserved.
@@ -3713,10 +3706,5 @@ persistSaved(); // lock in any sids assigned by migration so they stay stable ac
 render();
 </script>
 
-  <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); });
-    }
-  </script>
 </body>
 </html>
