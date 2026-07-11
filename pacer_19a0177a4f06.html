@@ -1170,8 +1170,9 @@ const state = {
   history: [],
   swimmer: null, // active swimmer if any
   convForm: { stroke: 'Free', sex: 'M', distance: 100, from: 'LCM', seconds: 0, name: '' }, // course converter
-  effForm: { stroke: 'Free', sex: 'M', from: 'LCM', seconds: 0, name: '', actual: {}, date: '' }, // min–max efficiency test
-  fiftyForm: { stroke: 'Free', sex: 'M', seconds: 0, name: '', best: {}, date: '' }, // 50m LCM split calculator (best = swimmer's clocked times per row)
+  effForm: { stroke: 'Free', sex: 'M', pace: '100', from: 'LCM', seconds: 0, test: '50lcm', name: '', date: '', logs: {} }, // min–max efficiency test (pace-specific)
+  fiftyForm: { stroke: 'Free', sex: 'M', seconds: 0, name: '', best: {}, sr: {}, sc: {}, date: '' }, // 50m LCM split calculator
+  fiftyOpen: {}, // 50m tool: which metric rows are expanded for SR/SC input
   adjForm: { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 100, seconds: 0, name: '' }, // adjacent-events predictor
   form: {
     stroke: 'Free', sex: 'M', pool: 'LCM', distance: 200,
@@ -1525,26 +1526,29 @@ function render() {
   if (fr && !fr._bestBound) {
     fr._bestBound = true;
     fr.addEventListener('input', (e) => {
-      const el = e.target.closest('[data-best]'); if (!el) return;
-      const key = el.getAttribute('data-best'); const v = parseFloat(el.value);
-      if (el.value.trim() === '') delete state.fiftyForm.best[key];
-      else if (!isNaN(v)) state.fiftyForm.best[key] = v;
+      const el = e.target.closest('[data-best],[data-fifty-cp],[data-fifty-sr],[data-fifty-sc]'); if (!el) return;
+      const v = parseFloat(el.value); const empty = el.value.trim() === '';
+      const put = (obj, key) => { if (empty) delete obj[key]; else if (!isNaN(v)) obj[key] = v; };
+      if (el.hasAttribute('data-best')) put(state.fiftyForm.best, el.getAttribute('data-best'));
+      else if (el.hasAttribute('data-fifty-cp')) put(state.fiftyForm.best, el.getAttribute('data-fifty-cp'));
+      else if (el.hasAttribute('data-fifty-sr')) put(state.fiftyForm.sr = (state.fiftyForm.sr || {}), el.getAttribute('data-fifty-sr'));
+      else if (el.hasAttribute('data-fifty-sc')) put(state.fiftyForm.sc = (state.fiftyForm.sc || {}), el.getAttribute('data-fifty-sc'));
     });
     fr.addEventListener('focusout', (e) => {
-      if (e.target.closest('[data-best]')) fr.innerHTML = fiftyResultHtml();
+      if (e.target.closest('[data-best],[data-fifty-cp],[data-fifty-sr],[data-fifty-sc]')) fr.innerHTML = fiftyResultHtml();
     });
   }
   const er = host.querySelector('#eff-result');
   if (er && !er._effBound) {
     er._effBound = true;
     er.addEventListener('input', (e) => {
-      const el = e.target.closest('[data-eff-t],[data-eff-s]'); if (!el) return;
-      const isT = el.hasAttribute('data-eff-t');
-      const key = el.getAttribute(isT ? 'data-eff-t' : 'data-eff-s');
-      const a = (state.effForm.actual[key] = state.effForm.actual[key] || {});
+      const el = e.target.closest('[data-eff-in]'); if (!el) return;
+      const field = el.getAttribute('data-eff-in');
+      const key = (state.effForm.pace || '100') + '_' + (state.effForm.test || '50lcm');
+      const L = (state.effForm.logs = state.effForm.logs || {});
+      const rec = (L[key] = L[key] || {});
       const v = parseFloat(el.value);
-      if (el.value.trim() === '') delete a[isT ? 't' : 's'];
-      else if (!isNaN(v)) a[isT ? 't' : 's'] = v;
+      if (el.value.trim() === '') delete rec[field]; else if (!isNaN(v)) rec[field] = v;
     });
     er.addEventListener('focusout', () => { er.innerHTML = effResultHtml(); });
   }
@@ -1819,10 +1823,10 @@ function renderSavedSwimmer() {
   const effRows = effs.slice().reverse().map(s => `
     ${rowOpen(s.id)}
       <div class="flex-1 min-w-0">
-        <div class="font-semibold text-[15px]">${s.stroke} efficiency <span class="text-xs font-normal text-muted">${sexL(s)}</span></div>
-        <div class="text-xs text-muted mt-0.5">100 ${s.from} <span class="mono font-semibold text-slate-700">${formatTime(s.seconds)}</span>${s.date ? ' · ' + s.date : ''}</div>
+        <div class="font-semibold text-[15px]">${s.stroke} ${mmTestLabel[s.test || '50lcm']} <span class="text-xs font-normal text-muted">${s.pace || '100'} pace · ${sexL(s)}</span></div>
+        <div class="text-xs text-muted mt-0.5">${s.scoreCount != null ? 'score ' + (+s.scoreCount).toFixed(1) : (s.pace || '100') + ' PB ' + formatTime(s.seconds)}${s.date ? ' · ' + s.date : ''}</div>
       </div>
-      ${editing ? delBtn(s.id, 'efficiency test') : arrow('Targets →')}
+      ${editing ? delBtn(s.id, 'efficiency test') : arrow('Open →')}
     </div>`).join('');
 
   const compareBtn = ''; // compare removed in the simplified race logger
@@ -1945,7 +1949,7 @@ const PROG_KINDS = { race: 'Race', fifty: '50 m splits', eff: 'Efficiency' };
 function progSig(s) {
   if (s.kind === 'race') return `${s.distance} ${s.stroke} ${s.pool}`;
   if (s.kind === 'fifty') return `50 ${s.stroke} LCM splits`;
-  if (s.kind === 'eff') return `${s.stroke} efficiency`;
+  if (s.kind === 'eff') return `${s.stroke} ${mmTestLabel[s.test || '50lcm']} · ${s.pace || '100'} pace`;
   return null;
 }
 
@@ -1967,20 +1971,24 @@ function progMetrics(s) {
     }
   } else if (s.kind === 'fifty') {
     const M = { s1: '1st 25', s2: '2nd 25', mm25: 'min–max 25', uwt: 'Underwater', sw15: 'Swim (push)', uw: 'Top speed UW', sw: 'Top speed SW', se: 'Speed endurance', turn: 'Turn' };
+    const cpLab = (k) => M[k] || (/^cp\d+$/.test(k) ? k.replace('cp', '') + ' m' : k);
     out.push({ key: 'time', label: '50 time', value: s.seconds, t: 'time', primary: true });
-    const b = s.best || {};
+    const b = s.best || {}, srM = s.sr || {}, scM = s.sc || {};
     Object.keys(M).forEach((k) => { if (b[k] > 0) out.push({ key: 'best:' + k, label: M[k], value: b[k], t: 'time' }); });
+    Object.keys(b).forEach((k) => { if (/^cp\d+$/.test(k) && b[k] > 0) out.push({ key: 'best:' + k, label: cpLab(k), value: b[k], t: 'time' }); });
+    Object.keys(srM).forEach((k) => { if (srM[k] > 0) out.push({ key: 'sr:' + k, label: cpLab(k) + ' SR', value: +srM[k], t: 'count' }); });
+    Object.keys(scM).forEach((k) => { if (scM[k] > 0) out.push({ key: 'sc:' + k, label: cpLab(k) + ' SC', value: +scM[k], t: 'count' }); });
   } else if (s.kind === 'eff') {
-    const N = { '25scm': '25 SCM', '50scm': '50 SCM', '50lcm': '50 LCM' };
-    const a = s.actual || {};
-    ['25scm', '50scm', '50lcm'].forEach((tk) => {
-      const x = a[tk];
-      if (x && typeof x.t === 'number' && typeof x.s === 'number') {
-        out.push({ key: tk + ':score', label: N[tk] + ' score', value: x.t + x.s, t: 'score', primary: tk === '50lcm' });
-        out.push({ key: tk + ':time', label: N[tk] + ' time', value: x.t, t: 'time' });
-        out.push({ key: tk + ':strk', label: N[tk] + ' strokes', value: x.s, t: 'count' });
-      }
-    });
+    if (s.scoreCount != null || s.scoreRate != null || s.t != null) {
+      if (s.scoreCount != null) out.push({ key: 'scoreCount', label: 'Score (count)', value: s.scoreCount, t: 'score', primary: true });
+      if (s.scoreRate != null) out.push({ key: 'scoreRate', label: 'Score (rate)', value: s.scoreRate, t: 'score', primary: s.scoreCount == null });
+      if (s.t != null) out.push({ key: 'time', label: 'Time', value: s.t, t: 'time' });
+      if (s.sc != null) out.push({ key: 'sc', label: 'Strokes', value: s.sc, t: 'count' });
+      if (s.sr != null) out.push({ key: 'sr', label: 'Stroke rate', value: s.sr, t: 'count' });
+    } else if (s.actual) {
+      const N = { '25scm': '25 SCM', '50scm': '50 SCM', '50lcm': '50 LCM' };
+      ['25scm', '50scm', '50lcm'].forEach((tk) => { const x = s.actual[tk]; if (x && typeof x.t === 'number' && typeof x.s === 'number') out.push({ key: tk + ':score', label: N[tk] + ' score', value: x.t + x.s, t: 'score', primary: tk === '50lcm' }); });
+    }
     if (out.length && !out.some((m) => m.primary)) out[0].primary = true;
   }
   return out;
@@ -2328,78 +2336,95 @@ const mmLcm2ndMax  = { Free:{M:0.5289,F:0.5285}, Back:{M:0.5276,F:0.5296}, Fly:{
 const mmScoreBand  = { // min–max SCORE band: min → upper-IQR (lo=min/median, hi=q75/median of score/first-50 ratio, n=16)
   Free:{M:{lo:0.9637,hi:1.0262},F:{lo:0.9526,hi:1.0172}}, Back:{M:{lo:0.9464,hi:1.0104},F:{lo:0.9409,hi:1.0332}},
   Fly:{M:{lo:0.9614,hi:1.0071},F:{lo:0.9518,hi:1.0121}}, Breast:{M:{lo:0.9329,hi:1.0288},F:{lo:0.9567,hi:1.0236}} };
+// --- pace-specific (100 vs 200) additions ---
+const mmRatio200 = { Free:{M:2.48,F:2.51}, Back:{M:2.48,F:2.50}, Fly:{M:1.94,F:1.92}, Breast:{M:1.73,F:1.65} }; // 50 LCM basis, 200-pace
+const mmFrac200  = { Free:{M:0.2322,F:0.2363}, Back:{M:0.2338,F:0.2347}, Fly:{M:0.2220,F:0.2232}, Breast:{M:0.2257,F:0.2274} }; // 200 LCM first-50 fraction
+const mmCeil = { '100': { Free:{M:1.06,F:1.05}, Back:{M:1.06,F:1.04}, Fly:{M:1.07,F:1.08}, Breast:{M:1.10,F:1.09} },
+                 '200': { Free:{M:1.10,F:1.06}, Back:{M:1.10,F:1.07}, Fly:{M:1.11,F:1.12}, Breast:{M:1.14,F:1.13} } }; // stop-rule: target × this
+const mmCruise25  = { Free:{M:[0.1277,0.1292],F:[0.1273,0.1283]}, Back:{M:[0.1275,0.1303],F:[0.1274,0.1291]}, Fly:{M:[0.1282,0.1295],F:[0.1276,0.1299]}, Breast:{M:[0.1279,0.1290],F:[0.1277,0.1289]} }; // 200 cruise 25 [median,max]
+const mmCruise50s = { Free:{M:[0.2553,0.2584],F:[0.2547,0.2566]}, Back:{M:[0.2550,0.2606],F:[0.2548,0.2582]}, Fly:{M:[0.2564,0.2589],F:[0.2553,0.2598]}, Breast:{M:[0.2558,0.2581],F:[0.2555,0.2577]} }; // 200 cruise 50 SCM
+const mmCruise50l = { Free:{M:[0.2552,0.2575],F:[0.2549,0.2573]}, Back:{M:[0.2548,0.2590],F:[0.2535,0.2565]}, Fly:{M:[0.2561,0.2589],F:[0.2559,0.2596]}, Breast:{M:[0.2559,0.2612],F:[0.2553,0.2578]} }; // 200 cruise 50 LCM
+const mmTestLabel = { '25scm':'25 SCM', '50scm':'50 SCM', '50lcm':'50 LCM' };
 
 // Derive both 100s + the three test targets & pace-lock times from state.effForm.
 function effCompute() {
-  const f = state.effForm, st = f.stroke, sx = f.sex;
+  const f = state.effForm, st = f.stroke, sx = f.sex, pace = f.pace || '100';
+  const test = f.test || '50lcm';
   const secs = Math.max(0, f.seconds || 0);
-  const cr = convRatios[st] && convRatios[st][sx] && convRatios[st][sx][100];
-  const mean = cr ? cr.mean : 1.03;                       // SCM→LCM ratio
-  let T100lcm, T100scm;
-  if (f.from === 'LCM') { T100lcm = secs; T100scm = secs / mean; }
-  else                  { T100scm = secs; T100lcm = secs * mean; }
-  const r47 = mmRatio47[st][sx], turn = mmTurn[st];
-  const first50 = mmFrac[st][sx] * T100lcm;               // README anchors the score to the (LCM) first 50
-  const lcm2nd = (ratios[st] && ratios[st][sx] && ratios[st][sx].LCM && ratios[st][sx].LCM['100'])
-    ? ratios[st][sx].LCM['100'].median[1] : 0.5;
-  const el = mmElite[st][sx];
-  const lcm2ndHi = mmLcm2ndMax[st][sx];
-  const bd = mmScoreBand[st][sx];
-  const mk = (key, name, score, pace, paceHi) => ({ key, name, score, scoreLo: score * bd.lo, scoreHi: score * bd.hi, pace, paceHi });
-  return {
-    secs, mean, T100lcm, T100scm, first50, spc: mmSpc[st],
-    tests: [
-      mk('25scm', 'Push 25 SCM', first50 * (r47 * 22 / 47),     mmScm2nd25[st][sx] * T100scm, mmScm2nd25hi[st][sx] * T100scm),
-      mk('50scm', 'Push 50 SCM', first50 * (r47 * 46 / 47) + turn, mmScmMid50[st][sx] * T100scm, mmScmMid50hi[st][sx] * T100scm),
-      mk('50lcm', 'Push 50 LCM', first50 * r47,                 lcm2nd * T100lcm,             lcm2ndHi * T100lcm),
-    ],
-  };
+  const dist = pace === '200' ? 200 : 100;
+  const cr = convRatios[st] && convRatios[st][sx] && convRatios[st][sx][dist];
+  const mean = cr ? cr.mean : 1.03;
+  let Tlcm, Tscm;
+  if (f.from === 'LCM') { Tlcm = secs; Tscm = secs / mean; } else { Tscm = secs; Tlcm = secs * mean; }
+  const frac = (pace === '200' ? mmFrac200 : mmFrac)[st][sx];
+  const first50 = frac * Tlcm;
+  const r47 = (pace === '200' ? mmRatio200 : mmRatio47)[st][sx];
+  const turn = mmTurn[st], spc = mmSpc[st], bd = mmScoreBand[st][sx];
+  let target;
+  if (test === '25scm') target = first50 * (r47 * 22 / 47);
+  else if (test === '50scm') target = first50 * (r47 * 46 / 47) + turn;
+  else target = first50 * r47;
+  const ceiling = target * mmCeil[pace][st][sx];
+  let pace0, paceHi;
+  if (pace === '100') {
+    if (test === '25scm') { pace0 = mmScm2nd25[st][sx] * Tscm; paceHi = mmScm2nd25hi[st][sx] * Tscm; }
+    else if (test === '50scm') { pace0 = mmScmMid50[st][sx] * Tscm; paceHi = mmScmMid50hi[st][sx] * Tscm; }
+    else { const l2 = (ratios[st] && ratios[st][sx] && ratios[st][sx].LCM && ratios[st][sx].LCM['100']) ? ratios[st][sx].LCM['100'].median[1] : 0.5; pace0 = l2 * Tlcm; paceHi = mmLcm2ndMax[st][sx] * Tlcm; }
+  } else {
+    const c25 = mmCruise25[st][sx], c50s = mmCruise50s[st][sx], c50l = mmCruise50l[st][sx];
+    if (test === '25scm') { pace0 = c25[0] * Tscm; paceHi = c25[1] * Tscm; }
+    else if (test === '50scm') { pace0 = c50s[0] * Tscm; paceHi = c50s[1] * Tscm; }
+    else { pace0 = c50l[0] * Tlcm; paceHi = c50l[1] * Tlcm; }
+  }
+  return { secs, pace, test, Tlcm, Tscm, first50, spc, target, ceiling, scoreLo: target * bd.lo, scoreHi: target * bd.hi, pace0, paceHi };
 }
 
 function effResultHtml() {
-  const f = state.effForm, st = f.stroke;
+  const f = state.effForm;
   if (!(f.seconds > 0)) {
-    return `<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-6 text-center text-sm text-muted">Enter a 100 m ${f.from} time above to see the efficiency targets.</div>`;
+    return `<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-6 text-center text-sm text-muted">Enter a ${f.pace || '100'} m ${f.from} PB above to see the targets.</div>`;
   }
   const r = effCompute();
   const s2 = (x) => x.toFixed(2), s1 = (x) => x.toFixed(1);
-  return r.tests.map(t => {
-    const a = f.actual[t.key] || {};
-    const haveT = typeof a.t === 'number', haveS = typeof a.s === 'number';
-    let logOut = '';
-    if (haveT && haveS) {
-      const aScore = a.t + a.s;
-      const d = aScore - t.score;
-      const dC = d <= 0 ? 'text-emerald-700' : 'text-rose-600';
-      const counts = a.t <= t.paceHi + 1e-9;
-      logOut = `
-        <div class="mt-2 pt-2 border-t border-slate-100 text-[12.5px]">
-          <div>Your score <span class="mono font-bold">${s1(aScore)}</span> <span class="${dC} font-semibold">(${d >= 0 ? '+' : ''}${s1(d)} vs target)</span></div>
-          <div class="mt-0.5 ${counts ? 'text-emerald-700' : 'text-amber-600'} font-medium">${counts ? '✓ Counts' : '⚠ Too slow — doesn’t count'} · swam ${s2(a.t)} vs must-beat ${s2(t.paceHi)}</div>
-          ${counts && d > 0 ? `<div class="text-muted mt-0.5">${s1(d)} to shave for elite-scaled efficiency.</div>` : ''}
-        </div>`;
-    }
-    return `
-      <div class="bg-white border border-slate-200 rounded-2xl p-4 mb-2.5">
-        <div class="font-bold text-[15px]">${t.name}</div>
-        <div class="flex items-end gap-4 mt-1.5">
-          <div>
-            <div class="hero-time text-3xl leading-none">${s1(t.score)}</div>
-            <div class="text-[11px] text-muted mono mt-0.5">range ${s1(t.scoreLo)}–${s1(t.scoreHi)}</div>
-            <div class="text-[10px] uppercase tracking-wide text-faint mt-0.5">min–max score</div>
-          </div>
-          <div class="flex-1">
-            <div class="text-[12.5px] text-slate-700">Goal time <span class="mono font-semibold">${s2(t.pace)}</span></div>
-            <div class="text-[12.5px] text-slate-700">Must beat <span class="mono font-semibold">${s2(t.paceHi)}</span></div>
-          </div>
+  const key = (f.pace || '100') + '_' + (f.test || '50lcm');
+  const a = (f.logs && f.logs[key]) || {};
+  const haveT = a.t > 0, haveSc = a.sc > 0, haveSr = a.sr > 0;
+  const scoreCount = (haveT && haveSc) ? a.t + a.sc : null;
+  const scoreRate = (haveT && haveSr) ? a.t + (a.sr / 60 * a.t * r.spc) : null;
+  const timeOk = haveT ? a.t <= r.paceHi + 1e-9 : null;
+  const scoreLine = (label, sc) => {
+    if (sc == null) return '';
+    const dT = sc - r.target, overCeil = sc > r.ceiling + 1e-9;
+    const dC = dT <= 0 ? 'text-emerald-700' : (overCeil ? 'text-rose-600' : 'text-amber-600');
+    return `<div class="flex items-baseline justify-between gap-2 py-1">
+      <div class="text-[12.5px] text-slate-700">${label} <span class="mono font-bold text-slate-900">${s1(sc)}</span></div>
+      <div class="text-[11px] ${dC} font-semibold">${dT >= 0 ? '+' : ''}${s1(dT)} vs target${overCeil ? ' · ⚠ over ceiling' : ''}</div>
+    </div>`;
+  };
+  const flags = [];
+  if (haveT) flags.push(`<div class="${timeOk ? 'text-emerald-700' : 'text-amber-600'} text-[11px] font-medium mt-0.5">${timeOk ? '✓ On pace' : '⚠ Off pace — outside the time band'} · swam ${s2(a.t)} vs must-beat ${s2(r.paceHi)}</div>`);
+  if ((scoreCount != null && scoreCount > r.ceiling) || (scoreRate != null && scoreRate > r.ceiling)) flags.push(`<div class="text-rose-600 text-[11px] font-semibold mt-0.5">⚠ Efficiency gone — score over the ceiling. Modify / stop the set.</div>`);
+  return `
+    <div class="bg-white border border-slate-200 rounded-2xl p-4">
+      <div class="font-bold text-[15px]">${mmTestLabel[r.test]} · ${r.pace} pace</div>
+      <div class="flex items-end gap-4 mt-1.5">
+        <div>
+          <div class="hero-time text-3xl leading-none">${s1(r.target)}</div>
+          <div class="text-[10px] uppercase tracking-wide text-faint mt-0.5">target min–max</div>
         </div>
-        <div class="mt-2.5 flex items-center gap-2">
-          <div class="flex-1"><input data-eff-t="${t.key}" inputmode="decimal" value="${haveT ? a.t : ''}" placeholder="time s" class="w-full bg-slate-100 rounded-lg px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-cyan-300" /></div>
-          <div class="flex-1"><input data-eff-s="${t.key}" inputmode="numeric" value="${haveS ? a.s : ''}" placeholder="strokes" class="w-full bg-slate-100 rounded-lg px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-cyan-300" /></div>
+        <div class="flex-1 text-[12px] text-slate-700 leading-snug">
+          <div>range <span class="mono">${s1(r.scoreLo)}–${s1(r.scoreHi)}</span></div>
+          <div>ceiling <span class="mono font-semibold text-rose-600">${s1(r.ceiling)}</span> <span class="text-faint">stop above</span></div>
+          <div>pace <span class="mono">${s2(r.pace0)}</span> · beat <span class="mono">${s2(r.paceHi)}</span></div>
         </div>
-        ${logOut}
-      </div>`;
-  }).join('');
+      </div>
+      <div class="mt-3 grid grid-cols-3 gap-2">
+        <div><div class="label-cap mb-1 text-muted">Time (s)</div><input data-eff-in="t" inputmode="decimal" value="${haveT ? a.t : ''}" placeholder="s" class="w-full bg-slate-100 rounded-lg px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-cyan-300" /></div>
+        <div><div class="label-cap mb-1 text-muted">Strokes</div><input data-eff-in="sc" inputmode="numeric" value="${haveSc ? a.sc : ''}" placeholder="count" class="w-full bg-slate-100 rounded-lg px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-cyan-300" /></div>
+        <div><div class="label-cap mb-1 text-muted">Rate</div><input data-eff-in="sr" inputmode="decimal" value="${haveSr ? a.sr : ''}" placeholder="SR" class="w-full bg-slate-100 rounded-lg px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-cyan-300" /></div>
+      </div>
+      ${(scoreCount != null || scoreRate != null) ? `<div class="mt-2 pt-2 border-t border-slate-100">${scoreLine('Score (stroke count)', scoreCount)}${scoreLine('Score (stroke rate)', scoreRate)}${flags.join('')}</div>` : '<div class="mt-2 text-[11px] text-faint">Enter time + stroke count and/or stroke rate to get the score.</div>'}
+    </div>`;
 }
 
 function renderEfficiency() {
@@ -2407,67 +2432,39 @@ function renderEfficiency() {
   const strokes = ['Free', 'Back', 'Breast', 'Fly'];
   const secs = Math.max(0, f.seconds || 0);
   const emin = Math.floor(secs / 60), esec = Math.floor(secs % 60), ehh = Math.round((secs - Math.floor(secs)) * 100);
+  const tests = [['25scm', '25 SCM'], ['50scm', '50 SCM'], ['50lcm', '50 LCM']];
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3">
       <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
-      <div class="flex-1 min-w-0">
-        <div class="text-lg font-semibold">Efficiency test</div>
-      </div>
+      <div class="flex-1 min-w-0"><div class="text-lg font-semibold">Efficiency test</div><div class="text-xs text-muted truncate">Min–max score · pace-specific</div></div>
     </div>
-    <div class="scrollable px-5 py-4 space-y-6">
-      <div>
-        <div class="label-cap mb-2">Stroke</div>
-        <div class="flex gap-2 flex-wrap">
-          ${strokes.map(s => `<span class="pill ${f.stroke === s ? 'active' : ''}" data-estroke="${s}">${s}</span>`).join('')}
-        </div>
-      </div>
+    <div class="scrollable px-5 py-4 space-y-5">
+      <div><div class="label-cap mb-2">Stroke</div><div class="flex gap-2 flex-wrap">${strokes.map(s => `<span class="pill ${f.stroke === s ? 'active' : ''}" data-estroke="${s}">${s}</span>`).join('')}</div></div>
       <div class="flex gap-3">
-        <div class="flex-1">
-          <div class="label-cap mb-2">Sex</div>
-          <div class="seg-group">
-            <div class="seg ${f.sex === 'M' ? 'active' : ''}" data-esex="M">Men</div>
-            <div class="seg ${f.sex === 'F' ? 'active' : ''}" data-esex="F">Women</div>
-          </div>
-        </div>
-        <div class="flex-1 min-w-0">
-          <div class="label-cap mb-2">Pool</div>
-          <div class="seg-group">
-            <div class="seg ${f.from === 'LCM' ? 'active' : ''}" data-efffrom="LCM">LCM</div>
-            <div class="seg ${f.from === 'SCM' ? 'active' : ''}" data-efffrom="SCM">SCM</div>
-          </div>
-        </div>
+        <div class="flex-1"><div class="label-cap mb-2">Sex</div><div class="seg-group"><div class="seg ${f.sex === 'M' ? 'active' : ''}" data-esex="M">Men</div><div class="seg ${f.sex === 'F' ? 'active' : ''}" data-esex="F">Women</div></div></div>
+        <div class="flex-1"><div class="label-cap mb-2">Race pace</div><div class="seg-group"><div class="seg ${f.pace !== '200' ? 'active' : ''}" data-effpace="100">100</div><div class="seg ${f.pace === '200' ? 'active' : ''}" data-effpace="200">200</div></div></div>
       </div>
+      <div><div class="label-cap mb-2">Test</div><div class="seg-group">${tests.map(([k, l]) => `<div class="seg ${(f.test || '50lcm') === k ? 'active' : ''}" data-efftest="${k}">${l}</div>`).join('')}</div></div>
+      <div><div class="label-cap mb-2">Course of PB</div><div class="seg-group" style="max-width:220px;"><div class="seg ${f.from === 'LCM' ? 'active' : ''}" data-efffrom="LCM">LCM</div><div class="seg ${f.from === 'SCM' ? 'active' : ''}" data-efffrom="SCM">SCM</div></div></div>
       <div>
-        <div class="label-cap mb-2">Predicted 100 m ${f.from} time</div>
+        <div class="label-cap mb-2">${f.pace || '100'} m ${f.from} PB</div>
         <div class="bg-gradient-to-br from-cyan-50 to-white border-2 border-cyan-200 rounded-2xl px-4 py-5 focus-within:border-cyan-500 transition">
           <div class="flex items-end justify-center gap-1">
-            <div class="text-center">
-              <input data-emin inputmode="numeric" maxlength="2" value="${emin}" class="time-seg" aria-label="Minutes" />
-              <div class="time-seg-label">min</div>
-            </div>
+            <div class="text-center"><input data-emin inputmode="numeric" maxlength="2" value="${emin}" class="time-seg" aria-label="Minutes" /><div class="time-seg-label">min</div></div>
             <div class="time-seg-sep">:</div>
-            <div class="text-center">
-              <input data-esec inputmode="numeric" maxlength="2" value="${String(esec).padStart(2, '0')}" class="time-seg" aria-label="Seconds" />
-              <div class="time-seg-label">sec</div>
-            </div>
+            <div class="text-center"><input data-esec inputmode="numeric" maxlength="2" value="${String(esec).padStart(2, '0')}" class="time-seg" aria-label="Seconds" /><div class="time-seg-label">sec</div></div>
             <div class="time-seg-sep">.</div>
-            <div class="text-center">
-              <input data-ehh inputmode="numeric" maxlength="2" value="${String(ehh).padStart(2, '0')}" class="time-seg" aria-label="Hundredths" />
-              <div class="time-seg-label">hund.</div>
-            </div>
+            <div class="text-center"><input data-ehh inputmode="numeric" maxlength="2" value="${String(ehh).padStart(2, '0')}" class="time-seg" aria-label="Hundredths" /><div class="time-seg-label">hund.</div></div>
           </div>
         </div>
       </div>
       <div class="bg-cyan-50/60 border border-cyan-200 rounded-2xl px-4 py-3">
         <div class="font-semibold text-[13px] text-slate-800 mb-1">Assessment instructions</div>
-        <div class="text-[12.5px] text-slate-700 leading-relaxed">No underwater kick allowed. Min–max score = strokes + time — the swum time must be within the target for the score to count.</div>
+        <div class="text-[12.5px] text-slate-700 leading-relaxed">No underwater kick allowed. Min–max score = strokes + time; the swum time must be within the target for the score to count. Stop / modify the set if the score goes over the ceiling.</div>
       </div>
       <div id="eff-result">${effResultHtml()}</div>
-      <div>
-        <div class="label-cap mb-2">Test date</div>
-        <input type="date" data-eff-date value="${f.date || ''}" class="w-full bg-slate-100 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300" />
-      </div>
+      <div><div class="label-cap mb-2">Test date</div><input type="date" data-eff-date value="${f.date || ''}" class="w-full bg-slate-100 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300" /></div>
       <div class="bg-white border border-slate-200 rounded-2xl p-4">
         <div class="label-cap mb-2 text-muted">Save to a swimmer</div>
         <div class="flex gap-2">
@@ -2505,6 +2502,15 @@ function fiftyResultHtml() {
   const srR = fiftySrRange[f.stroke] && fiftySrRange[f.stroke][f.sex];
   const d1 = v => (v == null ? '—' : v.toFixed(1));
   const best = f.best || (f.best = {});
+  if (!state.fiftyOpen) state.fiftyOpen = {};
+  const fsr = f.sr || (f.sr = {}), fsc = f.sc || (f.sc = {});
+  const swDist = 15;
+  const expandBlock = (key, withTime) => state.fiftyOpen[key] ? `
+    <div class="px-3 py-2 bg-slate-50/60 border-b border-slate-100 flex gap-2 items-center">
+      ${withTime ? `<input data-fifty-cp="${key}" inputmode="decimal" value="${best[key] != null ? best[key] : ''}" placeholder="time" class="flex-1 bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-sm text-center outline-none focus:ring-2 focus:ring-cyan-300" />` : ''}
+      <input data-fifty-sr="${key}" inputmode="decimal" value="${fsr[key] != null ? fsr[key] : ''}" placeholder="SR" class="flex-1 bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-sm text-center outline-none focus:ring-2 focus:ring-cyan-300" />
+      <input data-fifty-sc="${key}" inputmode="numeric" value="${fsc[key] != null ? fsc[key] : ''}" placeholder="SC" class="flex-1 bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-sm text-center outline-none focus:ring-2 focus:ring-cyan-300" />
+    </div>` : '';
   const topSpeed = rr.r15_25 * T * 1.5, speedEnd = rr.r25_45 * T * 0.75, turn = rr.turn * T;
   const uk = uwKuw[f.stroke]; const uwTarget = uk ? uk[f.sex] * T : null; const uwDist = uk ? uk.dist : 15;
   const cp = {
@@ -2512,8 +2518,10 @@ function fiftyResultHtml() {
     '30 m': rr.first25 * T + rr.second25 * T * 0.2, '35 m': rr.first25 * T + rr.second25 * T * 0.4,
     '40 m': rr.first25 * T + rr.second25 * T * 0.6, '45 m': rr.first25 * T + rr.second25 * T * 0.8,
   };
-  const cpRows = Object.entries(cp).map(([m, v]) =>
-    `<div class="flex justify-between px-3 py-2 border-b border-slate-100 last:border-0"><span class="text-sm text-muted">${m}</span><span class="mono font-semibold text-slate-800">${d1(v)}</span></div>`).join('');
+  const cpRows = Object.entries(cp).map(([m, v]) => {
+    const key = 'cp' + m.replace(/\D/g, ''); const open = state.fiftyOpen[key];
+    return `<div class="clickable flex justify-between items-center px-3 py-2 border-b border-slate-100 last:border-0" data-fifty-expand="${key}"><span class="text-sm text-muted">${m} <span class="text-faint text-[10px]">${open ? '▾' : '▸'}</span></span><span class="mono font-semibold text-slate-800">${d1(v)}</span></div>${expandBlock(key, true)}`;
+  }).join('');
 
   // Comparison rows: predicted mean + optional IQR range + the swimmer's best (input) + Δ% vs mean.
   const rows = [
@@ -2521,7 +2529,7 @@ function fiftyResultHtml() {
     { key: 's2', label: '2nd 25 m', pred: s2, lo: iq ? iq.f2lo * T : null, hi: iq ? iq.f2hi * T : null },
     { key: 'mm25', label: 'min–max 25 m', sub: 'fastest flying 25', pred: null },
     { key: 'uwt', label: `Underwater ${uwDist} m`, sub: 'target from 50 PB (kick)', pred: uwTarget, sw: 'win' },
-    { key: 'sw15', label: `Swim ${uwDist} m`, sub: 'push — compare to underwater', pred: null, sw: 'win' },
+    { key: 'sw15', label: `Swim ${swDist} m`, sub: 'push — compare to underwater', pred: null, sw: 'win' },
     { key: 'uw', label: 'Top Speed UW', sub: '5–20 m', pred: topSpeed, sw: 'win' },
     { key: 'sw', label: 'Top Speed SW', sub: '15→30 m', pred: topSpeed, sw: 'win' },
     { key: 'se', label: 'Speed endurance', sub: '2nd 15 m of 2×25 m FAST @20s', pred: speedEnd, sw: 'win' },
@@ -2540,23 +2548,27 @@ function fiftyResultHtml() {
     const pctStr = pctVal == null ? '—' : `${pctVal >= 0 ? '+' : ''}${pctVal.toFixed(1)}%`;
     const cls = colorFor[r.key] || 'bg-slate-50 text-slate-400';
     const range = (r.lo != null && r.hi != null) ? `<div class="text-[9px] text-faint mono leading-tight">${d1(r.lo)}–${d1(r.hi)}</div>` : '';
+    const open = state.fiftyOpen[r.key];
     return `<div style="${GT}" class="px-3 py-2 border-b border-slate-100 last:border-0">
-      <div><div class="text-sm font-semibold text-slate-800 leading-tight">${r.label}</div>${r.sub ? `<div class="text-[10px] text-faint leading-tight">${r.sub}</div>` : ''}</div>
+      <div class="clickable" data-fifty-expand="${r.key}"><div class="text-sm font-semibold text-slate-800 leading-tight">${r.label} <span class="text-faint text-[10px]">${open ? '▾' : '▸'}</span></div>${r.sub ? `<div class="text-[10px] text-faint leading-tight">${r.sub}</div>` : ''}</div>
       <div class="text-right"><div class="mono text-sm font-semibold text-slate-700">${d1(r.pred)}</div>${range}</div>
       <input data-best="${r.key}" inputmode="decimal" value="${best[r.key] != null ? best[r.key] : ''}" placeholder="best" class="w-full bg-slate-100 rounded-lg px-1.5 py-1.5 text-sm text-right outline-none focus:ring-2 focus:ring-cyan-300" />
       <div class="text-center text-[11px] font-bold rounded-lg py-1.5 ${cls}">${pctStr}</div>
-    </div>`;
+    </div>${expandBlock(r.key, false)}`;
   };
   // Underwater vs surface-swim over the same distance (the swimmer's own two times).
   const uwActual = best.uwt > 0 ? best.uwt : null;
   const swActual = best.sw15 > 0 ? best.sw15 : null;
   let uwCompare = '';
   if (uwActual != null && swActual != null) {
-    const diff = swActual - uwActual; // positive → underwater is faster than swimming
-    const faster = diff >= 0;
-    uwCompare = `<div class="rounded-2xl px-4 py-3 text-center text-sm font-semibold ${faster ? 'bg-emerald-50 text-emerald-800' : 'bg-rose-50 text-rose-700'}">Underwater is <span class="mono">${Math.abs(diff).toFixed(1)} s</span> ${faster ? 'faster than' : 'slower than'} swimming ${uwDist} m${faster ? ' — a weapon' : ' — break out earlier / train UW'}</div>`;
+    if (uwDist === swDist) {
+      const diff = swActual - uwActual; const faster = diff >= 0;
+      uwCompare = `<div class="rounded-2xl px-4 py-3 text-center text-sm font-semibold ${faster ? 'bg-emerald-50 text-emerald-800' : 'bg-rose-50 text-rose-700'}">Underwater is <span class="mono">${Math.abs(diff).toFixed(1)} s</span> ${faster ? 'faster than' : 'slower than'} swimming ${swDist} m${faster ? ' — a weapon' : ' — break out earlier / train UW'}</div>`;
+    } else {
+      uwCompare = `<div class="rounded-2xl px-4 py-3 text-center text-sm bg-slate-50 text-slate-600">Underwater ${uwDist} m <span class="mono font-semibold">${uwActual.toFixed(1)}</span> · Swim ${swDist} m <span class="mono font-semibold">${swActual.toFixed(1)}</span> <span class="text-faint">— different distances</span></div>`;
+    }
   } else if (uwActual != null || swActual != null) {
-    uwCompare = `<div class="text-center text-[11px] text-muted">Enter both Underwater and Swim ${uwDist} m (Best column) to compare.</div>`;
+    uwCompare = `<div class="text-center text-[11px] text-muted">Enter both Underwater and Swim (Best column) to compare.</div>`;
   }
   const header = `<div style="${GT}" class="px-3 pt-3 pb-1"><span class="label-cap text-muted">Split</span><span class="label-cap text-muted text-right">Pred</span><span class="label-cap text-muted text-center">Best</span><span class="label-cap text-muted text-center">Δ%</span></div>`;
   return `
@@ -3799,13 +3811,14 @@ document.addEventListener('click', (e) => {
           state.convForm = { stroke: entry.stroke, sex: entry.sex, distance: entry.distance, from: entry.from, seconds: entry.seconds, name: entry.name, sid: entry.sid };
           navigate('converter', { reviewId: entry.id });
         } else if (entry.kind === 'fifty') {
-          state.fiftyForm = { stroke: entry.stroke, sex: entry.sex, seconds: entry.seconds, name: entry.name, sid: entry.sid, best: { ...(entry.best || {}) }, date: entry.date || '' };
+          state.fiftyForm = { stroke: entry.stroke, sex: entry.sex, seconds: entry.seconds, name: entry.name, sid: entry.sid, best: { ...(entry.best || {}) }, sr: { ...(entry.sr || {}) }, sc: { ...(entry.sc || {}) }, date: entry.date || '' };
           navigate('fifty', { reviewId: entry.id });
         } else if (entry.kind === 'adjacent') {
           state.adjForm = { stroke: entry.stroke, sex: entry.sex, pool: entry.pool, distance: entry.distance, seconds: entry.seconds, name: entry.name, sid: entry.sid };
           navigate('adjacent', { reviewId: entry.id });
         } else if (entry.kind === 'eff') {
-          state.effForm = { stroke: entry.stroke, sex: entry.sex, from: entry.from, seconds: entry.seconds, name: entry.name, sid: entry.sid, actual: { ...(entry.actual || {}) }, date: entry.date || '' };
+          const logs = {}; if (entry.t != null || entry.sc != null || entry.sr != null) logs[(entry.pace || '100') + '_' + (entry.test || '50lcm')] = { t: entry.t, sc: entry.sc, sr: entry.sr };
+          state.effForm = { stroke: entry.stroke, sex: entry.sex, pace: entry.pace || '100', from: entry.from, seconds: entry.seconds, test: entry.test || '50lcm', name: entry.name, sid: entry.sid, date: entry.date || '', logs };
           navigate('efficiency', { reviewId: entry.id });
         } else {
           state.swimmer = null;
@@ -3860,7 +3873,13 @@ document.addEventListener('click', (e) => {
     if (eesex) { state.effForm.sex = eesex.getAttribute('data-esex'); render(); return; }
     const efrom = e.target.closest('[data-efffrom]');
     if (efrom) { state.effForm.from = efrom.getAttribute('data-efffrom'); render(); return; }
+    const epace = e.target.closest('[data-effpace]');
+    if (epace) { state.effForm.pace = epace.getAttribute('data-effpace'); render(); return; }
+    const etest = e.target.closest('[data-efftest]');
+    if (etest) { state.effForm.test = etest.getAttribute('data-efftest'); render(); return; }
     // 50 m LCM calculator selectors
+    const fexp = e.target.closest('[data-fifty-expand]');
+    if (fexp) { const k = fexp.getAttribute('data-fifty-expand'); state.fiftyOpen[k] = !state.fiftyOpen[k]; render(); return; }
     const fstroke = e.target.closest('[data-fstroke]');
     if (fstroke) { state.fiftyForm.stroke = fstroke.getAttribute('data-fstroke'); render(); return; }
     const fsex = e.target.closest('[data-fsex]');
@@ -4003,17 +4022,25 @@ function handleAction(action, el) {
       if (!(f.name || '').trim()) { showToast('Add a swimmer name to save'); break; }
       if (!f.seconds) { showToast('Enter a time first'); break; }
       const upd = upsertSaved({ id: 'ff' + Date.now().toString(36), sid: resolveSid(f), kind: 'fifty', name: f.name.trim(),
-        stroke: f.stroke, sex: f.sex, distance: 50, seconds: f.seconds, best: { ...(f.best || {}) }, date: f.date || new Date().toISOString().slice(0, 10) });
+        stroke: f.stroke, sex: f.sex, distance: 50, seconds: f.seconds, best: { ...(f.best || {}) }, sr: { ...(f.sr || {}) }, sc: { ...(f.sc || {}) }, date: f.date || new Date().toISOString().slice(0, 10) });
       showToast(`${upd ? 'Updated' : 'Saved'} ${f.name.trim()} · 50 m`);
       break;
     }
     case 'save-eff': {
       const f = state.effForm;
       if (!(f.name || '').trim()) { showToast('Add a swimmer name to save'); break; }
-      if (!f.seconds) { showToast('Enter a 100 time first'); break; }
+      if (!f.seconds) { showToast('Enter a PB first'); break; }
+      const r = effCompute();
+      const lk = (f.pace || '100') + '_' + (f.test || '50lcm');
+      const a = (f.logs && f.logs[lk]) || {};
+      const scoreCount = (a.t > 0 && a.sc > 0) ? a.t + a.sc : null;
+      const scoreRate = (a.t > 0 && a.sr > 0) ? a.t + (a.sr / 60 * a.t * r.spc) : null;
       const upd = upsertSaved({ id: 'ef' + Date.now().toString(36), sid: resolveSid(f), kind: 'eff', name: f.name.trim(),
-        stroke: f.stroke, sex: f.sex, distance: 100, from: f.from, seconds: f.seconds, actual: { ...(f.actual || {}) }, date: f.date || new Date().toISOString().slice(0, 10) });
-      showToast(`${upd ? 'Updated' : 'Saved'} ${f.name.trim()} · efficiency`);
+        stroke: f.stroke, sex: f.sex, pace: f.pace || '100', test: f.test || '50lcm', from: f.from, seconds: f.seconds,
+        distance: f.pace === '200' ? 200 : 100, t: a.t != null ? a.t : null, sc: a.sc != null ? a.sc : null, sr: a.sr != null ? a.sr : null,
+        target: r.target, ceiling: r.ceiling, scoreCount: scoreCount, scoreRate: scoreRate,
+        date: f.date || new Date().toISOString().slice(0, 10) });
+      showToast(`${upd ? 'Updated' : 'Saved'} ${f.name.trim()} · ${mmTestLabel[f.test || '50lcm']} ${f.pace || '100'} pace`);
       break;
     }
     case 'save-adj': {
@@ -4032,12 +4059,12 @@ function handleAction(action, el) {
     }
     case 'add-fifty': {
       const sid = state.savedSid; const evs = entriesOf(sid); const last = evs[evs.length - 1];
-      state.fiftyForm = { stroke: 'Free', sex: last ? last.sex : 'M', seconds: 0, name: swimmerName(sid), sid, best: {}, date: '' };
+      state.fiftyForm = { stroke: 'Free', sex: last ? last.sex : 'M', seconds: 0, name: swimmerName(sid), sid, best: {}, sr: {}, sc: {}, date: '' };
       navigate('fifty'); break;
     }
     case 'add-eff': {
       const sid = state.savedSid; const evs = entriesOf(sid); const last = evs[evs.length - 1];
-      state.effForm = { stroke: 'Free', sex: last ? last.sex : 'M', from: 'LCM', seconds: 0, name: swimmerName(sid), sid, actual: {}, date: '' };
+      state.effForm = { stroke: 'Free', sex: last ? last.sex : 'M', pace: '100', from: 'LCM', seconds: 0, test: '50lcm', name: swimmerName(sid), sid, date: '', logs: {} };
       navigate('efficiency'); break;
     }
     case 'add-convert': {
