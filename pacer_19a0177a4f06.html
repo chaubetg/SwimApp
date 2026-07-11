@@ -1187,6 +1187,7 @@ const state = {
   raceForm: { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 200, name: '',
               targetSeconds: 120, times: {}, sr: {}, competition: '', date: '', notes: '' },
   race: null,       // the race object currently being analysed
+  raceEditId: null, // id of a saved race being edited (Save updates in place)
   compareIds: [],   // two saved-race ids to show side by side
   editing: false,   // roster / saved-swimmer delete mode toggle
   progGroup: null,  // selected progression signature
@@ -1568,6 +1569,20 @@ function render() {
         sync();
       });
     });
+    // Goal-time box: re-seed the predicted "what they swam" splits once the goal changes.
+    if (key === 'target') {
+      [mi, se, hh].forEach((el) => {
+        el.addEventListener('focus', () => { if (grp._t0 == null) grp._t0 = state.raceForm.times.target; });
+        el.addEventListener('blur', () => {
+          setTimeout(() => {
+            if (grp.contains(document.activeElement)) return;
+            const changed = state.raceForm.times.target !== grp._t0;
+            grp._t0 = null;
+            if (changed && state.view === 'race-entry') { seedRaceTimes(); render(); }
+          }, 0);
+        });
+      });
+    }
   });
   // Race-entry extra fields: per-split SR, competition, date, notes.
   host.querySelectorAll('[data-race-sr]').forEach((el) => {
@@ -3566,7 +3581,10 @@ function renderRaceAnalysis() {
         <div class="text-base font-semibold truncate">${race.name || 'Race'}</div>
         <div class="text-xs text-muted truncate">${race.distance} ${race.stroke} ${race.pool}${race.competition ? ' · ' + race.competition : ''}${race.date ? ' · ' + race.date : ''}</div>
       </div>
-      <button class="px-3.5 py-2 rounded-full bg-cyan-50 text-cyan-800 text-xs font-semibold hover:bg-cyan-100 transition" data-action="save-race">Save</button>
+      <div class="flex items-center gap-1.5 flex-shrink-0">
+        <button class="px-3 py-2 rounded-full bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 transition" data-action="edit-race">Edit</button>
+        <button class="px-3.5 py-2 rounded-full bg-cyan-50 text-cyan-800 text-xs font-semibold hover:bg-cyan-100 transition" data-action="save-race">Save</button>
+      </div>
     </div>
     <div class="px-5 py-3 bg-white border-b border-slate-100">
       <div class="${deltaBg} border rounded-2xl p-4">
@@ -3775,11 +3793,13 @@ document.addEventListener('click', (e) => {
     const sex = e.target.closest('[data-sex]');
     if (sex) {
       state.form.sex = sex.getAttribute('data-sex');
+      if (state.view === 'race-entry') seedRaceTimes();
       render(); return;
     }
     const pool = e.target.closest('[data-pool]');
     if (pool) {
       state.form.pool = pool.getAttribute('data-pool');
+      if (state.view === 'race-entry') seedRaceTimes();
       render(); return;
     }
     const dist = e.target.closest('[data-distance]');
@@ -3861,6 +3881,7 @@ function handleAction(action, el) {
       state.swimmer = null;
       state.form = { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 200, targetSeconds: 120, name: '' };
       state.raceForm = { times: {}, sr: {}, competition: '', date: '', notes: '' };
+      state.raceEditId = null;
       seedRaceTimes();
       navigate('race-entry');
       break;
@@ -3873,14 +3894,24 @@ function handleAction(action, el) {
         name: swimmerName(sid), sid,
       };
       state.raceForm = { times: {}, sr: {}, competition: '', date: '', notes: '' };
+      state.raceEditId = null;
       seedRaceTimes();
+      navigate('race-entry');
+      break;
+    }
+    case 'edit-race': {
+      const r = state.race; if (!r) break;
+      state.swimmer = null;
+      state.form = { stroke: r.stroke, sex: r.sex, pool: r.pool, distance: r.distance, targetSeconds: r.targetSeconds, name: r.name, sid: r.sid };
+      state.raceForm = { times: { ...(r.times || {}) }, sr: { ...(r.sr || {}) }, competition: r.competition || '', date: r.date || '', notes: r.notes || '' };
+      state.raceEditId = r.id;
       navigate('race-entry');
       break;
     }
     case 'analyze-race': {
       const f = state.form, rf = state.raceForm;
       state.race = {
-        id: 'rc' + Date.now().toString(36), kind: 'race', name: (f.name || '').trim(), sid: f.sid,
+        id: state.raceEditId || ('rc' + Date.now().toString(36)), kind: 'race', name: (f.name || '').trim(), sid: f.sid,
         stroke: f.stroke, sex: f.sex, pool: f.pool, distance: f.distance,
         targetSeconds: rf.times.target ?? f.targetSeconds,
         times: { ...rf.times }, sr: { ...(rf.sr || {}) },
@@ -3895,8 +3926,10 @@ function handleAction(action, el) {
       const r = state.race;
       if (!r) break;
       if (!(r.name || '').trim()) { showToast('Add a swimmer name to save this race'); break; }
-      if (!state.saved.find(x => x.id === r.id)) { r.sid = resolveSid(r); state.saved.push(r); persistSaved(); }
-      showToast(`Saved ${r.name} · ${r.distance} ${r.stroke}`);
+      const i = state.saved.findIndex(x => x.id === r.id);
+      if (i >= 0) { state.saved[i] = r; persistSaved(); showToast(`Updated ${r.name} · ${r.distance} ${r.stroke}`); }
+      else { r.sid = resolveSid(r); state.saved.push(r); persistSaved(); showToast(`Saved ${r.name} · ${r.distance} ${r.stroke}`); }
+      state.raceEditId = null;
       break;
     }
     case 'compare-races': {
