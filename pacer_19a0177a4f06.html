@@ -1192,6 +1192,7 @@ const state = {
   editing: false,   // roster / saved-swimmer delete mode toggle
   progGroup: null,  // selected progression signature
   progMetric: null, // selected metric key in a progression
+  progWindow: 'recent', // progression window: 'recent' (last N) or 'all'
 };
 
 function navigate(view, opts = {}) {
@@ -1959,7 +1960,11 @@ function progMetrics(s) {
       const def = defs[i];
       if (def.kind !== 'total' && row.actual != null) out.push({ key: 'seg:' + def.key, label: row.label, value: row.actual, t: 'time' });
     });
-    if (s.sr) defs.forEach((def) => { const v = s.sr[def.key]; if (v > 0) out.push({ key: 'sr:' + def.key, label: (defs.length > 1 ? def.label + ' ' : '') + 'SR', value: v, t: 'count' }); });
+    if (s.sr) {
+      defs.forEach((def) => { const v = s.sr[def.key]; if (v > 0) out.push({ key: 'sr:' + def.key, label: (defs.length > 1 ? def.label + ' ' : '') + 'SR', value: +v, t: 'count' }); });
+      const extra = { first25: '1st 25 SR', second25: '2nd 25 SR', last15: 'Last 15 m SR' };
+      Object.keys(extra).forEach((k) => { const v = s.sr[k]; if (v > 0) out.push({ key: 'sr:' + k, label: extra[k], value: +v, t: 'count' }); });
+    }
   } else if (s.kind === 'fifty') {
     const M = { s1: '1st 25', s2: '2nd 25', mm25: 'min–max 25', uwt: 'Underwater', sw15: 'Swim (push)', uw: 'Top speed UW', sw: 'Top speed SW', se: 'Speed endurance', turn: 'Turn' };
     out.push({ key: 'time', label: '50 time', value: s.seconds, t: 'time', primary: true });
@@ -2007,23 +2012,27 @@ function hasProgress(sid) { return progGroups(sid).some((g) => g.entries.length 
 // Dependency-free line chart over [{v,x,lab}]; lower v sits lower (faster/better). Green dot = best.
 function progChartSvg(pts) {
   const W = 320, H = 148, padL = 34, padR = 12, padT = 16, padB = 22;
+  const N = pts.length;
   const vals = pts.map((p) => p.v);
   let vmin = Math.min(...vals), vmax = Math.max(...vals);
   if (vmax - vmin < 1e-6) { vmax += 0.5; vmin -= 0.5; }
   const range = vmax - vmin;
   const plotW = W - padL - padR, plotH = H - padT - padB;
-  const X = (i) => padL + (pts.length === 1 ? plotW / 2 : (i / (pts.length - 1)) * plotW);
+  const X = (i) => padL + (N === 1 ? plotW / 2 : (i / (N - 1)) * plotW);
   const Y = (v) => padT + ((vmax - v) / range) * plotH;
   const best = Math.min(...vals);
   const line = pts.map((p, i) => `${X(i).toFixed(1)},${Y(p.v).toFixed(1)}`).join(' ');
-  const dots = pts.map((p, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(p.v).toFixed(1)}" r="3.5" fill="${p.v === best ? '#059669' : '#0891b2'}"/>`).join('');
-  const vlabs = pts.map((p, i) => `<text x="${X(i).toFixed(1)}" y="${(Y(p.v) - 6).toFixed(1)}" font-size="8" fill="#475569" text-anchor="middle">${p.lab}</text>`).join('');
-  const xlabs = pts.map((p, i) => `<text x="${X(i).toFixed(1)}" y="${H - 7}" font-size="8" fill="#94a3b8" text-anchor="middle">${p.x}</text>`).join('');
+  const dots = pts.map((p, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(p.v).toFixed(1)}" r="${(p.v === best || i === N - 1) ? 4 : 3}" fill="${p.v === best ? '#059669' : (i === N - 1 ? '#0e7490' : '#0891b2')}"/>`).join('');
+  // Declutter when crowded: value labels only on best + latest; date labels thinned to ~5.
+  const showVal = (p, i) => N <= 6 || p.v === best || i === N - 1;
+  const step = (N - 1) / 4;
+  const showDate = (i) => N <= 7 || i === 0 || i === N - 1 || [1, 2, 3].some((k) => Math.round(k * step) === i);
+  const vlabs = pts.map((p, i) => showVal(p, i) ? `<text x="${X(i).toFixed(1)}" y="${(Y(p.v) - 6).toFixed(1)}" font-size="8" fill="${p.v === best ? '#059669' : '#475569'}" text-anchor="middle">${p.lab}</text>` : '').join('');
+  const xlabs = pts.map((p, i) => showDate(i) ? `<text x="${X(i).toFixed(1)}" y="${H - 7}" font-size="8" fill="#94a3b8" text-anchor="middle">${p.x}</text>` : '').join('');
   const yTop = `<text x="3" y="${padT + 3}" font-size="8" fill="#cbd5e1">${progFmtRaw(vmax)}</text>`;
   const yBot = `<text x="3" y="${(padT + plotH).toFixed(0)}" font-size="8" fill="#cbd5e1">${progFmtRaw(vmin)}</text>`;
   return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block">${yTop}${yBot}<polyline points="${line}" fill="none" stroke="#0891b2" stroke-width="2"/>${dots}${vlabs}${xlabs}</svg>`;
 }
-
 function renderProgress() {
   const sid = state.savedSid, name = swimmerName(sid);
   const groups = progGroups(sid);
@@ -2063,25 +2072,38 @@ function renderProgressGroup() {
   const sid = state.savedSid, name = swimmerName(sid);
   const g = progGroups(sid).find((x) => x.sig === state.progGroup);
   if (!g) return renderProgress();
-  const entries = g.entries;
+  const allEntries = g.entries;
+  const WIN = 8;
+  const entries = (state.progWindow !== 'all' && allEntries.length > WIN) ? allEntries.slice(-WIN) : allEntries;
   const order = [], seen = {};
   entries.forEach((s) => progMetrics(s).forEach((m) => { if (!(m.key in seen)) { seen[m.key] = m; order.push(m.key); } }));
   const perEntry = entries.map((s) => { const map = {}; progMetrics(s).forEach((m) => { map[m.key] = m.value; }); return map; });
   let sel = state.progMetric;
   if (!order.includes(sel)) sel = order.find((k) => seen[k].primary) || order[0];
   const selT = seen[sel] ? seen[sel].t : 'time';
-  const pts = entries.map((s, i) => ({ v: perEntry[i][sel], x: progDateLabel(s, i), lab: progFmt(perEntry[i][sel], selT) })).filter((p) => p.v != null && !isNaN(p.v));
-  const chart = pts.length ? progChartSvg(pts) : '<div class="text-center text-xs text-muted p-6">No data logged for this metric yet.</div>';
+  const series = entries.map((s, i) => ({ v: perEntry[i][sel], x: progDateLabel(s, i), lab: progFmt(perEntry[i][sel], selT) })).filter((p) => p.v != null && !isNaN(p.v));
+  const chart = series.length ? progChartSvg(series) : '<div class="text-center text-xs text-muted p-6">No data logged for this metric yet.</div>';
+  let summary = '';
+  if (series.length) {
+    const svals = series.map((p) => p.v);
+    const bestv = Math.min(...svals), latest = svals[svals.length - 1], firstv = svals[0], d = latest - firstv;
+    const dC = d <= 0 ? 'text-emerald-700' : 'text-rose-600';
+    summary = `<div class="text-[11px] text-muted mt-0.5">best <span class="mono font-semibold text-emerald-700">${progFmt(bestv, selT)}</span> · latest <span class="mono font-semibold text-slate-700">${progFmt(latest, selT)}</span>${series.length > 1 ? ` · <span class="${dC} font-semibold">Δ ${d <= 0 ? '−' : '+'}${Math.abs(d).toFixed(2)}</span>` : ''}</div>`;
+  }
+  const winToggle = allEntries.length > WIN ? `<div class="flex gap-1.5">
+      <button class="px-2.5 py-1 rounded-full text-[11px] font-semibold ${state.progWindow !== 'all' ? 'bg-cyan-600 text-white' : 'bg-slate-100 text-slate-600'}" data-progwindow="recent">Recent ${WIN}</button>
+      <button class="px-2.5 py-1 rounded-full text-[11px] font-semibold ${state.progWindow === 'all' ? 'bg-cyan-600 text-white' : 'bg-slate-100 text-slate-600'}" data-progwindow="all">All ${allEntries.length}</button>
+    </div>` : '';
   const dateHdr = entries.map((s, i) => `<th class="px-2 py-1.5 text-[10px] font-semibold text-muted text-right whitespace-nowrap">${progDateLabel(s, i)}</th>`).join('');
   const rowsHtml = order.map((k) => {
     const m = seen[k];
     const vals = entries.map((s, i) => perEntry[i][k]);
     const present = vals.filter((v) => v != null && !isNaN(v));
     const best = present.length ? Math.min(...present) : null;
-    const cells = vals.map((v) => `<td class="px-2 py-1.5 text-[11px] mono text-right ${v != null && v === best ? 'font-bold text-emerald-700' : 'text-slate-700'}">${progFmt(v, m.t)}</td>`).join('');
     const on = k === sel;
+    const cells = vals.map((v) => `<td class="px-2 py-1.5 text-[11px] mono text-right ${v != null && v === best ? 'font-bold text-emerald-700' : 'text-slate-700'}">${progFmt(v, m.t)}</td>`).join('');
     return `<tr class="clickable border-t border-slate-100 ${on ? 'bg-cyan-50' : ''}" data-progmetric="${k}">
-      <td class="px-2 py-1.5 text-[11px] ${on ? 'font-bold text-cyan-800' : 'font-semibold text-slate-700'} whitespace-nowrap">${m.label}</td>${cells}</tr>`;
+      <td class="sticky left-0 z-10 px-2 py-1.5 text-[11px] whitespace-nowrap ${on ? 'font-bold text-cyan-800 bg-cyan-50' : 'font-semibold text-slate-700 bg-white'}">${m.label}</td>${cells}</tr>`;
   }).join('');
   return `
     <div class="statusbar"></div>
@@ -2089,22 +2111,23 @@ function renderProgressGroup() {
       <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0">
         <div class="text-lg font-semibold truncate">${g.sig}</div>
-        <div class="text-xs text-muted truncate">${name} · ${entries.length} entries</div>
+        <div class="text-xs text-muted truncate">${name} · ${allEntries.length} entries</div>
       </div>
     </div>
     <div class="scrollable px-5 py-3 space-y-3 bg-slate-50">
+      ${winToggle}
       <div class="bg-white border border-slate-200 rounded-2xl p-4">
-        <div class="flex items-baseline justify-between mb-1"><div class="font-semibold text-[15px]">${seen[sel] ? seen[sel].label : ''}</div><div class="text-[11px] text-faint">tap a row to chart it</div></div>
-        ${chart}
+        <div class="flex items-baseline justify-between mb-0.5"><div class="font-semibold text-[15px]">${seen[sel] ? seen[sel].label : ''}</div><div class="text-[11px] text-faint">tap a row to chart it</div></div>
+        ${summary}
+        <div class="mt-2">${chart}</div>
       </div>
       <div class="bg-white border border-slate-200 rounded-2xl overflow-x-auto">
-        <table class="w-full border-collapse"><thead><tr><th class="px-2 py-1.5 text-left text-[10px] font-semibold text-muted whitespace-nowrap">Metric</th>${dateHdr}</tr></thead><tbody>${rowsHtml}</tbody></table>
+        <table class="w-full border-collapse"><thead><tr><th class="sticky left-0 z-10 bg-white px-2 py-1.5 text-left text-[10px] font-semibold text-muted whitespace-nowrap">Metric</th>${dateHdr}</tr></thead><tbody>${rowsHtml}</tbody></table>
       </div>
       <div class="text-center text-[10px] text-faint leading-snug">Lower point = faster / lower value · green = best · tap any metric row to chart it over time.</div>
     </div>
   `;
 }
-
 // ----- Screen: Swimmer detail -----
 function renderSwimmerDetail() {
   const s = state.swimmer;
@@ -3454,12 +3477,19 @@ function renderRaceEntry() {
   const distances = [50, 100, 200, 400, 800, 1500];
   const fields = raceEntryFields(f.stroke, f.distance);
   const distFree = f.stroke !== 'IM' && f.distance >= 400;
+  const showRowSr = f.distance !== 50;
   const fieldRows = fields.map(fl => `
     <div class="flex items-center gap-2 py-2 border-b border-slate-100 last:border-0">
       <div class="text-sm font-semibold text-slate-700 flex-shrink-0" style="min-width:46px;">${fl.label}</div>
       ${timeBoxes(fl.key, rf.times[fl.key] ?? 0)}
-      <input data-race-sr="${fl.key}" inputmode="decimal" value="${rf.sr && rf.sr[fl.key] != null ? rf.sr[fl.key] : ''}" placeholder="SR" class="w-11 bg-slate-100 rounded-lg px-1 py-1.5 text-sm text-center outline-none focus:ring-2 focus:ring-cyan-300 flex-shrink-0" />
+      ${showRowSr ? `<input data-race-sr="${fl.key}" inputmode="decimal" value="${rf.sr && rf.sr[fl.key] != null ? rf.sr[fl.key] : ''}" placeholder="SR" class="w-11 bg-slate-100 rounded-lg px-1 py-1.5 text-sm text-center outline-none focus:ring-2 focus:ring-cyan-300 flex-shrink-0" />` : ''}
     </div>`).join('');
+  const extraSr = (f.distance === 50 ? [{ key: 'first25', label: '1st 25 SR' }, { key: 'second25', label: '2nd 25 SR' }] : []).concat([{ key: 'last15', label: 'Last 15 m SR' }]);
+  const extraSrRows = extraSr.map(fl => `
+      <div class="flex items-center justify-between gap-2 py-2 border-b border-slate-100 last:border-0">
+        <div class="text-sm font-semibold text-slate-700">${fl.label}</div>
+        <input data-race-sr="${fl.key}" inputmode="decimal" value="${rf.sr && rf.sr[fl.key] != null ? rf.sr[fl.key] : ''}" placeholder="SR" class="w-16 bg-slate-100 rounded-lg px-2 py-1.5 text-sm text-center outline-none focus:ring-2 focus:ring-cyan-300" />
+      </div>`).join('');
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
@@ -3523,8 +3553,12 @@ function renderRaceEntry() {
         </div>
       </div>
       <div>
-        <div class="label-cap mb-2">What they swam · time + SR ${distFree ? '<span class="text-faint" style="text-transform:none;letter-spacing:0;font-weight:400;">· middle 50s averaged</span>' : ''}</div>
+        <div class="label-cap mb-2">What they swam · time${showRowSr ? ' + SR' : ''} ${distFree ? '<span class="text-faint" style="text-transform:none;letter-spacing:0;font-weight:400;">· middle 50s averaged</span>' : ''}</div>
         <div class="bg-white border border-slate-200 rounded-2xl px-4 py-1">${fieldRows}</div>
+      </div>
+      <div>
+        <div class="label-cap mb-2">Stroke rate</div>
+        <div class="bg-white border border-slate-200 rounded-2xl px-4 py-1">${extraSrRows}</div>
       </div>
       <div>
         <div class="label-cap mb-2">Notes</div>
@@ -3597,6 +3631,7 @@ function renderRaceAnalysis() {
     </div>
     <div class="scrollable px-5 py-3 space-y-3 bg-slate-50">
       <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">${head}${splitRows}</div>
+      ${(sr.first25 > 0 || sr.second25 > 0 || sr.last15 > 0) ? `<div class="bg-white rounded-2xl border border-slate-200 p-4"><div class="label-cap text-muted mb-1">Stroke rate</div><div class="text-sm text-slate-700">${[sr.first25 > 0 ? `1st 25 <span class="mono font-semibold">${sr.first25}</span>` : '', sr.second25 > 0 ? `2nd 25 <span class="mono font-semibold">${sr.second25}</span>` : '', sr.last15 > 0 ? `last 15 m <span class="mono font-semibold">${sr.last15}</span>` : ''].filter(Boolean).join(' · ')}</div></div>` : ''}
       ${race.notes ? `<div class="bg-white rounded-2xl border border-slate-200 p-4"><div class="label-cap text-muted mb-1">Notes</div><div class="text-sm text-slate-700 leading-relaxed" style="white-space:pre-wrap;">${(race.notes || '').replace(/</g, '&lt;')}</div></div>` : ''}
     </div>
   `;
@@ -3748,9 +3783,11 @@ document.addEventListener('click', (e) => {
       return;
     }
     const pg = e.target.closest('[data-proggroup]');
-    if (pg) { state.progGroup = decodeURIComponent(pg.getAttribute('data-proggroup')); state.progMetric = null; navigate('progress-group'); return; }
+    if (pg) { state.progGroup = decodeURIComponent(pg.getAttribute('data-proggroup')); state.progMetric = null; state.progWindow = 'recent'; navigate('progress-group'); return; }
     const pm = e.target.closest('[data-progmetric]');
     if (pm) { state.progMetric = pm.getAttribute('data-progmetric'); render(); return; }
+    const pw = e.target.closest('[data-progwindow]');
+    if (pw) { state.progWindow = pw.getAttribute('data-progwindow'); render(); return; }
     const sv = e.target.closest('[data-saved]');
     if (sv) {
       const entry = state.saved.find(x => x.id === sv.getAttribute('data-saved'));
