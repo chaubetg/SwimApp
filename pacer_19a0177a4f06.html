@@ -1171,7 +1171,7 @@ const state = {
   swimmer: null, // active swimmer if any
   convForm: { stroke: 'Free', sex: 'M', distance: 100, from: 'LCM', seconds: 0, name: '' }, // course converter
   effForm: { stroke: 'Free', sex: 'M', from: 'LCM', seconds: 0, name: '', actual: {}, date: '' }, // min–max efficiency test
-  fiftyForm: { stroke: 'Free', sex: 'M', seconds: 0, name: '', best: {} }, // 50m LCM split calculator (best = swimmer's clocked times per row)
+  fiftyForm: { stroke: 'Free', sex: 'M', seconds: 0, name: '', best: {}, date: '' }, // 50m LCM split calculator (best = swimmer's clocked times per row)
   adjForm: { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 100, seconds: 0, name: '' }, // adjacent-events predictor
   form: {
     stroke: 'Free', sex: 'M', pool: 'LCM', distance: 200,
@@ -1189,6 +1189,8 @@ const state = {
   race: null,       // the race object currently being analysed
   compareIds: [],   // two saved-race ids to show side by side
   editing: false,   // roster / saved-swimmer delete mode toggle
+  progGroup: null,  // selected progression signature
+  progMetric: null, // selected metric key in a progression
 };
 
 function navigate(view, opts = {}) {
@@ -1394,6 +1396,8 @@ function render() {
     case 'fifty': html = renderFifty(); break;
     case 'adjacent': html = renderAdjacent(); break;
     case 'trends': html = renderTrends(); break;
+    case 'progress': html = renderProgress(); break;
+    case 'progress-group': html = renderProgressGroup(); break;
     default: html = '<div class="p-8 text-slate-500">Unknown view</div>';
   }
   host.innerHTML = html;
@@ -1511,6 +1515,8 @@ function render() {
   });
   const effDateEl = host.querySelector('[data-eff-date]');
   if (effDateEl) effDateEl.addEventListener('input', () => { state.effForm.date = effDateEl.value; });
+  const fiftyDateEl = host.querySelector('[data-fifty-date]');
+  if (fiftyDateEl) fiftyDateEl.addEventListener('input', () => { state.fiftyForm.date = fiftyDateEl.value; });
   // 50 m "best time" inputs — delegated on the (persistent) result box so listeners survive its
   // live innerHTML updates. Store on input; recompute Δ% + colours on focus-out.
   const fr = host.querySelector('#fifty-result');
@@ -1830,7 +1836,7 @@ function renderSavedSwimmer() {
       <button class="w-full bg-white border border-slate-200 text-slate-700 rounded-xl py-3 text-sm font-semibold hover:bg-slate-50 active:scale-[0.99] transition" data-action="rename-swimmer">Rename swimmer</button>
       <button class="w-full bg-rose-50 text-rose-700 border border-rose-200 rounded-xl py-3 text-sm font-semibold hover:bg-rose-100 active:scale-[0.99] transition flex items-center justify-center gap-2" data-del-swimmer="${sid}">${TRASH_SVG} Delete this swimmer</button>
     </div>` : `
-    ${trendableCount(all) >= 2 ? `<div class="px-5 pb-2"><button class="w-full bg-white border border-cyan-300 text-cyan-800 rounded-xl py-2.5 text-sm font-semibold hover:bg-cyan-50 active:scale-[0.99] transition" data-action="trends">📈 View trends</button></div>` : ''}
+    ${hasProgress(sid) ? `<div class="px-5 pb-2"><button class="w-full bg-white border border-cyan-300 text-cyan-800 rounded-xl py-2.5 text-sm font-semibold hover:bg-cyan-50 active:scale-[0.99] transition" data-action="progress">📈 Progress over time</button></div>` : ''}
     <div class="px-5 pb-2 flex flex-wrap gap-2">
       <button class="bg-cyan-600 text-white rounded-xl px-3 py-2 text-xs font-semibold hover:bg-cyan-700 active:scale-[0.99] transition" data-action="add-event">+ Pace plan</button>
       <button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-race">+ Race</button>
@@ -1912,6 +1918,174 @@ function renderTrends() {
     <div class="scrollable px-5 py-3 space-y-3 bg-slate-50">
       ${cards || '<div class="text-center text-sm text-muted p-8">Save at least two races in the same event to see a trend.</div>'}
       <div class="text-center text-[10px] text-faint leading-snug">A descending line means dropping time (getting faster) · dashed = target</div>
+    </div>
+  `;
+}
+
+// ===== Progress / trends across Race Review, 50 m splits, efficiency =====
+const PROG_KINDS = { race: 'Race', fifty: '50 m splits', eff: 'Efficiency' };
+
+// Grouping signature: the "same test" for one swimmer (stroke+distance+pool for races).
+function progSig(s) {
+  if (s.kind === 'race') return `${s.distance} ${s.stroke} ${s.pool}`;
+  if (s.kind === 'fifty') return `50 ${s.stroke} LCM splits`;
+  if (s.kind === 'eff') return `${s.stroke} efficiency`;
+  return null;
+}
+
+// Ordered numeric metrics inside one saved entry: [{key,label,value,t,primary}].
+function progMetrics(s) {
+  const out = [];
+  if (s.kind === 'race') {
+    const c = buildRaceComparison(s); if (!c) return out;
+    const defs = raceRowDefs(s.stroke, s.distance);
+    out.push({ key: 'total', label: 'Total', value: c.actualTotal, t: 'time', primary: true });
+    c.rows.forEach((row, i) => {
+      const def = defs[i];
+      if (def.kind !== 'total' && row.actual != null) out.push({ key: 'seg:' + def.key, label: row.label, value: row.actual, t: 'time' });
+    });
+    if (s.sr) defs.forEach((def) => { const v = s.sr[def.key]; if (v > 0) out.push({ key: 'sr:' + def.key, label: (defs.length > 1 ? def.label + ' ' : '') + 'SR', value: v, t: 'count' }); });
+  } else if (s.kind === 'fifty') {
+    const M = { s1: '1st 25', s2: '2nd 25', mm25: 'min–max 25', uwt: 'Underwater', sw15: 'Swim (push)', uw: 'Top speed UW', sw: 'Top speed SW', se: 'Speed endurance', turn: 'Turn' };
+    out.push({ key: 'time', label: '50 time', value: s.seconds, t: 'time', primary: true });
+    const b = s.best || {};
+    Object.keys(M).forEach((k) => { if (b[k] > 0) out.push({ key: 'best:' + k, label: M[k], value: b[k], t: 'time' }); });
+  } else if (s.kind === 'eff') {
+    const N = { '25scm': '25 SCM', '50scm': '50 SCM', '50lcm': '50 LCM' };
+    const a = s.actual || {};
+    ['25scm', '50scm', '50lcm'].forEach((tk) => {
+      const x = a[tk];
+      if (x && typeof x.t === 'number' && typeof x.s === 'number') {
+        out.push({ key: tk + ':score', label: N[tk] + ' score', value: x.t + x.s, t: 'score', primary: tk === '50lcm' });
+        out.push({ key: tk + ':time', label: N[tk] + ' time', value: x.t, t: 'time' });
+        out.push({ key: tk + ':strk', label: N[tk] + ' strokes', value: x.s, t: 'count' });
+      }
+    });
+    if (out.length && !out.some((m) => m.primary)) out[0].primary = true;
+  }
+  return out;
+}
+
+function progFmt(v, t) {
+  if (v == null || isNaN(v)) return '—';
+  if (t === 'count') return String(Math.round(v));
+  if (t === 'score') return v.toFixed(1);
+  return v >= 60 ? formatTime(v) : v.toFixed(2);
+}
+function progFmtRaw(v) { return v >= 60 ? formatTime(v) : v.toFixed(1); }
+function progDateLabel(s, i) {
+  if (s.date) { const m = String(s.date).match(/\d{4}-(\d{2})-(\d{2})/); return m ? `${m[1]}/${m[2]}` : s.date; }
+  return '#' + (i + 1);
+}
+
+// All groups for a swimmer, entries sorted chronologically.
+function progGroups(sid) {
+  const all = entriesOf(sid).filter((s) => progSig(s));
+  const by = {};
+  all.forEach((s) => { const k = progSig(s); (by[k] = by[k] || { kind: s.kind, sig: k, entries: [] }).entries.push(s); });
+  const arr = Object.values(by);
+  arr.forEach((g) => g.entries.sort((a, b) => String(a.date || '').localeCompare(String(b.date || ''))));
+  return arr;
+}
+function hasProgress(sid) { return progGroups(sid).some((g) => g.entries.length >= 2); }
+
+// Dependency-free line chart over [{v,x,lab}]; lower v sits lower (faster/better). Green dot = best.
+function progChartSvg(pts) {
+  const W = 320, H = 148, padL = 34, padR = 12, padT = 16, padB = 22;
+  const vals = pts.map((p) => p.v);
+  let vmin = Math.min(...vals), vmax = Math.max(...vals);
+  if (vmax - vmin < 1e-6) { vmax += 0.5; vmin -= 0.5; }
+  const range = vmax - vmin;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const X = (i) => padL + (pts.length === 1 ? plotW / 2 : (i / (pts.length - 1)) * plotW);
+  const Y = (v) => padT + ((vmax - v) / range) * plotH;
+  const best = Math.min(...vals);
+  const line = pts.map((p, i) => `${X(i).toFixed(1)},${Y(p.v).toFixed(1)}`).join(' ');
+  const dots = pts.map((p, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(p.v).toFixed(1)}" r="3.5" fill="${p.v === best ? '#059669' : '#0891b2'}"/>`).join('');
+  const vlabs = pts.map((p, i) => `<text x="${X(i).toFixed(1)}" y="${(Y(p.v) - 6).toFixed(1)}" font-size="8" fill="#475569" text-anchor="middle">${p.lab}</text>`).join('');
+  const xlabs = pts.map((p, i) => `<text x="${X(i).toFixed(1)}" y="${H - 7}" font-size="8" fill="#94a3b8" text-anchor="middle">${p.x}</text>`).join('');
+  const yTop = `<text x="3" y="${padT + 3}" font-size="8" fill="#cbd5e1">${progFmtRaw(vmax)}</text>`;
+  const yBot = `<text x="3" y="${(padT + plotH).toFixed(0)}" font-size="8" fill="#cbd5e1">${progFmtRaw(vmin)}</text>`;
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block">${yTop}${yBot}<polyline points="${line}" fill="none" stroke="#0891b2" stroke-width="2"/>${dots}${vlabs}${xlabs}</svg>`;
+}
+
+function renderProgress() {
+  const sid = state.savedSid, name = swimmerName(sid);
+  const groups = progGroups(sid);
+  const cards = groups.map((g) => {
+    const n = g.entries.length;
+    const mNow = progMetrics(g.entries[n - 1]).find((m) => m.primary);
+    const mFirst = progMetrics(g.entries[0]).find((m) => m.primary);
+    let deltaHtml = '';
+    if (n >= 2 && mNow && mFirst && mNow.value != null && mFirst.value != null) {
+      const d = mNow.value - mFirst.value;
+      deltaHtml = `<div class="text-xs ${d <= 0 ? 'text-emerald-700' : 'text-rose-600'} font-semibold">${d <= 0 ? '−' : '+'}${Math.abs(d).toFixed(2)}</div>`;
+    }
+    const clickable = n >= 2;
+    return `<div class="bg-white border border-slate-200 rounded-2xl p-4 ${clickable ? 'clickable' : ''}" ${clickable ? `data-proggroup="${encodeURIComponent(g.sig)}"` : ''}>
+      <div class="flex items-baseline justify-between gap-2">
+        <div class="font-semibold text-[15px]">${g.sig}</div>${deltaHtml}
+      </div>
+      <div class="text-[11px] text-muted mt-0.5">${PROG_KINDS[g.kind]} · ${n} ${n === 1 ? 'entry' : 'entries'}${n >= 2 ? ' · tap to open' : ' · need 2+ to trend'}</div>
+    </div>`;
+  }).join('');
+  return `
+    <div class="statusbar"></div>
+    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <div class="flex-1 min-w-0">
+        <div class="text-lg font-semibold truncate">${name}</div>
+        <div class="text-xs text-muted">Progress over time</div>
+      </div>
+    </div>
+    <div class="scrollable px-5 py-3 space-y-2.5 bg-slate-50">
+      ${cards || '<div class="text-center text-sm text-muted p-8">Save the same event, 50 m test, or efficiency test twice to see a trend.</div>'}
+    </div>
+  `;
+}
+
+function renderProgressGroup() {
+  const sid = state.savedSid, name = swimmerName(sid);
+  const g = progGroups(sid).find((x) => x.sig === state.progGroup);
+  if (!g) return renderProgress();
+  const entries = g.entries;
+  const order = [], seen = {};
+  entries.forEach((s) => progMetrics(s).forEach((m) => { if (!(m.key in seen)) { seen[m.key] = m; order.push(m.key); } }));
+  const perEntry = entries.map((s) => { const map = {}; progMetrics(s).forEach((m) => { map[m.key] = m.value; }); return map; });
+  let sel = state.progMetric;
+  if (!order.includes(sel)) sel = order.find((k) => seen[k].primary) || order[0];
+  const selT = seen[sel] ? seen[sel].t : 'time';
+  const pts = entries.map((s, i) => ({ v: perEntry[i][sel], x: progDateLabel(s, i), lab: progFmt(perEntry[i][sel], selT) })).filter((p) => p.v != null && !isNaN(p.v));
+  const chart = pts.length ? progChartSvg(pts) : '<div class="text-center text-xs text-muted p-6">No data logged for this metric yet.</div>';
+  const dateHdr = entries.map((s, i) => `<th class="px-2 py-1.5 text-[10px] font-semibold text-muted text-right whitespace-nowrap">${progDateLabel(s, i)}</th>`).join('');
+  const rowsHtml = order.map((k) => {
+    const m = seen[k];
+    const vals = entries.map((s, i) => perEntry[i][k]);
+    const present = vals.filter((v) => v != null && !isNaN(v));
+    const best = present.length ? Math.min(...present) : null;
+    const cells = vals.map((v) => `<td class="px-2 py-1.5 text-[11px] mono text-right ${v != null && v === best ? 'font-bold text-emerald-700' : 'text-slate-700'}">${progFmt(v, m.t)}</td>`).join('');
+    const on = k === sel;
+    return `<tr class="clickable border-t border-slate-100 ${on ? 'bg-cyan-50' : ''}" data-progmetric="${k}">
+      <td class="px-2 py-1.5 text-[11px] ${on ? 'font-bold text-cyan-800' : 'font-semibold text-slate-700'} whitespace-nowrap">${m.label}</td>${cells}</tr>`;
+  }).join('');
+  return `
+    <div class="statusbar"></div>
+    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <div class="flex-1 min-w-0">
+        <div class="text-lg font-semibold truncate">${g.sig}</div>
+        <div class="text-xs text-muted truncate">${name} · ${entries.length} entries</div>
+      </div>
+    </div>
+    <div class="scrollable px-5 py-3 space-y-3 bg-slate-50">
+      <div class="bg-white border border-slate-200 rounded-2xl p-4">
+        <div class="flex items-baseline justify-between mb-1"><div class="font-semibold text-[15px]">${seen[sel] ? seen[sel].label : ''}</div><div class="text-[11px] text-faint">tap a row to chart it</div></div>
+        ${chart}
+      </div>
+      <div class="bg-white border border-slate-200 rounded-2xl overflow-x-auto">
+        <table class="w-full border-collapse"><thead><tr><th class="px-2 py-1.5 text-left text-[10px] font-semibold text-muted whitespace-nowrap">Metric</th>${dateHdr}</tr></thead><tbody>${rowsHtml}</tbody></table>
+      </div>
+      <div class="text-center text-[10px] text-faint leading-snug">Lower point = faster / lower value · green = best · tap any metric row to chart it over time.</div>
     </div>
   `;
 }
@@ -2405,6 +2579,10 @@ function renderFifty() {
         </div>
       </div>
       <div id="fifty-result" class="space-y-3">${fiftyResultHtml()}</div>
+      <div>
+        <div class="label-cap mb-2">Test date</div>
+        <input type="date" data-fifty-date value="${f.date || ''}" class="w-full bg-slate-100 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300" />
+      </div>
       <div class="bg-white border border-slate-200 rounded-2xl p-4">
         <div class="label-cap mb-2 text-muted">Save to a swimmer</div>
         <div class="flex gap-2">
@@ -3551,6 +3729,10 @@ document.addEventListener('click', (e) => {
       navigate('saved-swimmer');
       return;
     }
+    const pg = e.target.closest('[data-proggroup]');
+    if (pg) { state.progGroup = decodeURIComponent(pg.getAttribute('data-proggroup')); state.progMetric = null; navigate('progress-group'); return; }
+    const pm = e.target.closest('[data-progmetric]');
+    if (pm) { state.progMetric = pm.getAttribute('data-progmetric'); render(); return; }
     const sv = e.target.closest('[data-saved]');
     if (sv) {
       const entry = state.saved.find(x => x.id === sv.getAttribute('data-saved'));
@@ -3562,7 +3744,7 @@ document.addEventListener('click', (e) => {
           state.convForm = { stroke: entry.stroke, sex: entry.sex, distance: entry.distance, from: entry.from, seconds: entry.seconds, name: entry.name, sid: entry.sid };
           navigate('converter', { reviewId: entry.id });
         } else if (entry.kind === 'fifty') {
-          state.fiftyForm = { stroke: entry.stroke, sex: entry.sex, seconds: entry.seconds, name: entry.name, sid: entry.sid, best: { ...(entry.best || {}) } };
+          state.fiftyForm = { stroke: entry.stroke, sex: entry.sex, seconds: entry.seconds, name: entry.name, sid: entry.sid, best: { ...(entry.best || {}) }, date: entry.date || '' };
           navigate('fifty', { reviewId: entry.id });
         } else if (entry.kind === 'adjacent') {
           state.adjForm = { stroke: entry.stroke, sex: entry.sex, pool: entry.pool, distance: entry.distance, seconds: entry.seconds, name: entry.name, sid: entry.sid };
@@ -3736,6 +3918,7 @@ function handleAction(action, el) {
     case 'fifty-splits': navigate('fifty'); break;
     case 'adjacent': navigate('adjacent'); break;
     case 'trends': navigate('trends'); break;
+    case 'progress': navigate('progress'); break;
     case 'save-conv': {
       const c = state.convForm;
       if (!(c.name || '').trim()) { showToast('Add a swimmer name to save'); break; }
@@ -3750,7 +3933,7 @@ function handleAction(action, el) {
       if (!(f.name || '').trim()) { showToast('Add a swimmer name to save'); break; }
       if (!f.seconds) { showToast('Enter a time first'); break; }
       const upd = upsertSaved({ id: 'ff' + Date.now().toString(36), sid: resolveSid(f), kind: 'fifty', name: f.name.trim(),
-        stroke: f.stroke, sex: f.sex, distance: 50, seconds: f.seconds, best: { ...(f.best || {}) } });
+        stroke: f.stroke, sex: f.sex, distance: 50, seconds: f.seconds, best: { ...(f.best || {}) }, date: f.date || new Date().toISOString().slice(0, 10) });
       showToast(`${upd ? 'Updated' : 'Saved'} ${f.name.trim()} · 50 m`);
       break;
     }
@@ -3779,7 +3962,7 @@ function handleAction(action, el) {
     }
     case 'add-fifty': {
       const sid = state.savedSid; const evs = entriesOf(sid); const last = evs[evs.length - 1];
-      state.fiftyForm = { stroke: 'Free', sex: last ? last.sex : 'M', seconds: 0, name: swimmerName(sid), sid, best: {} };
+      state.fiftyForm = { stroke: 'Free', sex: last ? last.sex : 'M', seconds: 0, name: swimmerName(sid), sid, best: {}, date: '' };
       navigate('fifty'); break;
     }
     case 'add-eff': {
