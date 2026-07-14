@@ -2414,7 +2414,7 @@ function effCompute() {
   const cleanR = (mmCleanR[st] && mmCleanR[st][dist]) || 1;
   const vc = tLcm > 0 ? cleanR * dist / tLcm : 0;       // 15-45 m clean surface speed (dive removed)
   const finF = mmFin[st] || 0.97;                       // last-5 m speed / clean speed (measured)
-  const base50 = vc > 0 ? (5/vc + 15/(vc*mmSeg.front) + 10/vc + 15/(vc*mmSeg.back) + 5/(vc*finF)) : 0; // 0-45 m clean checkpoints + measured last-5 m finish
+  const base50 = vc > 0 ? (5/vc + 20/(vc*mmSeg.front) + 20/(vc*mmSeg.back) + 5/(vc*finF)) : 0; // 0-5 push + 5-25 front window + 25-45 back window + measured last-5 m finish
   const pace = dist === 200 ? '200' : '100';
   const siGoal = mmSIfresh[pace][st][sx];               // 1st-50 clean-window SI = goal (fewest strokes)
   const siLimit = (mmSIfloor[pace][st] && mmSIfloor[pace][st][sx]) || 0;  // last-50 clean-window SI = breakdown limit (most)
@@ -2441,34 +2441,37 @@ function effResultHtml() {
     </div>`).join('');
   const lastLbl = r.dist === 200 ? '4th' : '2nd';
   // 50 m LCM race map (push start): 5-45 m body split into thirds. Segment speed = clean-window speed x mmSeg factor; segment SI = goal SI x (seg speed / clean speed) [DPS held constant across the clean window].
-  const vc = r.vc;
-  const cpSeg = [
-    { lab: '0\u20135 m',   d: 5,  sp: vc,               siF: 1,           adj: 0,  note: 'push-off',   body: false },
-    { lab: '5\u201320 m',  d: 15, sp: vc * mmSeg.front, siF: mmSeg.front, adj: 0,  note: '15\u201325 m pace', body: true },
-    { lab: '20\u201330 m', d: 10, sp: vc * mmSeg.mid,   siF: mmSeg.mid,   adj: 0,  note: 'clean avg',  body: true },
-    { lab: '30\u201345 m', d: 15, sp: vc * mmSeg.back,  siF: mmSeg.back,  adj: 0,  note: '25\u201345 m pace', body: true },
-    { lab: '45\u201350 m', d: 5,  sp: vc * r.finF,      siF: mmSeg.back,  adj: -1, note: 'finish \u00b7 \u22121 touch', body: true },
+  const vc = r.vc, goal = r.siGoal, spc = r.spc, front = mmSeg.front, back = mmSeg.back;
+  // 5 m checkpoint bands (push start): 0-5 push glide, 5-25 front window, 25-45 back window, 45-50 measured finish. Cumulative time + strokes at each mark.
+  const bands = [
+    { d: 5,  sp: vc,          siF: 1,     swim: false, adj: 0,  cp: false }, // 0-5 push
+    { d: 15, sp: vc * front,  siF: front, swim: true,  adj: 0,  cp: true  }, // 5-20
+    { d: 5,  sp: vc * front,  siF: front, swim: true,  adj: 0,  cp: true  }, // 20-25
+    { d: 5,  sp: vc * back,   siF: back,  swim: true,  adj: 0,  cp: true  }, // 25-30
+    { d: 5,  sp: vc * back,   siF: back,  swim: true,  adj: 0,  cp: true  }, // 30-35
+    { d: 5,  sp: vc * back,   siF: back,  swim: true,  adj: 0,  cp: true  }, // 35-40
+    { d: 5,  sp: vc * back,   siF: back,  swim: true,  adj: 0,  cp: true  }, // 40-45
+    { d: 5,  sp: vc * r.finF, siF: back,  swim: true,  adj: -1, cp: true  }, // 45-50 finish, -1 wall touch
   ];
-  const GC = 'display:grid;grid-template-columns:1fr 4.2rem 3.4rem 3rem;gap:6px;align-items:center;';
-  let cpCum = 0;
-  const cpRows = cpSeg.map((sg, i) => {
-    let segT = sg.d / sg.sp;
-    if (i === cpSeg.length - 1) segT = Math.max(0, r.base50 - cpCum); // finish closes to the 50 target
-    cpCum += segT;
-    const segSI = r.siGoal * sg.siF;                   // finish uses the 30-45 m (back) SI per coach spec
-    const strk = Math.max(0, Math.round(sg.d * r.spc * sg.sp / segSI) + sg.adj);
-    return `<div style="${GC}" class="px-3 py-2 border-b border-slate-100 last:border-0">
-        <div><div class="text-sm font-semibold text-slate-800">${sg.lab}</div><div class="text-[10px] text-faint">${sg.note}</div></div>
-        <div class="mono text-xs text-right">${cpCum.toFixed(2)}<span class="text-[8px] text-faint"> cum</span></div>
-        <div class="mono text-xs text-right">${sg.body ? strk : '\u00b7'}<span class="text-[8px] text-faint"> str</span></div>
-        <div class="mono text-xs text-right ${sg.body ? 'text-cyan-700' : 'text-faint'}">${sg.body ? segSI.toFixed(2) : '\u00b7'}</div>
-      </div>`;
-  }).join('');
+  const GC = 'display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;align-items:center;';
+  let cDist = 0, cTime = 0, cStr = 0; const cpRows = [];
+  bands.forEach((b, i) => {
+    cDist += b.d;
+    cTime += b.d / b.sp;
+    if (b.swim) cStr += b.d * spc * b.sp / (goal * b.siF);
+    cStr += b.adj;
+    if (i === bands.length - 1) cTime = r.base50; // close exactly to the predicted 50
+    if (b.cp) cpRows.push(`<div style="${GC}" class="px-3 py-2 border-b border-slate-100 last:border-0">
+        <div class="text-sm font-semibold text-slate-800">${cDist} m</div>
+        <div class="mono text-sm text-right">${cTime.toFixed(2)}<span class="text-[9px] text-faint"> s</span></div>
+        <div class="mono text-sm text-right">${Math.max(0, Math.round(cStr))}<span class="text-[9px] text-faint"> str</span></div>
+      </div>`);
+  });
   const cpHtml = `<div class="bg-white border border-slate-200 rounded-2xl overflow-hidden mt-3">
-      <div class="px-3 pt-3 pb-1 flex items-baseline justify-between"><span class="label-cap text-muted">50 m LCM race map</span><span class="text-[10px] text-faint">push start</span></div>
-      <div style="${GC}" class="px-3 pb-1"><span class="label-cap text-muted">Segment</span><span class="label-cap text-muted text-right">Cum s</span><span class="label-cap text-muted text-right">Str</span><span class="label-cap text-muted text-right">SI</span></div>
-      ${cpRows}
-      <div class="text-[10px] text-faint px-3 py-1.5">Front third rides the 15\u201325 m surge, back third settles to the 25\u201345 m pace. Segment SI = goal SI scaled by segment speed \u00b7 hold stroke length and hit these strokes.</div>
+      <div class="px-3 pt-3 pb-1 flex items-baseline justify-between"><span class="label-cap text-muted">50 m LCM race map</span><span class="text-[10px] text-faint">push start \u00b7 cumulative</span></div>
+      <div style="${GC}" class="px-3 pb-1"><span class="label-cap text-muted">At</span><span class="label-cap text-muted text-right">Time</span><span class="label-cap text-muted text-right">Strokes</span></div>
+      ${cpRows.join('')}
+      <div class="text-[10px] text-faint px-3 py-1.5">Cumulative clock + stroke count at each 5 m mark. 5\u201325 m rides the front surge, 25\u201345 m settles, 45\u201350 m the measured finish (\u22121 for the wall touch).</div>
     </div>`;
   return `<div class="bg-cyan-50/60 border border-cyan-200 rounded-2xl p-3 mb-3">
       <div class="flex items-baseline gap-3">
