@@ -2394,24 +2394,35 @@ const predAmp = { // elite stroke length m/cycle (sprint basis): mean + shortest
   Free: {M:{mean:2.324,min:2.080},F:{mean:2.124,min:2.050}}, Back: {M:{mean:2.167,min:1.820},F:{mean:1.966,min:1.790}},
   Fly: {M:{mean:1.963,min:1.810},F:{mean:1.752,min:1.630}}, Breast: {M:{mean:1.805,min:1.560},F:{mean:1.714,min:1.570}} };
 const mmSI2ndHi = { Free:{M:4.60,F:3.72}, Back:{M:3.80,F:3.22}, Fly:{M:3.57,F:2.82}, Breast:{M:2.79,F:2.43} }; // elite 2nd-50 SI upper IQR (q75), STROKE_INDEX_README Table B
+const mmSI4thHi = { Free:{M:4.36,F:3.63}, Back:{M:3.55,F:3.15}, Fly:{M:3.15,F:2.49}, Breast:{M:3.09,F:2.79} }; // elite 4th-50 SI upper IQR (q75), Table C (200)
 
 // Derive both 100s + the three test targets & pace-lock times from state.effForm.
 function effCompute() {
   const f = state.effForm, st = f.stroke, sx = f.sex;
-  const dist = f.dist === '100' ? 100 : 50;
+  const dist = f.dist === '200' ? 200 : (f.dist === '100' ? 100 : 50);
   const course = f.course === 'SCM' ? 'SCM' : 'LCM';
   const t = Math.max(0, f.t || 0);
   const spc = mmSpc[st];
   const crEvent = convRatios[st] && convRatios[st][sx] && convRatios[st][sx][dist];
-  const tLcm = (course === 'SCM' && crEvent) ? t * crEvent.mean : t;      // SCM -> LCM (× ratio)
-  const base50 = dist === 100 ? (mmFrac[st][sx] * tLcm) : tLcm;           // 100: 1st-50 of the 100 drives the target time
+  const tLcm = (course === 'SCM' && crEvent) ? t * crEvent.mean : t;          // SCM -> LCM (× ratio)
+  let base50, siMean, siHi;
+  if (dist === 200) {
+    base50 = mmFrac200[st][sx] * tLcm;                                        // 1st 50 of the 200 drives the time
+    siMean = (mmSIfloor['200'][st] && mmSIfloor['200'][st][sx]) || 0;          // 4th-50 mean = how bad it can be
+    siHi = mmSI4thHi[st][sx];                                                  // 4th-50 upper IQR (q75)
+  } else if (dist === 100) {
+    base50 = mmFrac[st][sx] * tLcm;                                           // 1st 50 of the 100
+    siMean = (mmSIfloor['100'][st] && mmSIfloor['100'][st][sx]) || 0;          // 2nd-50 mean
+    siHi = mmSI2ndHi[st][sx];                                                  // 2nd-50 q75
+  } else {
+    base50 = tLcm;                                                           // the entered 50 is the target
+    siMean = (mmSIfloor['100'][st] && mmSIfloor['100'][st][sx]) || 0;
+    siHi = mmSI2ndHi[st][sx];
+  }
   const cr50 = convRatios[st] && convRatios[st][sx] && convRatios[st][sx][50];
-  const t50scm = cr50 ? base50 / cr50.mean : base50;                      // LCM 50 -> SCM 50 (turn baked in)
-  const siMean = (mmSIfloor['100'][st] && mmSIfloor['100'][st][sx]) || 0; // elite 2nd-50 mean = how "bad" it can be
-  const siHi = mmSI2ndHi[st][sx];                                          // elite 2nd-50 upper IQR (q75) = the top
+  const t50scm = cr50 ? base50 / cr50.mean : base50;                          // LCM 50 -> SCM 50 (turn baked in)
   return { st: st, sx: sx, dist: dist, course: course, spc: spc, base50: base50, t50scm: t50scm, siMean: siMean, siHi: siHi };
 }
-
 function effResultHtml() {
   const f = state.effForm, r = effCompute();
   if (!(r.base50 > 0)) return '<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-5 text-center text-sm text-muted">Enter a time above.</div>';
@@ -2430,8 +2441,8 @@ function effResultHtml() {
       <div class="mono text-sm text-right">${strokeRange(x.swum, x.v)}<span class="text-[9px] text-faint"> str</span></div>
     </div>`).join('');
   return `<div class="bg-cyan-50/60 border border-cyan-200 rounded-2xl p-3 mb-3">
-      <div class="flex items-baseline gap-2"><div class="hero-time text-2xl leading-none text-slate-900">SI ${s2(r.siMean)}–${s2(r.siHi)}</div><div class="text-[11px] text-muted">target range<br>(elite 2nd-50 mean → q75)</div></div>
-      <div class="text-[10px] text-faint mt-1">${r.dist === 100 ? 'time from the 1st 50 of the 100 · SI floor from the 2nd 50' : 'time from your 50 · SI band from the elite 2nd-50'}</div>
+      <div class="flex items-baseline gap-2"><div class="hero-time text-2xl leading-none text-slate-900">SI ${s2(r.siMean)}–${s2(r.siHi)}</div><div class="text-[11px] text-muted">target range<br>(elite ${r.dist === 200 ? '4th' : '2nd'}-50 mean → q75)</div></div>
+      <div class="text-[10px] text-faint mt-1">${r.dist === 200 ? 'time from the 1st 50 of the 200 · SI floor from the 4th 50' : (r.dist === 100 ? 'time from the 1st 50 of the 100 · SI floor from the 2nd 50' : 'time from your 50 · SI band from the elite 2nd-50')}</div>
     </div>
     <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden">
       <div style="${GT}" class="px-3 pt-3 pb-1"><span class="label-cap text-muted">Target</span><span class="label-cap text-muted text-right">Time</span><span class="label-cap text-muted text-right">Strokes</span></div>
@@ -2445,7 +2456,7 @@ function renderEfficiency() {
   const strokes = ['Free', 'Back', 'Breast', 'Fly'];
   const secs = Math.max(0, f.t || 0);
   const emin = Math.floor(secs / 60), esec = Math.floor(secs % 60), ehh = Math.round((secs - Math.floor(secs)) * 100);
-  const dist = f.dist === '100' ? '100' : '50', course = f.course === 'SCM' ? 'SCM' : 'LCM';
+  const dist = f.dist === '200' ? '200' : (f.dist === '100' ? '100' : '50'), course = f.course === 'SCM' ? 'SCM' : 'LCM';
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3">
@@ -2456,7 +2467,7 @@ function renderEfficiency() {
       <div><div class="label-cap mb-2">Stroke</div><div class="flex gap-2 flex-wrap">${strokes.map((s) => `<span class="pill ${f.stroke === s ? 'active' : ''}" data-estroke="${s}">${s}</span>`).join('')}</div></div>
       <div class="flex gap-3">
         <div class="flex-1"><div class="label-cap mb-2">Sex</div><div class="seg-group"><div class="seg ${f.sex === 'M' ? 'active' : ''}" data-esex="M">Men</div><div class="seg ${f.sex === 'F' ? 'active' : ''}" data-esex="F">Women</div></div></div>
-        <div class="flex-1"><div class="label-cap mb-2">Distance</div><div class="seg-group"><div class="seg ${dist === '50' ? 'active' : ''}" data-effdist="50">50</div><div class="seg ${dist === '100' ? 'active' : ''}" data-effdist="100">100</div></div></div>
+        <div class="flex-1"><div class="label-cap mb-2">Distance</div><div class="seg-group"><div class="seg ${dist === '50' ? 'active' : ''}" data-effdist="50">50</div><div class="seg ${dist === '100' ? 'active' : ''}" data-effdist="100">100</div><div class="seg ${dist === '200' ? 'active' : ''}" data-effdist="200">200</div></div></div>
         <div class="flex-1"><div class="label-cap mb-2">Course</div><div class="seg-group"><div class="seg ${course === 'LCM' ? 'active' : ''}" data-effcourse="LCM">LCM</div><div class="seg ${course === 'SCM' ? 'active' : ''}" data-effcourse="SCM">SCM</div></div></div>
       </div>
       <div>
