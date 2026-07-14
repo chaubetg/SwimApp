@@ -2011,6 +2011,8 @@ function progMetrics(s) {
       if (pr != null) out.push({ key: 'siPctRate', label: '% elite (rate)', value: pr, t: 'pct', hb: true });
       if (s.siCount != null) out.push({ key: 'siCount', label: 'Stroke Index (count)', value: s.siCount, t: 'si', hb: true });
       if (s.siRate != null) out.push({ key: 'siRate', label: 'Stroke Index (rate)', value: s.siRate, t: 'si', hb: true });
+      const sp = (s.spinnerPct != null) ? s.spinnerPct : ((s.srElite && s.sr) ? s.srElite / s.sr * 100 : null);
+      if (sp != null) out.push({ key: 'spinner', label: '% where it should be', value: sp, t: 'pct', hb: true });
       if (s.scoreCount != null) out.push({ key: 'scoreCount', label: 'Min–max (count)', value: s.scoreCount, t: 'score' });
       if (s.t != null) out.push({ key: 'time', label: 'Time', value: s.t, t: 'time' });
       if (s.sc != null) out.push({ key: 'sc', label: 'Strokes', value: s.sc, t: 'count' });
@@ -2382,8 +2384,12 @@ const mmCruise50l = { Free:{M:[0.2552,0.2575],F:[0.2549,0.2573]}, Back:{M:[0.254
 const mmTestLabel = { '25scm':'25 SCM', '50scm':'50 SCM', '50lcm':'50 LCM' };
 const mmAmpSprint = { Free:{M:2.32,F:2.12}, Back:{M:2.17,F:1.97}, Fly:{M:1.96,F:1.75}, Breast:{M:1.81,F:1.71} }; // 100-pace target distance/stroke (m/cycle)
 const mmAmpCruise = { Free:{M:2.63,F:2.31}, Back:{M:2.38,F:2.16}, Fly:{M:2.03,F:1.79}, Breast:{M:2.41,F:2.33} }; // 200-pace target distance/stroke (m/cycle)
-const mmSI = { '100': { Free:{M:4.58,F:3.75}, Back:{M:3.80,F:3.09}, Fly:{M:3.58,F:2.88}, Breast:{M:2.81,F:2.43} },
-               '200': { Free:{M:4.83,F:3.77}, Back:{M:3.88,F:3.23}, Fly:{M:3.39,F:2.74}, Breast:{M:3.64,F:3.21} } }; // elite Stroke Index (swim-only)
+const mmSI = { '100': { Free:{M:4.68,F:3.86}, Back:{M:3.91,F:3.17}, Fly:{M:3.69,F:2.97}, Breast:{M:2.93,F:2.53} },
+               '200': { Free:{M:4.69,F:3.82}, Back:{M:3.81,F:3.19}, Fly:{M:3.40,F:2.74}, Breast:{M:3.44,F:3.04} } }; // elite SI whole-race avg (STROKE_INDEX_README Table A)
+const mmSIfresh = { '100': { Free:{M:4.96,F:4.04}, Back:{M:4.13,F:3.31}, Fly:{M:3.93,F:3.21}, Breast:{M:3.20,F:2.76} },
+                    '200': { Free:{M:5.04,F:4.01}, Back:{M:4.10,F:3.37}, Fly:{M:3.76,F:3.05}, Breast:{M:3.73,F:3.34} } }; // 1st-50 fresh SI target
+const mmSIfloor = { '100': { Free:{M:4.40,F:3.67}, Back:{M:3.69,F:3.03}, Fly:{M:3.45,F:2.75}, Breast:{M:2.65,F:2.30} },
+                    '200': { Free:{M:4.17,F:3.58}, Back:{M:3.42,F:2.94}, Fly:{M:3.07,F:2.43}, Breast:{M:2.77,F:2.57} } }; // last-50 SI floor = set-modify trigger
 
 // Derive both 100s + the three test targets & pace-lock times from state.effForm.
 function effCompute() {
@@ -2417,9 +2423,13 @@ function effCompute() {
   const swimD = test === '25scm' ? 20 : (test === '50scm' ? 41 : 45);
   const breakout = test === '25scm' ? 5 : (test === '50scm' ? 9 : 5);
   const eliteSI = mmSI[pace][st][sx];
+  const eliteSIfresh = mmSIfresh[pace][st][sx];
+  const eliteSIfloor = mmSIfloor[pace][st][sx];
+  const evt = pace === '200' ? 200 : 100;
+  const srElite = (srRef[st] && srRef[st][evt] && srRef[st][evt][sx]) ? srRef[st][evt][sx].avg : null;
   const swimTimeRec = Math.max(0.1, pace0 - breakout / 2.0);
   const recStrokes = spc * swimD * swimD / (swimTimeRec * eliteSI);
-  return { secs, pace, test, Tlcm, Tscm, spc, target, targetStrokes, Atarget, swimDist, swimD, breakout, eliteSI, recStrokes, ceiling, scoreLo: target * bd.lo, scoreHi: target * bd.hi, pace0, paceHi };
+  return { secs, pace, test, Tlcm, Tscm, spc, target, targetStrokes, Atarget, swimDist, swimD, breakout, eliteSI, eliteSIfresh, eliteSIfloor, srElite, recStrokes, ceiling, scoreLo: target * bd.lo, scoreHi: target * bd.hi, pace0, paceHi };
 }
 function effResultHtml() {
   const f = state.effForm;
@@ -2435,31 +2445,33 @@ function effResultHtml() {
   const swimTime = haveT ? Math.max(0.1, a.t - uwT) : null;
   const SIcount = (swimTime && haveSc) ? (r.swimD * r.swimD) / (swimTime * (a.sc / r.spc)) : null;
   const SIrate = (swimTime && haveSr) ? 60 * r.swimD * r.swimD / (a.sr * swimTime * swimTime) : null;
-  const pctC = SIcount != null ? SIcount / r.eliteSI * 100 : null;
-  const pctR = SIrate != null ? SIrate / r.eliteSI * 100 : null;
+  const SI = SIcount != null ? SIcount : SIrate;
+  const pctElite = SI != null ? SI / r.eliteSI * 100 : null;
   const pctColor = (p) => p >= 100 ? 'text-emerald-700' : (p >= 90 ? 'text-amber-600' : 'text-rose-600');
+  const spin = (r.srElite && haveSr) ? r.srElite / a.sr * 100 : null;   // % of where it should be = SR_elite / SR_actual
+  const spinV = spin == null ? '' : (spin < 97 ? 'spinning — lengthen the stroke' : (spin > 103 ? 'over-gliding — add tempo' : 'on-target tempo'));
+  const spinC = spin == null ? '' : (spin < 97 ? 'text-rose-600' : (spin > 103 ? 'text-amber-600' : 'text-emerald-700'));
   const onPace = haveT ? a.t <= r.paceHi + 1e-9 : null;
-  const rec = `<div class="text-[12.5px] text-slate-700 mt-1 mb-1">Aim: <span class="mono font-bold">${r.recStrokes.toFixed(0)}</span> strokes @ <span class="mono font-bold">${s1(r.pace0)}</span> s <span class="text-faint">· 100% elite (within ${s1(r.paceHi)} s)</span></div>`;
+  const belowFloor = SI != null && SI < r.eliteSIfloor;
+  const rec = `<div class="text-[12.5px] text-slate-700 mt-1 mb-1">Aim: <span class="mono font-bold">${r.recStrokes.toFixed(0)}</span> strokes @ <span class="mono font-bold">${s1(r.pace0)}</span> s <span class="text-faint">· within ${s1(r.paceHi)} s</span></div>`;
   const inputs = `<div class="mt-2 grid grid-cols-3 gap-2">
       <div><div class="label-cap mb-1 text-muted">Time (s)</div><input data-eff-in="t" inputmode="decimal" value="${haveT ? a.t : ''}" placeholder="s" class="w-full bg-slate-100 rounded-lg px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-cyan-300" /></div>
       <div><div class="label-cap mb-1 text-muted">Strokes</div><input data-eff-in="sc" inputmode="numeric" value="${haveSc ? a.sc : ''}" placeholder="count" class="w-full bg-slate-100 rounded-lg px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-cyan-300" /></div>
       <div><div class="label-cap mb-1 text-muted">Rate</div><input data-eff-in="sr" inputmode="decimal" value="${haveSr ? a.sr : ''}" placeholder="SR" class="w-full bg-slate-100 rounded-lg px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-cyan-300" /></div>
     </div>`;
-  let scoreBlock = '<div class="mt-2 text-[11px] text-faint">Enter time + stroke count and/or rate to get your score.</div>';
-  if (pctC != null || pctR != null) {
-    const primary = pctC != null ? pctC : pctR;
-    const primaryLbl = pctC != null ? 'from count' : 'from rate';
+  let scoreBlock = '<div class="mt-2 text-[11px] text-faint">Enter time + stroke count and/or rate to get your Stroke Index.</div>';
+  if (SI != null) {
     scoreBlock = `<div class="mt-3 bg-cyan-50/60 border border-cyan-200 rounded-xl p-3">
-        <div class="flex items-end gap-3">
-          <div><div class="hero-time text-4xl leading-none ${pctColor(primary)}">${primary.toFixed(0)}%</div><div class="text-[10px] uppercase tracking-wide text-faint mt-0.5">of elite · ${primaryLbl}</div></div>
-          <div class="flex-1 text-[12px] text-slate-600 leading-snug">
-            ${pctC != null ? `<div>count · SI <span class="mono">${s2(SIcount)}</span> · ${pctC.toFixed(0)}%</div>` : ''}
-            ${pctR != null ? `<div>rate · SI <span class="mono">${s2(SIrate)}</span> · ${pctR.toFixed(0)}%</div>` : ''}
-            <div class="text-faint">elite SI ${s2(r.eliteSI)}</div>
-          </div>
+      <div class="flex items-end gap-3">
+        <div><div class="hero-time text-4xl leading-none ${pctColor(pctElite)}">${pctElite.toFixed(0)}%</div><div class="text-[10px] uppercase tracking-wide text-faint mt-0.5">of elite · SI ${s2(SI)}</div></div>
+        <div class="flex-1 text-[12px] text-slate-600 leading-snug">
+          ${spin != null ? `<div><b class="${spinC}">${spin.toFixed(0)}%</b> of where it should be</div><div class="${spinC} font-medium">${spinV}</div>` : '<div class="text-faint">enter SR for the spin check</div>'}
+          <div class="text-faint mt-0.5">elite ${s2(r.eliteSI)} · fresh ${s2(r.eliteSIfresh)} · floor ${s2(r.eliteSIfloor)}</div>
         </div>
-        ${haveT ? `<div class="mt-1.5 ${onPace ? 'text-emerald-700' : 'text-rose-600'} text-[11px] font-semibold">${onPace ? '✓ On pace — counts' : `⚠ Off pace — swam ${s2(a.t)} vs ${s2(r.paceHi)} · doesn't count at race pace`}</div>` : ''}
-      </div>`;
+      </div>
+      ${belowFloor ? `<div class="mt-1.5 text-rose-600 text-[11px] font-semibold">⚠ SI below the last-50 floor (${s2(r.eliteSIfloor)}) — modify the set: degrading past race efficiency.</div>` : ''}
+      ${haveT ? `<div class="mt-1 ${onPace ? 'text-emerald-700' : 'text-rose-600'} text-[11px] font-semibold">${onPace ? '✓ On pace — counts' : `⚠ Off pace — swam ${s2(a.t)} vs ${s2(r.paceHi)}`}</div>` : ''}
+    </div>`;
   }
   const scoreCount = (haveT && haveSc) ? a.t + a.sc : null;
   const scoreRate = (haveT && haveSr) ? a.t + (a.sr / 60 * a.t * r.spc) : null;
@@ -2473,7 +2485,7 @@ function effResultHtml() {
       ${rec}
       ${inputs}
       ${scoreBlock}
-      ${(pctC != null || pctR != null) ? mmBlock : ''}
+      ${(SI != null) ? mmBlock : ''}
     </div>`;
 }
 function renderEfficiency() {
@@ -4094,10 +4106,11 @@ function handleAction(action, el) {
       const swT = (a.t > 0) ? Math.max(0.1, a.t - r.breakout / 2.0) : null;
       const siCount = (swT && a.sc > 0) ? (r.swimD * r.swimD) / (swT * (a.sc / r.spc)) : null;
       const siRate = (swT && a.sr > 0) ? 60 * r.swimD * r.swimD / (a.sr * swT * swT) : null;
+      const spinnerPct = (r.srElite && a.sr > 0) ? r.srElite / a.sr * 100 : null;
       const upd = upsertSaved({ id: 'ef' + Date.now().toString(36), sid: resolveSid(f), kind: 'eff', name: f.name.trim(),
         stroke: f.stroke, sex: f.sex, pace: f.pace || '100', test: f.test || '50lcm', from: f.from, seconds: f.seconds,
         distance: f.pace === '200' ? 200 : 100, t: a.t != null ? a.t : null, sc: a.sc != null ? a.sc : null, sr: a.sr != null ? a.sr : null,
-        target: r.target, ceiling: r.ceiling, scoreCount: scoreCount, scoreRate: scoreRate, siCount: siCount, siRate: siRate, eliteSI: r.eliteSI,
+        target: r.target, ceiling: r.ceiling, scoreCount: scoreCount, scoreRate: scoreRate, siCount: siCount, siRate: siRate, eliteSI: r.eliteSI, eliteSIfloor: r.eliteSIfloor, srElite: r.srElite, spinnerPct: spinnerPct,
         date: f.date || new Date().toISOString().slice(0, 10) });
       showToast(`${upd ? 'Updated' : 'Saved'} ${f.name.trim()} · ${mmTestLabel[f.test || '50lcm']} ${f.pace || '100'} pace`);
       break;
