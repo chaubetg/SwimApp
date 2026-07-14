@@ -1171,7 +1171,7 @@ const state = {
   history: [],
   swimmer: null, // active swimmer if any
   convForm: { stroke: 'Free', sex: 'M', distance: 100, from: 'LCM', seconds: 0, name: '' }, // course converter
-  effForm: { stroke: 'Free', sex: 'M', dist: '50', course: 'LCM', t: 0 }, // Stroke Index target predictor
+  effForm: { stroke: 'Free', sex: 'M', dist: '50', course: 'LCM', t: 0, mode: 'predict', pace: '100', test: '50scm', sc: 0 }, // Stroke Index target predictor
   fiftyForm: { stroke: 'Free', sex: 'M', seconds: 0, name: '', best: {}, sr: {}, sc: {}, date: '' }, // 50m LCM split calculator
   fiftyOpen: {}, // 50m tool: which metric rows are expanded for SR/SC input
   adjForm: { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 100, seconds: 0, name: '' }, // adjacent-events predictor
@@ -1489,21 +1489,24 @@ function render() {
     const mn = host.querySelector(minSel), sc = host.querySelector(secSel), hh = host.querySelector(hhSel);
     if (!mn || !sc || !hh) return;
     const box = resultSel ? host.querySelector(resultSel) : null;
+    const tenths = hh.hasAttribute('data-tenths');
+    const div = tenths ? 10 : 100, cap = tenths ? 1 : 2;
     const sync = () => {
       const m = parseInt(mn.value || '0', 10) || 0, s = parseInt(sc.value || '0', 10) || 0, h = parseInt(hh.value || '0', 10) || 0;
-      setSeconds(m * 60 + s + h / 100);
+      setSeconds(m * 60 + s + h / div);
       if (box) box.innerHTML = resultHtml();
     };
     [mn, sc, hh].forEach((el) => {
       el.addEventListener('focus', () => el.select());
       el.addEventListener('input', () => {
-        el.value = el.value.replace(/\D/g, '').slice(0, 2);
+        el.value = el.value.replace(/\D/g, '').slice(0, el === hh ? cap : 2);
         sync();
         if (el === mn && el.value.length === 2) { sc.focus(); sc.select(); }
         else if (el === sc && el.value.length === 2) { hh.focus(); hh.select(); }
       });
       el.addEventListener('blur', () => {
-        if ((el === sc || el === hh) && el.value !== '') el.value = el.value.padStart(2, '0');
+        if (el === sc && el.value !== '') el.value = el.value.padStart(2, '0');
+        else if (el === hh && !tenths && el.value !== '') el.value = el.value.padStart(2, '0');
         sync();
       });
     });
@@ -2426,10 +2429,11 @@ function effCompute() {
   return { st: st, sx: sx, dist: dist, course: course, spc: spc, base50: base50, t50scm: t50scm, siGoal: siGoal, siLimit: siLimit, vc: vc, finF: finF, timeUp: timeUp };
 }
 function effResultHtml() {
+  if (state.effForm.mode === 'score') return effScoreHtml();
   const f = state.effForm, r = effCompute();
   if (!(r.base50 > 0)) return '<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-5 text-center text-sm text-muted">Enter a time above.</div>';
   const s2 = (x) => x.toFixed(2);
-  const fmt = (t) => t >= 60 ? formatTime(t) : t.toFixed(2);
+  const fmt = (t) => t >= 60 ? formatTime(t, { precision: 1 }) : t.toFixed(1);
   const strokeRange = (swum, v) => { const lo = Math.round(swum * r.spc * v / r.siGoal), hi = Math.round(swum * r.spc * v / r.siLimit); return lo === hi ? String(lo) : `${lo}–${hi}`; };
   const rows = [
     { label: '50 m LCM', sub: '45 m swum · push', time: r.base50, swum: 45, v: 50 / r.base50 },
@@ -2468,7 +2472,7 @@ function effResultHtml() {
     if (b.cp) { const slo = Math.max(0, Math.round(cLo)), shi = Math.max(0, Math.round(cHi));
       cpRows.push(`<div style="${GC}" class="px-3 py-2 border-b border-slate-100 last:border-0">
         <div class="text-sm font-semibold text-slate-800">${cDist} m</div>
-        <div class="mono text-xs text-right">${cTime.toFixed(2)}\u2013${(cTime * r.timeUp).toFixed(2)}<span class="text-[8px] text-faint"> s</span></div>
+        <div class="mono text-xs text-right">${cTime.toFixed(1)}\u2013${(cTime * r.timeUp).toFixed(1)}<span class="text-[8px] text-faint"> s</span></div>
         <div class="mono text-xs text-right">${slo === shi ? slo : slo + '\u2013' + shi}<span class="text-[8px] text-faint"> str</span></div>
       </div>`); }
   });
@@ -2491,37 +2495,91 @@ function effResultHtml() {
       <div class="text-[10px] text-faint px-3 py-1.5">Time = target → upper limit (slowest in the elite ratio band). Strokes = goal→limit (fewest at the 1st-50 SI, most at the ${lastLbl}-50 SI).</div>
     </div>${cpHtml}`;
 }
+function effScoreHtml() {
+  const f = state.effForm, st = f.stroke, sx = f.sex, spc = mmSpc[st];
+  const pace = f.pace === '200' ? '200' : '100';
+  const test = ['50lcm', '50scm', '25scm'].includes(f.test) ? f.test : '50scm';
+  const td = { '50lcm': { swum: 45, lbl: '50 m LCM' }, '50scm': { swum: 41, lbl: '50 m SCM' }, '25scm': { swum: 20, lbl: '25 m SCM' } }[test];
+  const t = Math.max(0, f.t || 0), sc = Math.max(0, Math.round(f.sc || 0));
+  const empty = '<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-5 text-center text-sm text-muted">Enter your time and stroke count above.</div>';
+  if (!(t > 0 && sc > 0)) return empty;
+  let v;
+  if (test === '25scm') { const t50 = 2 * (t - 0.30); v = t50 > 0 ? 50 / t50 : 0; } else { v = 50 / t; }
+  if (!(v > 0)) return empty;
+  const si = td.swum * spc * v / sc;
+  const siElite = mmSIfresh[pace][st][sx];
+  const pct = siElite > 0 ? si / siElite * 100 : 0;
+  const scT = Math.round(td.swum * spc * v / siElite);
+  const vT = siElite * sc / (td.swum * spc);
+  let tT; if (test === '25scm') { tT = (50 / vT) / 2 + 0.30; } else { tT = 50 / vT; }
+  const fmt = (x) => x >= 60 ? formatTime(x, { precision: 1 }) : x.toFixed(1);
+  const good = pct >= 100;
+  const pctCol = good ? 'text-emerald-700' : (pct >= 92 ? 'text-amber-600' : 'text-rose-600');
+  const dSc = sc - scT, dT = t - tT;
+  const strokeLine = good ? 'already at or under elite strokes' : (dSc > 0 ? '−' + dSc + ' stroke' + (dSc === 1 ? '' : 's') + ' at ' + fmt(t) + ' s' : 'same strokes');
+  const timeLine = good ? 'already at or under elite time' : (dT > 0 ? '−' + fmt(dT) + ' s at ' + sc + ' strokes' : 'same time');
+  return `<div class="bg-cyan-50/60 border border-cyan-200 rounded-2xl p-3 mb-3">
+      <div class="flex items-baseline gap-4">
+        <div><div class="hero-time text-3xl leading-none ${pctCol}">${Math.round(pct)}%</div><div class="text-[9px] uppercase tracking-wide text-faint">of elite</div></div>
+        <div><div class="hero-time text-2xl leading-none text-slate-800">${si.toFixed(2)}</div><div class="text-[9px] uppercase tracking-wide text-faint">your SI</div></div>
+        <div><div class="hero-time text-2xl leading-none text-emerald-700">${siElite.toFixed(2)}</div><div class="text-[9px] uppercase tracking-wide text-faint">elite SI · ${pace} pace</div></div>
+      </div>
+      <div class="text-[10px] text-faint mt-1.5">${td.lbl} · ${st} ${sx === 'M' ? 'Men' : 'Women'} · SI = velocity × distance-per-cycle over ${td.swum} m swum.</div>
+    </div>
+    <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+      <div class="px-3 pt-3 pb-1"><span class="label-cap text-muted">To reach 100% (elite)</span></div>
+      <div class="px-3 py-2.5 border-b border-slate-100"><div class="text-sm font-semibold text-slate-800">Same time → fewer strokes</div><div class="text-[11px] text-muted">target ${scT} strokes · ${strokeLine}</div></div>
+      <div class="px-3 py-2.5"><div class="text-sm font-semibold text-slate-800">Same strokes → faster time</div><div class="text-[11px] text-muted">target ${fmt(tT)} s · ${timeLine}</div></div>
+    </div>`;
+}
 function renderEfficiency() {
   const f = state.effForm;
   const strokes = ['Free', 'Back', 'Breast', 'Fly'];
   const secs = Math.max(0, f.t || 0);
-  const emin = Math.floor(secs / 60), esec = Math.floor(secs % 60), ehh = Math.round((secs - Math.floor(secs)) * 100);
+  const emin = Math.floor(secs / 60), esec = Math.floor(secs % 60), eth = Math.min(9, Math.round((secs - Math.floor(secs)) * 10));
   const dist = f.dist === '200' ? '200' : (f.dist === '100' ? '100' : '50'), course = f.course === 'SCM' ? 'SCM' : 'LCM';
+  const mode = f.mode === 'score' ? 'score' : 'predict';
+  const pace = f.pace === '200' ? '200' : '100';
+  const test = ['50lcm', '50scm', '25scm'].includes(f.test) ? f.test : '50scm';
+  const testLbl = { '50lcm': '50 m LCM', '50scm': '50 m SCM', '25scm': '25 m SCM' }[test];
+  const sc = Math.max(0, Math.round(f.sc || 0));
+  const secondCol = mode === 'predict'
+    ? `<div class="flex-1"><div class="label-cap mb-2">Distance</div><div class="seg-group"><div class="seg ${dist === '50' ? 'active' : ''}" data-effdist="50">50</div><div class="seg ${dist === '100' ? 'active' : ''}" data-effdist="100">100</div><div class="seg ${dist === '200' ? 'active' : ''}" data-effdist="200">200</div></div></div>`
+    : `<div class="flex-1"><div class="label-cap mb-2">Race pace</div><div class="seg-group"><div class="seg ${pace === '100' ? 'active' : ''}" data-effpace="100">100</div><div class="seg ${pace === '200' ? 'active' : ''}" data-effpace="200">200</div></div></div>`;
+  const thirdRow = mode === 'predict'
+    ? `<div><div class="label-cap mb-2">Course</div><div class="seg-group"><div class="seg ${course === 'LCM' ? 'active' : ''}" data-effcourse="LCM">LCM</div><div class="seg ${course === 'SCM' ? 'active' : ''}" data-effcourse="SCM">SCM</div></div></div>`
+    : `<div><div class="label-cap mb-2">Test</div><div class="seg-group"><div class="seg ${test === '50lcm' ? 'active' : ''}" data-efftest="50lcm">50 LCM</div><div class="seg ${test === '50scm' ? 'active' : ''}" data-efftest="50scm">50 SCM</div><div class="seg ${test === '25scm' ? 'active' : ''}" data-efftest="25scm">25 SCM</div></div></div>`;
+  const timeLbl = mode === 'predict' ? `Desired ${dist} m ${course} time` : `Your ${testLbl} time`;
+  const scInput = mode === 'score'
+    ? `<div><div class="label-cap mb-2">Your stroke count (arm entries)</div><div class="bg-white border-2 border-slate-200 rounded-2xl px-4 py-3 focus-within:border-cyan-500 transition"><input data-eff15="sc" inputmode="numeric" maxlength="3" value="${sc || ''}" placeholder="0" class="w-full text-center text-2xl font-bold text-slate-800 outline-none bg-transparent" aria-label="Stroke count" /></div></div>`
+    : '';
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3">
       <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
-      <div class="flex-1 min-w-0"><div class="text-lg font-semibold">Stroke Index targets</div><div class="text-xs text-muted truncate">from a desired 50 or 100 time</div></div>
+      <div class="flex-1 min-w-0"><div class="text-lg font-semibold">Stroke Index</div><div class="text-xs text-muted truncate">${mode === 'predict' ? 'targets from a desired time' : 'score a swim vs the world'}</div></div>
     </div>
     <div class="scrollable px-5 py-4 space-y-5">
+      <div class="seg-group"><div class="seg ${mode === 'predict' ? 'active' : ''}" data-effmode="predict">Predict targets</div><div class="seg ${mode === 'score' ? 'active' : ''}" data-effmode="score">Score a swim</div></div>
       <div><div class="label-cap mb-2">Stroke</div><div class="flex gap-2 flex-wrap">${strokes.map((s) => `<span class="pill ${f.stroke === s ? 'active' : ''}" data-estroke="${s}">${s}</span>`).join('')}</div></div>
       <div class="flex gap-3">
         <div class="flex-1"><div class="label-cap mb-2">Sex</div><div class="seg-group"><div class="seg ${f.sex === 'M' ? 'active' : ''}" data-esex="M">Men</div><div class="seg ${f.sex === 'F' ? 'active' : ''}" data-esex="F">Women</div></div></div>
-        <div class="flex-1"><div class="label-cap mb-2">Distance</div><div class="seg-group"><div class="seg ${dist === '50' ? 'active' : ''}" data-effdist="50">50</div><div class="seg ${dist === '100' ? 'active' : ''}" data-effdist="100">100</div><div class="seg ${dist === '200' ? 'active' : ''}" data-effdist="200">200</div></div></div>
+        ${secondCol}
       </div>
-      <div><div class="label-cap mb-2">Course</div><div class="seg-group"><div class="seg ${course === 'LCM' ? 'active' : ''}" data-effcourse="LCM">LCM</div><div class="seg ${course === 'SCM' ? 'active' : ''}" data-effcourse="SCM">SCM</div></div></div>
+      ${thirdRow}
       <div>
-        <div class="label-cap mb-2">Desired ${dist} m ${course} time</div>
+        <div class="label-cap mb-2">${timeLbl}</div>
         <div class="bg-gradient-to-br from-cyan-50 to-white border-2 border-cyan-200 rounded-2xl px-4 py-4 focus-within:border-cyan-500 transition">
           <div class="flex items-end justify-center gap-1">
             <div class="text-center"><input data-emin inputmode="numeric" maxlength="2" value="${emin}" class="time-seg" aria-label="Minutes" /><div class="time-seg-label">min</div></div>
             <div class="time-seg-sep">:</div>
             <div class="text-center"><input data-esec inputmode="numeric" maxlength="2" value="${String(esec).padStart(2, '0')}" class="time-seg" aria-label="Seconds" /><div class="time-seg-label">sec</div></div>
             <div class="time-seg-sep">.</div>
-            <div class="text-center"><input data-ehh inputmode="numeric" maxlength="2" value="${String(ehh).padStart(2, '0')}" class="time-seg" aria-label="Hundredths" /><div class="time-seg-label">hund.</div></div>
+            <div class="text-center"><input data-ehh data-tenths inputmode="numeric" maxlength="1" value="${eth}" class="time-seg" aria-label="Tenths" /><div class="time-seg-label">tenth</div></div>
           </div>
         </div>
       </div>
+      ${scInput}
       <div id="eff-result">${effResultHtml()}</div>
     </div>
   `;
@@ -3924,6 +3982,8 @@ document.addEventListener('click', (e) => {
     if (cdist) { state.convForm.distance = parseInt(cdist.getAttribute('data-cdist'), 10); render(); return; }
     const cfrom = e.target.closest('[data-convfrom]');
     if (cfrom) { state.convForm.from = cfrom.getAttribute('data-convfrom'); render(); return; }
+    const emode = e.target.closest('[data-effmode]');
+    if (emode) { state.effForm.mode = emode.getAttribute('data-effmode'); render(); return; }
     const estroke = e.target.closest('[data-estroke]');
     if (estroke) { state.effForm.stroke = estroke.getAttribute('data-estroke'); render(); return; }
     const eesex = e.target.closest('[data-esex]');
@@ -4124,7 +4184,7 @@ function handleAction(action, el) {
     }
     case 'add-eff': {
       const sid = state.savedSid; const evs = entriesOf(sid); const last = evs[evs.length - 1];
-      state.effForm = { stroke: 'Free', sex: last ? last.sex : 'M', dist: '50', course: 'LCM', t: 0 };
+      state.effForm = { stroke: 'Free', sex: last ? last.sex : 'M', dist: '50', course: 'LCM', t: 0, mode: 'predict', pace: '100', test: '50scm', sc: 0 };
       navigate('efficiency'); break;
     }
     case 'add-convert': {
