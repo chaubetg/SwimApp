@@ -992,10 +992,11 @@ function upsertSaved(entry) {
   state.saved.push(entry); persistSaved(); return false;
 }
 // match if any name token (first or last) starts with the typed query
+function normName(s) { return (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase(); }
 function nameMatches(name, q) {
   if (!q) return true;
-  q = q.trim().toLowerCase();
-  return name.toLowerCase().split(/\s+/).some(t => t.startsWith(q));
+  q = normName(q);
+  return normName(name).split(/\s+/).some(t => t.startsWith(q));
 }
 function initialsOf(name) {
   const p = (name || '').trim().split(/\s+/);
@@ -1514,7 +1515,31 @@ function render() {
   host.querySelectorAll('[data-toolname]').forEach((el) => {
     const k = el.getAttribute('data-form');
     const form = k === 'conv' ? state.convForm : k === 'fifty' ? state.fiftyForm : k === 'eff' ? state.effForm : state.adjForm;
-    el.addEventListener('input', () => { form.name = el.value; });
+    const parent = el.parentElement; if (parent) parent.style.position = 'relative';
+    const box = document.createElement('div');
+    box.className = 'hidden';
+    box.style.cssText = 'position:absolute;left:0;right:0;top:100%;margin-top:4px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 8px 24px rgba(15,23,42,.12);z-index:60;max-height:200px;overflow-y:auto;';
+    if (parent) parent.appendChild(box);
+    const show = () => {
+      form.name = el.value;
+      const q = el.value.trim();
+      const names = [...new Set(state.saved.map(s => s.name).filter(Boolean))];
+      const matches = q ? names.filter(n => nameMatches(n, q)) : [];
+      if (!matches.length) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+      box.innerHTML = matches.slice(0, 8).map(n => `<div data-suggest="${n.replace(/"/g, '&quot;')}" class="px-3.5 py-2.5 text-sm clickable hover:bg-slate-50">${n}</div>`).join('');
+      box.classList.remove('hidden');
+    };
+    el.addEventListener('input', show);
+    el.addEventListener('focus', show);
+    el.addEventListener('blur', () => setTimeout(() => box.classList.add('hidden'), 150));
+    box.addEventListener('mousedown', (e) => {
+      const opt = e.target.closest('[data-suggest]'); if (!opt) return;
+      e.preventDefault();
+      const nm = opt.getAttribute('data-suggest'); el.value = nm; form.name = nm;
+      const match = state.saved.filter(s => s.name === nm);
+      if (match.length) form.sid = match[match.length - 1].sid;
+      box.classList.add('hidden');
+    });
   });
   const effDateEl = host.querySelector('[data-eff-date]');
   if (effDateEl) effDateEl.addEventListener('input', () => { state.effForm.date = effDateEl.value; });
@@ -2540,11 +2565,18 @@ function fiftyResultHtml() {
   const cp = {
     '15 m': rr.r15 * T, '20 m': rr.r15 * T + rr.r15_25 * T * 0.5, '25 m': rr.first25 * T,
     '30 m': rr.first25 * T + rr.second25 * T * 0.2, '35 m': rr.first25 * T + rr.second25 * T * 0.4,
-    '40 m': rr.first25 * T + rr.second25 * T * 0.6, '45 m': rr.first25 * T + rr.second25 * T * 0.8,
+    '40 m': rr.first25 * T + rr.second25 * T * 0.6, '45 m': rr.first25 * T + rr.second25 * T * 0.8, '50 m': T,
   };
+  const GTcp = 'display:grid;grid-template-columns:1fr 3rem 3.4rem 3rem;gap:6px;align-items:center;';
+  const cpHeader = `<div style="${GTcp}" class="px-3 pt-2 pb-1"><span class="label-cap text-muted">Checkpoint</span><span class="label-cap text-muted" style="text-align:right;">Pred</span><span class="label-cap text-muted" style="text-align:center;">Time</span><span class="label-cap text-muted" style="text-align:center;">SR</span></div>`;
   const cpRows = Object.entries(cp).map(([m, v]) => {
-    const key = 'cp' + m.replace(/\D/g, ''); const open = state.fiftyOpen[key];
-    return `<div class="clickable flex justify-between items-center px-3 py-2 border-b border-slate-100 last:border-0" data-fifty-expand="${key}"><span class="text-sm text-muted">${m} <span class="text-faint text-[10px]">${open ? '▾' : '▸'}</span></span><span class="mono font-semibold text-slate-800">${d1(v)}</span></div>${expandBlock(key, true)}`;
+    const key = 'cp' + m.replace(/\D/g, '');
+    return `<div style="${GTcp}" class="px-3 py-1.5 border-b border-slate-100 last:border-0">
+      <span class="text-sm text-muted">${m}</span>
+      <span class="mono font-semibold text-slate-700" style="text-align:right;">${d1(v)}</span>
+      <input data-fifty-cp="${key}" inputmode="decimal" value="${best[key] != null ? best[key] : ''}" placeholder="time" class="w-full bg-slate-100 rounded-lg px-1.5 py-1.5 text-sm text-right outline-none focus:ring-2 focus:ring-cyan-300" />
+      <input data-fifty-sr="${key}" inputmode="decimal" value="${fsr[key] != null ? fsr[key] : ''}" placeholder="SR" class="w-full bg-slate-100 rounded-lg px-1.5 py-1.5 text-sm text-center outline-none focus:ring-2 focus:ring-cyan-300" />
+    </div>`;
   }).join('');
 
   // Comparison rows: predicted mean + optional IQR range + the swimmer's best (input) + Δ% vs mean.
@@ -2606,6 +2638,7 @@ function fiftyResultHtml() {
     <div class="text-center text-[11px] text-muted">Stroke rate: 1st 25 <span class="mono font-semibold text-slate-700">${Math.round(rr.sr1)}</span>${srR ? ` <span class="text-faint">(${srR.sr1lo}–${srR.sr1hi})</span>` : ''} · 2nd 25 <span class="mono font-semibold text-slate-700">${Math.round(rr.sr2)}</span>${srR ? ` <span class="text-faint">(${srR.sr2lo}–${srR.sr2hi})</span>` : ''} cyc/min</div>
     <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden">
       <div class="label-cap text-muted px-3 pt-3 pb-1">Cumulative checkpoints (from start)</div>
+      ${cpHeader}
       ${cpRows}
     </div>
     <div class="text-center text-[10px] text-faint leading-snug">Δ% = your best vs the mean predicted (＋ = slower). Red = biggest gap to work on · green = strongest. UW expected = SW · 1st/2nd-25 range ≈ middle 50%.</div>

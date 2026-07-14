@@ -992,10 +992,11 @@ function upsertSaved(entry) {
   state.saved.push(entry); persistSaved(); return false;
 }
 // match if any name token (first or last) starts with the typed query
+function normName(s) { return (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase(); }
 function nameMatches(name, q) {
   if (!q) return true;
-  q = q.trim().toLowerCase();
-  return name.toLowerCase().split(/\s+/).some(t => t.startsWith(q));
+  q = normName(q);
+  return normName(name).split(/\s+/).some(t => t.startsWith(q));
 }
 function initialsOf(name) {
   const p = (name || '').trim().split(/\s+/);
@@ -1427,7 +1428,31 @@ function render() {
   host.querySelectorAll('[data-toolname]').forEach((el) => {
     const k = el.getAttribute('data-form');
     const form = k === 'conv' ? state.convForm : k === 'fifty' ? state.fiftyForm : state.adjForm;
-    el.addEventListener('input', () => { form.name = el.value; });
+    const parent = el.parentElement; if (parent) parent.style.position = 'relative';
+    const box = document.createElement('div');
+    box.className = 'hidden';
+    box.style.cssText = 'position:absolute;left:0;right:0;top:100%;margin-top:4px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 8px 24px rgba(15,23,42,.12);z-index:60;max-height:200px;overflow-y:auto;';
+    if (parent) parent.appendChild(box);
+    const show = () => {
+      form.name = el.value;
+      const q = el.value.trim();
+      const names = [...new Set(state.saved.map(s => s.name).filter(Boolean))];
+      const matches = q ? names.filter(n => nameMatches(n, q)) : [];
+      if (!matches.length) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+      box.innerHTML = matches.slice(0, 8).map(n => `<div data-suggest="${n.replace(/"/g, '&quot;')}" class="px-3.5 py-2.5 text-sm clickable hover:bg-slate-50">${n}</div>`).join('');
+      box.classList.remove('hidden');
+    };
+    el.addEventListener('input', show);
+    el.addEventListener('focus', show);
+    el.addEventListener('blur', () => setTimeout(() => box.classList.add('hidden'), 150));
+    box.addEventListener('mousedown', (e) => {
+      const opt = e.target.closest('[data-suggest]'); if (!opt) return;
+      e.preventDefault();
+      const nm = opt.getAttribute('data-suggest'); el.value = nm; form.name = nm;
+      const match = state.saved.filter(s => s.name === nm);
+      if (match.length) form.sid = match[match.length - 1].sid;
+      box.classList.add('hidden');
+    });
   });
   // 50 m "best time" inputs — delegated on the (persistent) result box so listeners survive its
   // live innerHTML updates. Store on input; recompute Δ% + colours on focus-out.
