@@ -2395,6 +2395,12 @@ const predAmp = { // elite stroke length m/cycle (sprint basis): mean + shortest
   Fly: {M:{mean:1.963,min:1.810},F:{mean:1.752,min:1.630}}, Breast: {M:{mean:1.805,min:1.560},F:{mean:1.714,min:1.570}} };
 const mmSI2ndHi = { Free:{M:4.60,F:3.72}, Back:{M:3.80,F:3.22}, Fly:{M:3.57,F:2.82}, Breast:{M:2.79,F:2.43} }; // elite 2nd-50 SI upper IQR (q75), STROKE_INDEX_README Table B
 const mmSI4thHi = { Free:{M:4.36,F:3.63}, Back:{M:3.55,F:3.15}, Fly:{M:3.15,F:2.49}, Breast:{M:3.09,F:2.79} }; // elite 4th-50 SI upper IQR (q75), Table C (200)
+// 15-45m clean-window speed / race-avg speed, first 50 of event (Paris 2024 finals; sex-avg, sex-independent to <1%). Removes the dive's inflation of the raw average so targets reflect true surface pace. 50m of Back/Breast/Fly & all IM extrapolated (100-value minus the Free 50->100 dive gap ~0.06).
+const mmCleanR = { Free:{50:0.916,100:0.977,200:0.998}, Back:{50:0.91,100:0.968,200:1.005}, Breast:{50:0.92,100:0.975,200:0.994}, Fly:{50:0.92,100:0.978,200:1.023}, IM:{100:0.98,200:1.00} };
+// within the 15-45m window: segment speed / clean-window speed (Paris finals, ~stroke-independent). 15-25m runs ~2.5% hot off the breakout, 25-45m ~1.2% down as speed settles.
+const mmSeg = { front:1.025, mid:1.000, back:0.988 };
+// last-5 m speed / clean 15-45 m speed (measured 'temps 5m avant', Paris 2024 finals). Finish decelerates into the wall; free holds pace, fly fades most.
+const mmFin = { Free:1.008, Back:0.985, Breast:0.973, Fly:0.933, IM:0.97 };
 
 // Derive both 100s + the three test targets & pace-lock times from state.effForm.
 function effCompute() {
@@ -2405,13 +2411,16 @@ function effCompute() {
   const spc = mmSpc[st];
   const crEvent = convRatios[st] && convRatios[st][sx] && convRatios[st][sx][dist];
   const tLcm = (course === 'SCM' && crEvent) ? t * crEvent.mean : t;
-  const base50 = tLcm * (50 / dist);                    // average 50 pace (dive-diluted) — LCM
+  const cleanR = (mmCleanR[st] && mmCleanR[st][dist]) || 1;
+  const vc = tLcm > 0 ? cleanR * dist / tLcm : 0;       // 15-45 m clean surface speed (dive removed)
+  const finF = mmFin[st] || 0.97;                       // last-5 m speed / clean speed (measured)
+  const base50 = vc > 0 ? (5/vc + 15/(vc*mmSeg.front) + 10/vc + 15/(vc*mmSeg.back) + 5/(vc*finF)) : 0; // 0-45 m clean checkpoints + measured last-5 m finish
   const pace = dist === 200 ? '200' : '100';
   const siGoal = mmSIfresh[pace][st][sx];               // 1st-50 clean-window SI = goal (fewest strokes)
   const siLimit = (mmSIfloor[pace][st] && mmSIfloor[pace][st][sx]) || 0;  // last-50 clean-window SI = breakdown limit (most)
   const cr50 = convRatios[st] && convRatios[st][sx] && convRatios[st][sx][50];
   const t50scm = cr50 ? base50 / cr50.mean : base50;
-  return { st: st, sx: sx, dist: dist, course: course, spc: spc, base50: base50, t50scm: t50scm, siGoal: siGoal, siLimit: siLimit };
+  return { st: st, sx: sx, dist: dist, course: course, spc: spc, base50: base50, t50scm: t50scm, siGoal: siGoal, siLimit: siLimit, vc: vc, finF: finF };
 }
 function effResultHtml() {
   const f = state.effForm, r = effCompute();
@@ -2431,18 +2440,48 @@ function effResultHtml() {
       <div class="mono text-sm text-right">${strokeRange(x.swum, x.v)}<span class="text-[9px] text-faint"> str</span></div>
     </div>`).join('');
   const lastLbl = r.dist === 200 ? '4th' : '2nd';
+  // 50 m LCM race map (push start): 5-45 m body split into thirds. Segment speed = clean-window speed x mmSeg factor; segment SI = goal SI x (seg speed / clean speed) [DPS held constant across the clean window].
+  const vc = r.vc;
+  const cpSeg = [
+    { lab: '0\u20135 m',   d: 5,  sp: vc,               siF: 1,           adj: 0,  note: 'push-off',   body: false },
+    { lab: '5\u201320 m',  d: 15, sp: vc * mmSeg.front, siF: mmSeg.front, adj: 0,  note: '15\u201325 m pace', body: true },
+    { lab: '20\u201330 m', d: 10, sp: vc * mmSeg.mid,   siF: mmSeg.mid,   adj: 0,  note: 'clean avg',  body: true },
+    { lab: '30\u201345 m', d: 15, sp: vc * mmSeg.back,  siF: mmSeg.back,  adj: 0,  note: '25\u201345 m pace', body: true },
+    { lab: '45\u201350 m', d: 5,  sp: vc * r.finF,      siF: mmSeg.back,  adj: -1, note: 'finish \u00b7 \u22121 touch', body: true },
+  ];
+  const GC = 'display:grid;grid-template-columns:1fr 4.2rem 3.4rem 3rem;gap:6px;align-items:center;';
+  let cpCum = 0;
+  const cpRows = cpSeg.map((sg, i) => {
+    let segT = sg.d / sg.sp;
+    if (i === cpSeg.length - 1) segT = Math.max(0, r.base50 - cpCum); // finish closes to the 50 target
+    cpCum += segT;
+    const segSI = r.siGoal * sg.siF;                   // finish uses the 30-45 m (back) SI per coach spec
+    const strk = Math.max(0, Math.round(sg.d * r.spc * sg.sp / segSI) + sg.adj);
+    return `<div style="${GC}" class="px-3 py-2 border-b border-slate-100 last:border-0">
+        <div><div class="text-sm font-semibold text-slate-800">${sg.lab}</div><div class="text-[10px] text-faint">${sg.note}</div></div>
+        <div class="mono text-xs text-right">${cpCum.toFixed(2)}<span class="text-[8px] text-faint"> cum</span></div>
+        <div class="mono text-xs text-right">${sg.body ? strk : '\u00b7'}<span class="text-[8px] text-faint"> str</span></div>
+        <div class="mono text-xs text-right ${sg.body ? 'text-cyan-700' : 'text-faint'}">${sg.body ? segSI.toFixed(2) : '\u00b7'}</div>
+      </div>`;
+  }).join('');
+  const cpHtml = `<div class="bg-white border border-slate-200 rounded-2xl overflow-hidden mt-3">
+      <div class="px-3 pt-3 pb-1 flex items-baseline justify-between"><span class="label-cap text-muted">50 m LCM race map</span><span class="text-[10px] text-faint">push start</span></div>
+      <div style="${GC}" class="px-3 pb-1"><span class="label-cap text-muted">Segment</span><span class="label-cap text-muted text-right">Cum s</span><span class="label-cap text-muted text-right">Str</span><span class="label-cap text-muted text-right">SI</span></div>
+      ${cpRows}
+      <div class="text-[10px] text-faint px-3 py-1.5">Front third rides the 15\u201325 m surge, back third settles to the 25\u201345 m pace. Segment SI = goal SI scaled by segment speed \u00b7 hold stroke length and hit these strokes.</div>
+    </div>`;
   return `<div class="bg-cyan-50/60 border border-cyan-200 rounded-2xl p-3 mb-3">
       <div class="flex items-baseline gap-3">
         <div><div class="hero-time text-2xl leading-none text-emerald-700">${s2(r.siGoal)}</div><div class="text-[9px] uppercase tracking-wide text-faint">goal SI · 1st 50</div></div>
         <div><div class="hero-time text-2xl leading-none text-rose-600">${s2(r.siLimit)}</div><div class="text-[9px] uppercase tracking-wide text-faint">limit SI · ${lastLbl} 50</div></div>
       </div>
-      <div class="text-[10px] text-faint mt-1.5">Time = average 50 pace (dive-diluted). Strokes: fewest at the goal SI → most at the ${lastLbl}-50 breakdown SI (= modify the set).</div>
+      <div class="text-[10px] text-faint mt-1.5">Time = your 15\u201345 m clean pace projected (dive removed). Strokes: fewest at the goal SI → most at the ${lastLbl}-50 breakdown SI (= modify the set).</div>
     </div>
     <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden">
       <div style="${GT}" class="px-3 pt-3 pb-1"><span class="label-cap text-muted">Target</span><span class="label-cap text-muted text-right">Time</span><span class="label-cap text-muted text-right">Strokes</span></div>
       ${rowHtml}
       <div class="text-[10px] text-faint px-3 py-1.5">Strokes = goal→limit (fewest at the 1st-50 SI, most at the ${lastLbl}-50 SI).</div>
-    </div>`;
+    </div>${cpHtml}`;
 }
 function renderEfficiency() {
   const f = state.effForm;
