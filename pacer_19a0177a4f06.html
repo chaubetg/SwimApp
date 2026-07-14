@@ -2467,12 +2467,12 @@ function effResultHtml() {
         <div class="mono text-sm text-right">${Math.max(0, Math.round(cStr))}<span class="text-[9px] text-faint"> str</span></div>
       </div>`);
   });
-  const cpHtml = `<div class="bg-white border border-slate-200 rounded-2xl overflow-hidden mt-3">
+  const cpHtml = (r.dist === 50) ? `<div class="bg-white border border-slate-200 rounded-2xl overflow-hidden mt-3">
       <div class="px-3 pt-3 pb-1 flex items-baseline justify-between"><span class="label-cap text-muted">50 m LCM race map</span><span class="text-[10px] text-faint">push start \u00b7 cumulative</span></div>
       <div style="${GC}" class="px-3 pb-1"><span class="label-cap text-muted">At</span><span class="label-cap text-muted text-right">Time</span><span class="label-cap text-muted text-right">Strokes</span></div>
       ${cpRows.join('')}
       <div class="text-[10px] text-faint px-3 py-1.5">Cumulative clock + stroke count at each 5 m mark. 5\u201325 m rides the front surge, 25\u201345 m settles, 45\u201350 m the measured finish (\u22121 for the wall touch).</div>
-    </div>`;
+    </div>` : '';
   return `<div class="bg-cyan-50/60 border border-cyan-200 rounded-2xl p-3 mb-3">
       <div class="flex items-baseline gap-3">
         <div><div class="hero-time text-2xl leading-none text-emerald-700">${s2(r.siGoal)}</div><div class="text-[9px] uppercase tracking-wide text-faint">goal SI · 1st 50</div></div>
