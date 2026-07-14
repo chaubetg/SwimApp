@@ -1171,7 +1171,7 @@ const state = {
   history: [],
   swimmer: null, // active swimmer if any
   convForm: { stroke: 'Free', sex: 'M', distance: 100, from: 'LCM', seconds: 0, name: '' }, // course converter
-  effForm: { stroke: 'Free', sex: 'M', pace: '100', s15t: 0, s15sc: 0, name: '', date: '' }, // Stroke Index (15 m pure swim)
+  effForm: { stroke: 'Free', sex: 'M', t50: 0, view: 'lcm' }, // Stroke Index target predictor
   fiftyForm: { stroke: 'Free', sex: 'M', seconds: 0, name: '', best: {}, sr: {}, sc: {}, date: '' }, // 50m LCM split calculator
   fiftyOpen: {}, // 50m tool: which metric rows are expanded for SR/SC input
   adjForm: { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 100, seconds: 0, name: '' }, // adjacent-events predictor
@@ -1510,7 +1510,7 @@ function render() {
   };
   bindSegTime('[data-fmin]', '[data-fsec]', '[data-fhh]', (v) => { state.fiftyForm.seconds = v; }, '#fifty-result', fiftyResultHtml);
   bindSegTime('[data-amin]', '[data-asec]', '[data-ahh]', (v) => { state.adjForm.seconds = v; }, '#adj-result', adjResultHtml);
-  bindSegTime('[data-emin]', '[data-esec]', '[data-ehh]', (v) => { state.effForm.seconds = v; }, '#eff-result', effResultHtml);
+  bindSegTime('[data-emin]', '[data-esec]', '[data-ehh]', (v) => { state.effForm.t50 = v; }, '#eff-result', effResultHtml);
   // Tool "save to swimmer" name inputs → the tool form's .name (silent, keeps focus).
   host.querySelectorAll('[data-toolname]').forEach((el) => {
     const k = el.getAttribute('data-form');
@@ -2390,80 +2390,88 @@ const mmSIfresh = { '100': { Free:{M:4.96,F:4.04}, Back:{M:4.13,F:3.31}, Fly:{M:
                     '200': { Free:{M:5.04,F:4.01}, Back:{M:4.10,F:3.37}, Fly:{M:3.76,F:3.05}, Breast:{M:3.73,F:3.34} } }; // 1st-50 fresh SI target
 const mmSIfloor = { '100': { Free:{M:4.40,F:3.67}, Back:{M:3.69,F:3.03}, Fly:{M:3.45,F:2.75}, Breast:{M:2.65,F:2.30} },
                     '200': { Free:{M:4.17,F:3.58}, Back:{M:3.42,F:2.94}, Fly:{M:3.07,F:2.43}, Breast:{M:2.77,F:2.57} } }; // last-50 SI floor = set-modify trigger
+const predAmp = { // elite stroke length m/cycle (sprint basis): mean + shortest(min) = most strokes
+  Free: {M:{mean:2.324,min:2.080},F:{mean:2.124,min:2.050}}, Back: {M:{mean:2.167,min:1.820},F:{mean:1.966,min:1.790}},
+  Fly: {M:{mean:1.963,min:1.810},F:{mean:1.752,min:1.630}}, Breast: {M:{mean:1.805,min:1.560},F:{mean:1.714,min:1.570}} };
 
 // Derive both 100s + the three test targets & pace-lock times from state.effForm.
 function effCompute() {
-  const f = state.effForm, st = f.stroke, sx = f.sex, pace = f.pace || '100';
+  const f = state.effForm, st = f.stroke, sx = f.sex;
+  const t50 = Math.max(0, f.t50 || 0);
   const spc = mmSpc[st];
-  const eliteSI = mmSI[pace][st][sx], eliteSIfresh = mmSIfresh[pace][st][sx], eliteSIfloor = mmSIfloor[pace][st][sx];
-  const evt = pace === '200' ? 200 : 100;
-  const srElite = (srRef[st] && srRef[st][evt] && srRef[st][evt][sx]) ? srRef[st][evt][sx].avg : null;
-  return { st: st, sx: sx, pace: pace, spc: spc, eliteSI: eliteSI, eliteSIfresh: eliteSIfresh, eliteSIfloor: eliteSIfloor, srElite: srElite };
+  const amp = predAmp[st][sx];
+  const cr = convRatios[st] && convRatios[st][sx] && convRatios[st][sx][50];
+  const t50scm = cr ? t50 / cr.mean : t50;   // LCM PB -> SCM (÷ ratio)
+  return { st: st, sx: sx, t50: t50, t50scm: t50scm, spc: spc, amp: amp };
 }
 
 function effResultHtml() {
   const f = state.effForm, r = effCompute();
+  if (!(r.t50 > 0)) return '<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-5 text-center text-sm text-muted">Enter a desired 50 m LCM time above.</div>';
+  const view = f.view || 'lcm';
   const s2 = (x) => x.toFixed(2);
-  const t15 = f.s15t > 0 ? f.s15t : null, sc15 = f.s15sc > 0 ? f.s15sc : null;
-  if (!(t15 && sc15)) return '<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-5 text-center text-sm text-muted">Enter your 15 m pure-swim time + stroke count.</div>';
-  const v = 15 / t15, cyc = sc15 / r.spc, DPS = 15 / cyc, SI = v * DPS, SR = cyc / t15 * 60;
-  const pctElite = SI / r.eliteSI * 100;
-  const spin = r.srElite ? r.srElite / SR * 100 : null;
-  const pctColor = pctElite >= 100 ? 'text-emerald-700' : (pctElite >= 90 ? 'text-amber-600' : 'text-rose-600');
-  const spinV = spin == null ? '' : (spin < 97 ? 'spinning — lengthen the stroke' : (spin > 103 ? 'over-gliding — add tempo' : 'on-target tempo'));
-  const spinC = spin == null ? '' : (spin < 97 ? 'text-rose-600' : (spin > 103 ? 'text-amber-600' : 'text-emerald-700'));
-  const belowFloor = SI < r.eliteSIfloor;
-  const siColor = belowFloor ? 'text-rose-600' : (SI >= r.eliteSIfresh ? 'text-emerald-700' : 'text-slate-900');
-  return `<div class="bg-cyan-50/60 border border-cyan-200 rounded-2xl p-4">
-    <div class="flex items-baseline gap-2">
-      <div class="hero-time text-4xl leading-none ${siColor}">${s2(SI)}</div>
-      <div class="text-2xl font-bold ${pctColor}">${pctElite.toFixed(0)}%</div>
+  const fmt = (t) => t >= 60 ? formatTime(t) : t.toFixed(2);
+  const strokesFor = (swum) => { const lo = Math.round(swum * r.spc / r.amp.mean), hi = Math.round(swum * r.spc / r.amp.min); return lo === hi ? String(lo) : `${lo}–${hi}`; };
+  let vSwim, rows, note;
+  if (view === 'lcm') {
+    vSwim = 50 / r.t50;
+    rows = [25, 30, 35, 40, 45, 50].map((m) => { const swum = m - 5; return { label: `${m} m`, sub: `${swum} m swum`, time: (m / 50) * r.t50, strokes: strokesFor(swum) }; });
+    note = 'from a push · 5 m glide off the start';
+  } else if (view === 'scm50') {
+    vSwim = 50 / r.t50scm;
+    rows = [{ label: '50 m SCM', sub: '41 m swum + turn', time: r.t50scm, strokes: strokesFor(41) }];
+    note = 'full 50 SCM · 9 m glide (start + turn) + turn time (baked into the SCM conversion)';
+  } else {
+    vSwim = 50 / r.t50scm;
+    rows = [{ label: '25 m SCM', sub: '20 m swum · hand touch', time: (25 / 50) * r.t50scm + 0.30, strokes: strokesFor(20) }];
+    note = '25 m SCM · hand-touch finish (+0.3 s vs swimming through)';
+  }
+  const siMean = vSwim * r.amp.mean, siMin = vSwim * r.amp.min;
+  const rowHtml = rows.map((x) => `<div style="display:grid;grid-template-columns:1fr 4.4rem 4rem;gap:6px;align-items:center;" class="px-3 py-2 border-b border-slate-100 last:border-0">
+      <div><div class="text-sm font-semibold text-slate-800">${x.label}</div><div class="text-[10px] text-faint">${x.sub}</div></div>
+      <div class="mono text-sm text-right">${fmt(x.time)}<span class="text-[9px] text-faint"> s</span></div>
+      <div class="mono text-sm text-right">${x.strokes}<span class="text-[9px] text-faint"> str</span></div>
+    </div>`).join('');
+  return `<div class="bg-cyan-50/60 border border-cyan-200 rounded-2xl p-3 mb-3">
+      <div class="flex items-baseline gap-2"><div class="hero-time text-3xl leading-none text-slate-900">${s2(siMean)}</div><div class="text-[11px] text-muted">target Stroke Index<br>range ${s2(siMin)}–${s2(siMean)}</div></div>
+      <div class="text-[10px] text-faint mt-1">at ${vSwim.toFixed(2)} m/s · elite stroke length ${s2(r.amp.mean)} (→ ${s2(r.amp.min)} shortest) m/cyc</div>
     </div>
-    <div class="text-[10px] uppercase tracking-wide text-faint">Stroke Index · % of elite</div>
-    ${spin != null ? `<div class="mt-2 text-[13px] text-slate-700"><b class="${spinC}">${spin.toFixed(0)}%</b> of where it should be — <span class="${spinC} font-semibold">${spinV}</span></div>` : ''}
-    ${belowFloor ? `<div class="mt-1.5 text-rose-600 text-[12px] font-bold">✗ FAIL — below the last-50 floor (${s2(r.eliteSIfloor)}). Modify the set.</div>` : ''}
-    <div class="mt-2.5 pt-2.5 border-t border-cyan-200/70 flex gap-2 justify-around text-center">
-      <div><div class="text-[9px] text-faint uppercase tracking-wide leading-tight">elite<br>1st 50</div><div class="mono font-bold text-emerald-700 text-[15px]">${s2(r.eliteSIfresh)}</div></div>
-      <div><div class="text-[9px] text-faint uppercase tracking-wide leading-tight">race<br>avg</div><div class="mono font-bold text-slate-600 text-[15px]">${s2(r.eliteSI)}</div></div>
-      <div><div class="text-[9px] text-rose-500 uppercase tracking-wide leading-tight">last 50<br>= fail</div><div class="mono font-bold text-rose-600 text-[15px]">${s2(r.eliteSIfloor)}</div></div>
-    </div>
-    <div class="mt-2 text-center text-[11px] text-faint">your swim: v ${s2(v)} m/s · ${s2(DPS)} m/cyc · SR ${SR.toFixed(0)} cyc/min</div>
-  </div>`;
+    <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+      <div style="display:grid;grid-template-columns:1fr 4.4rem 4rem;gap:6px;" class="px-3 pt-3 pb-1"><span class="label-cap text-muted">Checkpoint</span><span class="label-cap text-muted text-right">Time</span><span class="label-cap text-muted text-right">Strokes</span></div>
+      ${rowHtml}
+      <div class="text-[10px] text-faint px-3 py-1.5">${note} · strokes shown mean→max (elite mean stroke to shortest = upper bound). Time is the pace-locked split.</div>
+    </div>`;
 }
 
 function renderEfficiency() {
   const f = state.effForm;
   const strokes = ['Free', 'Back', 'Breast', 'Fly'];
+  const secs = Math.max(0, f.t50 || 0);
+  const emin = Math.floor(secs / 60), esec = Math.floor(secs % 60), ehh = Math.round((secs - Math.floor(secs)) * 100);
+  const views = [['lcm', '50 LCM'], ['scm50', '50 SCM'], ['scm25', '25 SCM']];
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3">
       <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
-      <div class="flex-1 min-w-0"><div class="text-lg font-semibold">Efficiency — Stroke Index</div><div class="text-xs text-muted truncate">15 m pure swim · higher = better</div></div>
+      <div class="flex-1 min-w-0"><div class="text-lg font-semibold">Stroke Index targets</div><div class="text-xs text-muted truncate">from a desired 50 m LCM time</div></div>
     </div>
     <div class="scrollable px-5 py-4 space-y-5">
       <div><div class="label-cap mb-2">Stroke</div><div class="flex gap-2 flex-wrap">${strokes.map((s) => `<span class="pill ${f.stroke === s ? 'active' : ''}" data-estroke="${s}">${s}</span>`).join('')}</div></div>
-      <div class="flex gap-3">
-        <div class="flex-1"><div class="label-cap mb-2">Sex</div><div class="seg-group"><div class="seg ${f.sex === 'M' ? 'active' : ''}" data-esex="M">Men</div><div class="seg ${f.sex === 'F' ? 'active' : ''}" data-esex="F">Women</div></div></div>
-        <div class="flex-1"><div class="label-cap mb-2">Event</div><div class="seg-group"><div class="seg ${f.pace !== '200' ? 'active' : ''}" data-effpace="100">100</div><div class="seg ${f.pace === '200' ? 'active' : ''}" data-effpace="200">200</div></div></div>
-      </div>
+      <div><div class="label-cap mb-2">Sex</div><div class="seg-group" style="max-width:220px;"><div class="seg ${f.sex === 'M' ? 'active' : ''}" data-esex="M">Men</div><div class="seg ${f.sex === 'F' ? 'active' : ''}" data-esex="F">Women</div></div></div>
       <div>
-        <div class="label-cap mb-2">15 m pure swim — flying, no wall/dive/underwater</div>
-        <div class="flex gap-2">
-          <div class="flex-1"><input data-eff15="s15t" inputmode="decimal" value="${f.s15t || ''}" placeholder="time (s)" class="w-full bg-slate-100 rounded-xl px-3 py-3 text-base text-center outline-none focus:ring-2 focus:ring-cyan-300" /></div>
-          <div class="flex-1"><input data-eff15="s15sc" inputmode="numeric" value="${f.s15sc || ''}" placeholder="strokes" class="w-full bg-slate-100 rounded-xl px-3 py-3 text-base text-center outline-none focus:ring-2 focus:ring-cyan-300" /></div>
+        <div class="label-cap mb-2">Desired 50 m LCM time</div>
+        <div class="bg-gradient-to-br from-cyan-50 to-white border-2 border-cyan-200 rounded-2xl px-4 py-4 focus-within:border-cyan-500 transition">
+          <div class="flex items-end justify-center gap-1">
+            <div class="text-center"><input data-emin inputmode="numeric" maxlength="2" value="${emin}" class="time-seg" aria-label="Minutes" /><div class="time-seg-label">min</div></div>
+            <div class="time-seg-sep">:</div>
+            <div class="text-center"><input data-esec inputmode="numeric" maxlength="2" value="${String(esec).padStart(2, '0')}" class="time-seg" aria-label="Seconds" /><div class="time-seg-label">sec</div></div>
+            <div class="time-seg-sep">.</div>
+            <div class="text-center"><input data-ehh inputmode="numeric" maxlength="2" value="${String(ehh).padStart(2, '0')}" class="time-seg" aria-label="Hundredths" /><div class="time-seg-label">hund.</div></div>
+          </div>
         </div>
-        <div class="text-[10px] text-faint mt-1">Count arm entries (each hand). Free/back = 2 per cycle, fly/breast = 1 — the tool handles it.</div>
       </div>
+      <div><div class="label-cap mb-2">View</div><div class="seg-group">${views.map(([k, l]) => `<div class="seg ${(f.view || 'lcm') === k ? 'active' : ''}" data-effview="${k}">${l}</div>`).join('')}</div></div>
       <div id="eff-result">${effResultHtml()}</div>
-      <div class="bg-cyan-50/50 border border-cyan-200 rounded-2xl px-4 py-3"><div class="text-[12px] text-slate-700 leading-relaxed"><b>SI</b> rewards a long stroke held at speed — going slow drops it, so it can't be gamed. <b>% of elite</b> = vs world-class for this event. <b>% of where it should be</b> = are you rating right for your speed (below = spinning, above = gliding).</div></div>
-      <div><div class="label-cap mb-2">Test date</div><input type="date" data-eff-date value="${f.date || ''}" class="w-full bg-slate-100 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300" /></div>
-      <div class="bg-white border border-slate-200 rounded-2xl p-4">
-        <div class="label-cap mb-2 text-muted">Save to a swimmer</div>
-        <div class="flex gap-2">
-          <input data-toolname data-form="eff" value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="Swimmer name" class="flex-1 bg-slate-100 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300" />
-          <button class="px-4 py-2.5 bg-cyan-600 text-white rounded-xl text-sm font-semibold hover:bg-cyan-700 active:scale-95 transition" data-action="save-eff">${state.reviewId ? 'Update' : 'Save'}</button>
-        </div>
-      </div>
     </div>
   `;
 }
@@ -3871,6 +3879,8 @@ document.addEventListener('click', (e) => {
     if (eesex) { state.effForm.sex = eesex.getAttribute('data-esex'); render(); return; }
     const efrom = e.target.closest('[data-efffrom]');
     if (efrom) { state.effForm.from = efrom.getAttribute('data-efffrom'); render(); return; }
+    const eview = e.target.closest('[data-effview]');
+    if (eview) { state.effForm.view = eview.getAttribute('data-effview'); render(); return; }
     const epace = e.target.closest('[data-effpace]');
     if (epace) { state.effForm.pace = epace.getAttribute('data-effpace'); render(); return; }
     const etest = e.target.closest('[data-efftest]');
@@ -4061,7 +4071,7 @@ function handleAction(action, el) {
     }
     case 'add-eff': {
       const sid = state.savedSid; const evs = entriesOf(sid); const last = evs[evs.length - 1];
-      state.effForm = { stroke: 'Free', sex: last ? last.sex : 'M', pace: '100', s15t: 0, s15sc: 0, name: swimmerName(sid), sid, date: '' };
+      state.effForm = { stroke: 'Free', sex: last ? last.sex : 'M', t50: 0, view: 'lcm' };
       navigate('efficiency'); break;
     }
     case 'add-convert': {
