@@ -2584,10 +2584,8 @@ function fiftyResultHtml() {
     { key: 's1', label: '1st 25 m', sub: 'clock to the head', pred: s1, lo: iq ? iq.f1lo * T : null, hi: iq ? iq.f1hi * T : null },
     { key: 's2', label: '2nd 25 m', pred: s2, lo: iq ? iq.f2lo * T : null, hi: iq ? iq.f2hi * T : null },
     { key: 'mm25', label: 'min–max 25 m', sub: 'fastest flying 25', pred: null },
-    { key: 'uwt', label: `Underwater ${uwDist} m`, sub: 'target from 50 PB (kick)', pred: uwTarget, sw: 'win' },
-    { key: 'sw15', label: `Swim ${swDist} m`, sub: 'push — compare to underwater', pred: null, sw: 'win' },
-    { key: 'uw', label: 'Top Speed UW', sub: '5–20 m', pred: topSpeed, sw: 'win' },
-    { key: 'sw', label: 'Top Speed SW', sub: '15→30 m', pred: topSpeed, sw: 'win' },
+    { key: 'uwt', label: `Underwater ${uwDist} m*`, sub: 'kick target from 50 PB', pred: uwTarget, sw: 'win' },
+    { key: 'sw15', label: `Swim ${swDist} m`, sub: 'push · surface top speed', pred: topSpeed, sw: 'win' },
     { key: 'se', label: 'Speed endurance', sub: '2nd 15 m of 2×25 m FAST @20s', pred: speedEnd, sw: 'win' },
     { key: 'turn', label: 'Turn', sub: '5 m in + 15 m out', pred: turn, sw: 'win' },
   ];
@@ -2635,6 +2633,7 @@ function fiftyResultHtml() {
       ${rows.filter(r => r.sw).map(rowHtml).join('')}
     </div>
     ${uwCompare}
+    <div class="text-center text-[10px] text-amber-700 leading-snug px-2">*Underwater is timed off a race turn (into the 2nd 50 of a 100), <b>not a fresh maximal effort</b> — so it can underestimate a fresh underwater kick, while the swim is at top speed.</div>
     <div class="text-center text-[11px] text-muted">Stroke rate: 1st 25 <span class="mono font-semibold text-slate-700">${Math.round(rr.sr1)}</span>${srR ? ` <span class="text-faint">(${srR.sr1lo}–${srR.sr1hi})</span>` : ''} · 2nd 25 <span class="mono font-semibold text-slate-700">${Math.round(rr.sr2)}</span>${srR ? ` <span class="text-faint">(${srR.sr2lo}–${srR.sr2hi})</span>` : ''} cyc/min</div>
     <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden">
       <div class="label-cap text-muted px-3 pt-3 pb-1">Cumulative checkpoints (from start)</div>
