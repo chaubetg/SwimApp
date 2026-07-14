@@ -2404,53 +2404,46 @@ function effCompute() {
   const t = Math.max(0, f.t || 0);
   const spc = mmSpc[st];
   const crEvent = convRatios[st] && convRatios[st][sx] && convRatios[st][sx][dist];
-  const tLcm = (course === 'SCM' && crEvent) ? t * crEvent.mean : t;          // SCM -> LCM (× ratio)
-  let base50, siMean, siHi;
-  if (dist === 200) {
-    base50 = mmFrac200[st][sx] * tLcm;                                        // 1st 50 of the 200 drives the time
-    siMean = (mmSIfloor['200'][st] && mmSIfloor['200'][st][sx]) || 0;          // 4th-50 mean = how bad it can be
-    siHi = mmSI4thHi[st][sx];                                                  // 4th-50 upper IQR (q75)
-  } else if (dist === 100) {
-    base50 = mmFrac[st][sx] * tLcm;                                           // 1st 50 of the 100
-    siMean = (mmSIfloor['100'][st] && mmSIfloor['100'][st][sx]) || 0;          // 2nd-50 mean
-    siHi = mmSI2ndHi[st][sx];                                                  // 2nd-50 q75
-  } else {
-    base50 = tLcm;                                                           // the entered 50 is the target
-    siMean = (mmSIfloor['100'][st] && mmSIfloor['100'][st][sx]) || 0;
-    siHi = mmSI2ndHi[st][sx];
-  }
+  const tLcm = (course === 'SCM' && crEvent) ? t * crEvent.mean : t;
+  const base50 = tLcm * (50 / dist);                    // average 50 pace (dive-diluted) — LCM
+  const pace = dist === 200 ? '200' : '100';
+  const siGoal = mmSIfresh[pace][st][sx];               // 1st-50 clean-window SI = goal (fewest strokes)
+  const siLimit = (mmSIfloor[pace][st] && mmSIfloor[pace][st][sx]) || 0;  // last-50 clean-window SI = breakdown limit (most)
   const cr50 = convRatios[st] && convRatios[st][sx] && convRatios[st][sx][50];
-  const t50scm = cr50 ? base50 / cr50.mean : base50;                          // LCM 50 -> SCM 50 (turn baked in)
-  return { st: st, sx: sx, dist: dist, course: course, spc: spc, base50: base50, t50scm: t50scm, siMean: siMean, siHi: siHi };
+  const t50scm = cr50 ? base50 / cr50.mean : base50;
+  return { st: st, sx: sx, dist: dist, course: course, spc: spc, base50: base50, t50scm: t50scm, siGoal: siGoal, siLimit: siLimit };
 }
 function effResultHtml() {
   const f = state.effForm, r = effCompute();
   if (!(r.base50 > 0)) return '<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-5 text-center text-sm text-muted">Enter a time above.</div>';
   const s2 = (x) => x.toFixed(2);
   const fmt = (t) => t >= 60 ? formatTime(t) : t.toFixed(2);
-  const strokeRange = (swum, v) => { const lo = Math.round(swum * r.spc * v / r.siHi), hi = Math.round(swum * r.spc * v / r.siMean); return lo === hi ? String(lo) : `${lo}–${hi}`; };
+  const strokeRange = (swum, v) => { const lo = Math.round(swum * r.spc * v / r.siGoal), hi = Math.round(swum * r.spc * v / r.siLimit); return lo === hi ? String(lo) : `${lo}–${hi}`; };
   const rows = [
     { label: '50 m LCM', sub: '45 m swum · push', time: r.base50, swum: 45, v: 50 / r.base50 },
     { label: '50 m SCM', sub: '41 m swum + turn', time: r.t50scm, swum: 41, v: 50 / r.t50scm },
     { label: '25 m SCM', sub: '20 m swum · hand touch', time: (25 / 50) * r.t50scm + 0.30, swum: 20, v: 50 / r.t50scm },
   ];
-  const GT = 'display:grid;grid-template-columns:1fr 4.4rem 4rem;gap:6px;align-items:center;';
+  const GT = 'display:grid;grid-template-columns:1fr 4.4rem 4.2rem;gap:6px;align-items:center;';
   const rowHtml = rows.map((x) => `<div style="${GT}" class="px-3 py-2.5 border-b border-slate-100 last:border-0">
       <div><div class="text-sm font-semibold text-slate-800">${x.label}</div><div class="text-[10px] text-faint">${x.sub}</div></div>
       <div class="mono text-sm text-right">${fmt(x.time)}<span class="text-[9px] text-faint"> s</span></div>
       <div class="mono text-sm text-right">${strokeRange(x.swum, x.v)}<span class="text-[9px] text-faint"> str</span></div>
     </div>`).join('');
+  const lastLbl = r.dist === 200 ? '4th' : '2nd';
   return `<div class="bg-cyan-50/60 border border-cyan-200 rounded-2xl p-3 mb-3">
-      <div class="flex items-baseline gap-2"><div class="hero-time text-2xl leading-none text-slate-900">SI ${s2(r.siMean)}–${s2(r.siHi)}</div><div class="text-[11px] text-muted">target range<br>(elite ${r.dist === 200 ? '4th' : '2nd'}-50 mean → q75)</div></div>
-      <div class="text-[10px] text-faint mt-1">${r.dist === 200 ? 'time from the 1st 50 of the 200 · SI floor from the 4th 50' : (r.dist === 100 ? 'time from the 1st 50 of the 100 · SI floor from the 2nd 50' : 'time from your 50 · SI band from the elite 2nd-50')}</div>
+      <div class="flex items-baseline gap-3">
+        <div><div class="hero-time text-2xl leading-none text-emerald-700">${s2(r.siGoal)}</div><div class="text-[9px] uppercase tracking-wide text-faint">goal SI · 1st 50</div></div>
+        <div><div class="hero-time text-2xl leading-none text-rose-600">${s2(r.siLimit)}</div><div class="text-[9px] uppercase tracking-wide text-faint">limit SI · ${lastLbl} 50</div></div>
+      </div>
+      <div class="text-[10px] text-faint mt-1.5">Time = average 50 pace (dive-diluted). Strokes: fewest at the goal SI → most at the ${lastLbl}-50 breakdown SI (= modify the set).</div>
     </div>
     <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden">
       <div style="${GT}" class="px-3 pt-3 pb-1"><span class="label-cap text-muted">Target</span><span class="label-cap text-muted text-right">Time</span><span class="label-cap text-muted text-right">Strokes</span></div>
       ${rowHtml}
-      <div class="text-[10px] text-faint px-3 py-1.5">Strokes = mean→max (fewest at the 2nd-50 q75 SI → most at the 2nd-50 mean SI = the limit).</div>
+      <div class="text-[10px] text-faint px-3 py-1.5">Strokes = goal→limit (fewest at the 1st-50 SI, most at the ${lastLbl}-50 SI).</div>
     </div>`;
 }
-
 function renderEfficiency() {
   const f = state.effForm;
   const strokes = ['Free', 'Back', 'Breast', 'Fly'];
