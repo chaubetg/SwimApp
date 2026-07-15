@@ -2389,6 +2389,8 @@ const mmCruise50l = { Free:{M:[0.2552,0.2575],F:[0.2549,0.2573]}, Back:{M:[0.254
 const mmTestLabel = { '25scm':'25 SCM', '50scm':'50 SCM', '50lcm':'50 LCM' };
 const mmAmpSprint = { Free:{M:2.32,F:2.12}, Back:{M:2.17,F:1.97}, Fly:{M:1.96,F:1.75}, Breast:{M:1.81,F:1.71} }; // 100-pace target distance/stroke (m/cycle)
 const mmAmpCruise = { Free:{M:2.63,F:2.31}, Back:{M:2.38,F:2.16}, Fly:{M:2.03,F:1.79}, Breast:{M:2.41,F:2.33} }; // 200-pace target distance/stroke (m/cycle)
+const mmSI50 = { Free:{M:4.47,F:3.83}, Back:{M:3.74,F:3.10}, Fly:{M:3.70,F:3.08}, Breast:{M:2.59,F:2.20} }; // elite 50m-EVENT whole-race SI (Table A, Paris+Fukuoka finals = clean-window v×amp; stroke_index_elite_vs_renens.csv)
+const mmAmp50 = { Free:{M:2.08,F:1.97}, Back:{M:1.97,F:1.82}, Fly:{M:1.86,F:1.69}, Breast:{M:1.53,F:1.43} }; // elite 50m-event amplitude m/cycle (60·v/SR over the 15-25/25-45 clean windows, 50m_sprint_data.csv)
 const mmSI = { '100': { Free:{M:4.68,F:3.86}, Back:{M:3.91,F:3.17}, Fly:{M:3.69,F:2.97}, Breast:{M:2.93,F:2.53} },
                '200': { Free:{M:4.69,F:3.82}, Back:{M:3.81,F:3.19}, Fly:{M:3.40,F:2.74}, Breast:{M:3.44,F:3.04} } }; // elite SI whole-race avg (STROKE_INDEX_README Table A)
 const mmSIfresh = { '100': { Free:{M:4.96,F:4.04}, Back:{M:4.13,F:3.31}, Fly:{M:3.93,F:3.21}, Breast:{M:3.20,F:2.76} },
@@ -2499,13 +2501,13 @@ function effResultHtml() {
 }
 function effScoreHtml() {
   const f = state.effForm, st = f.stroke, sx = f.sex, spc = mmSpc[st];
-  const pace = f.pace === '200' ? '200' : '100';
+  const pace = ['50', '100', '200'].includes(f.pace) ? f.pace : '100';
   const test = ['50lcm', '50scm', '25scm'].includes(f.test) ? f.test : '50scm';
   const td = { '50lcm': { swum: 45, lbl: '50 m LCM' }, '50scm': { swum: 41, lbl: '50 m SCM' }, '25scm': { swum: 20, lbl: '25 m SCM' } }[test];
   const t = Math.max(0, f.t || 0), sc = Math.max(0, Math.round(f.sc || 0));
-  const ampRef = (pace === '200' ? mmAmpCruise : mmAmpSprint)[st][sx]; // pace-matched elite stroke length (m/cycle)
-  // Stroke-free breakout metres hidden inside "swum" (~2.5 m per breakout past the counted UW; 50 SCM has push + turn = 2 breakouts). Without this the swum-based DPS reads ~15% long vs real amplitude.
-  const effGlide = { '50lcm': 2.5, '50scm': 5.0, '25scm': 2.5 }[test];
+  const siElite = pace === '50' ? mmSI50[st][sx] : mmSIfresh[pace][st][sx];   // 50 = whole-race elite SI of the 50m event; 100/200 = fresh 1st-50 SI
+  const ampRef = pace === '50' ? mmAmp50[st][sx] : (pace === '200' ? mmAmpCruise : mmAmpSprint)[st][sx]; // pace-matched elite stroke length (m/cycle)
+  // Stroke-length convention (Gaël 2026-07-15): stroked metres = the swum figures exactly (45/41/20 whole tests; mark−glides on checkpoints), no breakout correction. Reads ~15% long vs the clean livret amplitude; anchor chosen deliberately - rankings unaffected.
   const pcol = (p) => p >= 100 ? 'text-emerald-700' : (p >= 92 ? 'text-amber-600' : 'text-rose-600');
   const empty = '<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-5 text-center text-sm text-muted">Enter your time and stroke count above.</div>';
   let head = empty;
@@ -2513,12 +2515,11 @@ function effScoreHtml() {
   if (test === '25scm') { const t50 = 2 * (t - 0.30); v = t50 > 0 ? 50 / t50 : 0; } else { v = t > 0 ? 50 / t : 0; }
   if (t > 0 && sc > 0 && v > 0) {
     const si = td.swum * spc * v / sc;
-    const siElite = mmSIfresh[pace][st][sx];
     const pct = siElite > 0 ? si / siElite * 100 : 0;
-    const dpsReal = (td.swum - effGlide) * spc / sc;               // glide-corrected distance per cycle
+    const dpsReal = td.swum * spc / sc;                            // distance per cycle over swum metres (literal convention)
     const pctGood = ampRef > 0 ? dpsReal / ampRef * 100 : 0;       // %good = your stroke length / elite's - speed cancels
     const scT = Math.round(td.swum * spc * v / siElite);
-    const scGood = Math.round((td.swum - effGlide) * spc / ampRef); // strokes at elite stroke length - any speed
+    const scGood = Math.round(td.swum * spc / ampRef);             // strokes at elite stroke length - any speed
     const vT = siElite * sc / (td.swum * spc);
     let tT; if (test === '25scm') { tT = (50 / vT) / 2 + 0.30; } else { tT = 50 / vT; }
     const fmt = (x) => x >= 60 ? formatTime(x, { precision: 1 }) : x.toFixed(1);
@@ -2533,7 +2534,7 @@ function effScoreHtml() {
         <div><div class="hero-time text-xl leading-none text-slate-800">${si.toFixed(2)}</div><div class="text-[9px] uppercase tracking-wide text-faint">your SI</div></div>
         <div><div class="hero-time text-xl leading-none text-emerald-700">${siElite.toFixed(2)}</div><div class="text-[9px] uppercase tracking-wide text-faint">elite SI · ${pace} pace</div></div>
       </div>
-      <div class="text-[10px] text-faint mt-1.5">${td.lbl} · ${st} ${sx === 'M' ? 'Men' : 'Women'} · %elite mixes speed + stroke length. %good holds only stroke length: your glide-corrected ${dpsReal.toFixed(2)} m/cycle vs the elite ${pace}-pace ${ampRef.toFixed(2)} m — speed-independent.</div>
+      <div class="text-[10px] text-faint mt-1.5">${td.lbl} · ${st} ${sx === 'M' ? 'Men' : 'Women'} · %elite mixes speed + stroke length. %good holds only stroke length: your ${dpsReal.toFixed(2)} m/cycle over ${td.swum} m swum vs the elite ${pace}-pace ${ampRef.toFixed(2)} m — speed-independent.</div>
     </div>
     <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden">
       <div class="px-3 pt-3 pb-1"><span class="label-cap text-muted">To reach 100% (elite)</span></div>
@@ -2542,45 +2543,42 @@ function effScoreHtml() {
       <div class="px-3 py-2.5"><div class="text-sm font-semibold text-slate-800">Elite stroke length</div><div class="text-[11px] text-muted">${scGood} strokes on this test — at any speed (= 100% good)</div></div>
     </div>`;
   }
-  // ---- 5 m segment scoring (50 tests only): clean bands, no glide, entered per band ----
+  // ---- Checkpoint scoring (50 SI score ONLY, both 50 tests; Gaël 2026-07-15): running time + running stroke count at each 5 m flag of one push 50. Swum = mark − 5 (first glide) − 4 past the SCM turn (second glide, less effective). Mark 50 LCM == the whole-test formula.
   let segHtml = '';
-  if (test !== '25scm') {
+  if (pace === '50' && test !== '25scm') {
+    const scm = test === '50scm';
     const L = (f.logs || {})[pace + '_' + test] || {};
     const G = 'display:grid;grid-template-columns:3.6rem 4rem 3.2rem 1fr;gap:6px;align-items:center;';
     const inBox = (fld, val, ph, aria) => `<input data-eff-in="${fld}" inputmode="decimal" value="${(val || val === 0) ? val : ''}" placeholder="${ph}" class="w-full text-center text-sm font-semibold text-slate-800 outline-none bg-white border border-slate-200 rounded-lg py-1.5 focus:border-cyan-500" aria-label="${aria}" />`;
-    const segRows = [15, 20, 25, 30, 35, 40, 45].map((s0) => {
-      const tag = (test === '50scm' && (s0 === 25 || s0 === 30)) ? '<span class="text-[9px] text-faint"> ·turn</span>' : (s0 === 45 ? '<span class="text-[9px] text-faint"> ·finish</span>' : '');
-      return `<div style="${G}" class="px-3 py-1.5 border-b border-slate-100 last:border-0">
-        <div class="text-[11px] font-semibold text-slate-700">${s0}–${s0 + 5}${tag}</div>
-        ${inBox('sg' + s0 + 't', L['sg' + s0 + 't'], 's', 'Segment time ' + s0)}
-        ${inBox('sg' + s0 + 's', L['sg' + s0 + 's'], 'str', 'Segment strokes ' + s0)}
-        <div class="text-right" id="sgr${s0}">${effSegRowResult(s0)}</div>
-      </div>`;
-    }).join('');
+    const segRows = [15, 20, 25, 30, 35, 40, 45, 50].map((mk) => `<div style="${G}" class="px-3 py-1.5 border-b border-slate-100 last:border-0">
+        <div class="text-[11px] font-semibold text-slate-700">${mk} m${scm && mk === 25 ? '<span class="text-[9px] text-faint"> ·turn</span>' : ''}</div>
+        ${inBox('sg' + mk + 't', L['sg' + mk + 't'], 's', 'Cumulative time at ' + mk)}
+        ${inBox('sg' + mk + 's', L['sg' + mk + 's'], 'str', 'Cumulative strokes at ' + mk)}
+        <div class="text-right" id="sgr${mk}">${effSegRowResult(mk)}</div>
+      </div>`).join('');
     segHtml = `<div class="bg-white border border-slate-200 rounded-2xl overflow-hidden mt-3">
-      <div class="px-3 pt-3 pb-1 flex items-baseline justify-between"><span class="label-cap text-muted">Segment scoring · 5 m bands</span><span class="text-[10px] text-faint">15–50 m · optional</span></div>
-      <div style="${G}" class="px-3 pb-1"><span class="label-cap text-muted">Band</span><span class="label-cap text-muted text-center">Time</span><span class="label-cap text-muted text-center">Str</span><span class="label-cap text-muted text-right">SI · %E · %G</span></div>
+      <div class="px-3 pt-3 pb-1 flex items-baseline justify-between"><span class="label-cap text-muted">Checkpoints · push 50 ${scm ? 'SCM' : 'LCM'}</span><span class="text-[10px] text-faint">cumulative · optional</span></div>
+      <div style="${G}" class="px-3 pb-1"><span class="label-cap text-muted">At</span><span class="label-cap text-muted text-center">Time</span><span class="label-cap text-muted text-center">Str</span><span class="label-cap text-muted text-right">SI · %E · %G</span></div>
       ${segRows}
-      <div class="text-[10px] text-faint px-3 py-1.5">Per-band SI = speed × distance-per-cycle, measured clean (no glide). %E = vs the elite SI in that window (15–25 m front surge ×1.025, 25–50 m ×0.988). %G = your stroke length vs the elite ${pace}-pace amplitude (${ampRef.toFixed(2)} m) — speed-independent.${test === '50scm' ? ' SCM: 25–35 m spans the turn — treat those bands loosely.' : ''}</div>
+      <div class="text-[10px] text-faint px-3 py-1.5">Running time + running stroke count at each mark. SI over mark−5 m swum${scm ? ' (−4 more past the 25 m turn)' : ''}. %E = vs the elite 50 m race SI (${siElite.toFixed(2)}). %G = your stroke length vs the elite 50 m amplitude (${ampRef.toFixed(2)} m) — speed-independent.</div>
     </div>`;
   }
   return head + segHtml;
 }
-// One 5 m scored band: SI = v x DPS = 25*spc/(t*sc). Elite ref scaled by the window factor (15-25 front, 25-50 back - race-map convention incl. the finish). %G vs real pace-matched amplitude (clean bands, no glide, so raw predAmp-style comparison is valid here).
-function effSegScore(s0, tSeg, scSeg, pace, st, sx) {
+// One cumulative checkpoint of a push 50 (50 SI score): swum = mark − 5 first glide − 4 past the SCM turn. v = mark/t; SI = swum·spc·v/strokes (mark 50 LCM == the whole-test row). %E vs the elite 50m-event SI; %G = swum-based stroke length vs the elite 50m amplitude (literal convention, no breakout correction).
+function effSegScore(mk, tCum, scCum, st, sx, scm) {
   const spc = mmSpc[st];
-  if (!(tSeg > 0 && scSeg > 0)) return null;
-  const vSeg = 5 / tSeg, dps = 5 * spc / scSeg, si = vSeg * dps;
-  const segF = s0 < 25 ? mmSeg.front : mmSeg.back;
-  const siE = mmSIfresh[pace][st][sx] * segF;
-  const ampRef = (pace === '200' ? mmAmpCruise : mmAmpSprint)[st][sx];
+  if (!(tCum > 0 && scCum > 0)) return null;
+  const swum = mk - 5 - (scm && mk > 25 ? 4 : 0);
+  const vAvg = mk / tCum, dps = swum * spc / scCum, si = swum * spc * vAvg / scCum;
+  const siE = mmSI50[st][sx], ampRef = mmAmp50[st][sx];
   return { si: si, pctE: siE > 0 ? si / siE * 100 : 0, pctG: ampRef > 0 ? dps / ampRef * 100 : 0 };
 }
-function effSegRowResult(s0) {
-  const f = state.effForm, pace = f.pace === '200' ? '200' : '100';
+function effSegRowResult(mk) {
+  const f = state.effForm;
   const test = ['50lcm', '50scm', '25scm'].includes(f.test) ? f.test : '50scm';
-  const L = (f.logs || {})[pace + '_' + test] || {};
-  const r = effSegScore(s0, L['sg' + s0 + 't'] || 0, L['sg' + s0 + 's'] || 0, pace, f.stroke, f.sex);
+  const L = (f.logs || {})['50_' + test] || {};
+  const r = effSegScore(mk, L['sg' + mk + 't'] || 0, L['sg' + mk + 's'] || 0, f.stroke, f.sex, test === '50scm');
   if (!r) return '<span class="text-[10px] text-faint">–</span>';
   const pcol = (p) => p >= 100 ? 'text-emerald-700' : (p >= 92 ? 'text-amber-600' : 'text-rose-600');
   return `<span class="mono text-xs text-slate-800">${r.si.toFixed(2)}</span> <span class="text-[10px] ${pcol(r.pctE)}">${Math.round(r.pctE)}%<span class="text-faint">E</span></span> <span class="text-[10px] ${pcol(r.pctG)}">${Math.round(r.pctG)}%<span class="text-faint">G</span></span>`;
@@ -2592,13 +2590,13 @@ function renderEfficiency() {
   const emin = Math.floor(secs / 60), esec = Math.floor(secs % 60), ehh = Math.round((secs - Math.floor(secs)) * 100);
   const dist = f.dist === '200' ? '200' : (f.dist === '100' ? '100' : '50'), course = f.course === 'SCM' ? 'SCM' : 'LCM';
   const mode = f.mode === 'score' ? 'score' : 'predict';
-  const pace = f.pace === '200' ? '200' : '100';
+  const pace = ['50', '100', '200'].includes(f.pace) ? f.pace : '100';
   const test = ['50lcm', '50scm', '25scm'].includes(f.test) ? f.test : '50scm';
   const testLbl = { '50lcm': '50 m LCM', '50scm': '50 m SCM', '25scm': '25 m SCM' }[test];
   const sc = Math.max(0, Math.round(f.sc || 0));
   const secondCol = mode === 'predict'
     ? `<div class="flex-1"><div class="label-cap mb-2">Distance</div><div class="seg-group"><div class="seg ${dist === '50' ? 'active' : ''}" data-effdist="50">50</div><div class="seg ${dist === '100' ? 'active' : ''}" data-effdist="100">100</div><div class="seg ${dist === '200' ? 'active' : ''}" data-effdist="200">200</div></div></div>`
-    : `<div class="flex-1"><div class="label-cap mb-2">Race pace</div><div class="seg-group"><div class="seg ${pace === '100' ? 'active' : ''}" data-effpace="100">100</div><div class="seg ${pace === '200' ? 'active' : ''}" data-effpace="200">200</div></div></div>`;
+    : `<div class="flex-1"><div class="label-cap mb-2">Race pace</div><div class="seg-group"><div class="seg ${pace === '50' ? 'active' : ''}" data-effpace="50">50</div><div class="seg ${pace === '100' ? 'active' : ''}" data-effpace="100">100</div><div class="seg ${pace === '200' ? 'active' : ''}" data-effpace="200">200</div></div></div>`;
   const thirdRow = mode === 'predict'
     ? `<div><div class="label-cap mb-2">Course</div><div class="seg-group"><div class="seg ${course === 'LCM' ? 'active' : ''}" data-effcourse="LCM">LCM</div><div class="seg ${course === 'SCM' ? 'active' : ''}" data-effcourse="SCM">SCM</div></div></div>`
     : `<div><div class="label-cap mb-2">Test</div><div class="seg-group"><div class="seg ${test === '50lcm' ? 'active' : ''}" data-efftest="50lcm">50 LCM</div><div class="seg ${test === '50scm' ? 'active' : ''}" data-efftest="50scm">50 SCM</div><div class="seg ${test === '25scm' ? 'active' : ''}" data-efftest="25scm">25 SCM</div></div></div>`;
