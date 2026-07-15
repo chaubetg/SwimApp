@@ -2404,6 +2404,7 @@ const mmTestLabel = { '25scm':'25 SCM', '50scm':'50 SCM', '50lcm':'50 LCM' };
 const mmAmpSprint = { Free:{M:2.32,F:2.12}, Back:{M:2.17,F:1.97}, Fly:{M:1.96,F:1.75}, Breast:{M:1.81,F:1.71} }; // 100-pace target distance/stroke (m/cycle)
 const mmAmpCruise = { Free:{M:2.63,F:2.31}, Back:{M:2.38,F:2.16}, Fly:{M:2.03,F:1.79}, Breast:{M:2.41,F:2.33} }; // 200-pace target distance/stroke (m/cycle)
 const mmSI50 = { Free:{M:4.47,F:3.83}, Back:{M:3.74,F:3.10}, Fly:{M:3.70,F:3.08}, Breast:{M:2.59,F:2.20} }; // elite 50m-EVENT whole-race SI (Table A, Paris+Fukuoka finals = clean-window v×amp; stroke_index_elite_vs_renens.csv)
+const mmSI50low = { Free:{M:4.35,F:3.71}, Back:{M:3.55,F:2.95}, Fly:{M:3.60,F:2.96}, Breast:{M:2.48,F:2.19} }; // elite 50m-event SI IQR-low = "weakest elite finalist" stroke floor (no fatigue floor exists for a one-50 race)
 const mmAmp50 = { Free:{M:2.08,F:1.97}, Back:{M:1.97,F:1.82}, Fly:{M:1.86,F:1.69}, Breast:{M:1.53,F:1.43} }; // elite 50m-event amplitude m/cycle (60·v/SR over the 15-25/25-45 clean windows, 50m_sprint_data.csv)
 const mmSI = { '100': { Free:{M:4.68,F:3.86}, Back:{M:3.91,F:3.17}, Fly:{M:3.69,F:2.97}, Breast:{M:2.93,F:2.53} },
                '200': { Free:{M:4.69,F:3.82}, Back:{M:3.81,F:3.19}, Fly:{M:3.40,F:2.74}, Breast:{M:3.44,F:3.04} } }; // elite SI whole-race avg (STROKE_INDEX_README Table A)
@@ -2439,8 +2440,8 @@ function effCompute() {
   const finF = mmFin[st] || 0.97;                       // last-5 m speed / clean speed (measured)
   const base50 = vc > 0 ? (5/vc + 20/(vc*mmSeg.front) + 20/(vc*mmSeg.back) + 5/(vc*finF)) : 0; // 0-5 push + 5-25 front window + 25-45 back window + measured last-5 m finish
   const pace = dist === 200 ? '200' : '100';
-  const siGoal = mmSIfresh[pace][st][sx];               // 1st-50 clean-window SI = goal (fewest strokes)
-  const siLimit = (mmSIfloor[pace][st] && mmSIfloor[pace][st][sx]) || 0;  // last-50 clean-window SI = breakdown limit (most)
+  const siGoal = dist === 50 ? mmSI50[st][sx] : mmSIfresh[pace][st][sx]; // 50 input -> the real 50m-EVENT SI (4.47 not 4.96 for free M); else 1st-50 fresh SI
+  const siLimit = dist === 50 ? mmSI50low[st][sx] : ((mmSIfloor[pace][st] && mmSIfloor[pace][st][sx]) || 0); // 50 -> IQR-low of the 50m field; else last-50 breakdown floor
   const cr50 = convRatios[st] && convRatios[st][sx] && convRatios[st][sx][50];
   const t50scm = cr50 ? base50 / cr50.mean : base50;
   const timeUp = (mmTimeUp[st] && mmTimeUp[st][dist]) || 1.02;  // slowest-time factor from the ratio's upper edge
@@ -4251,7 +4252,7 @@ function handleAction(action, el) {
       const dist = ['50', '100', '200'].includes(f.dist) ? f.dist : '50';
       const course = f.course === 'SCM' ? 'SCM' : 'LCM';
       const upd = upsertSaved({ id: 'ef' + Date.now().toString(36), sid: resolveSid(f), kind: 'eff', predict: true, name: f.name.trim(),
-        stroke: f.stroke, sex: f.sex, dist: dist, course: course, t: f.t, pace: dist === '200' ? '200' : '100', distance: +dist,
+        stroke: f.stroke, sex: f.sex, dist: dist, course: course, t: f.t, pace: dist, distance: +dist,
         date: f.date || new Date().toISOString().slice(0, 10) });
       showToast(`${upd ? 'Updated' : 'Saved'} ${f.name.trim()} · SI targets`);
       break;
