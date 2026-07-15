@@ -1528,14 +1528,20 @@ function render() {
       const q = el.value.trim();
       const names = [...new Set(state.saved.map(s => s.name).filter(Boolean))];
       const matches = q ? names.filter(n => nameMatches(n, q)) : [];
-      if (!matches.length) { box.classList.add('hidden'); box.innerHTML = ''; return; }
-      box.innerHTML = matches.slice(0, 8).map(n => `<div data-suggest="${n.replace(/"/g, '&quot;')}" class="px-3.5 py-2.5 text-sm clickable hover:bg-slate-50">${n}</div>`).join('');
+      const exact = q && names.some(n => normName(n) === normName(q));
+      let rows = matches.slice(0, 8).map(n => `<div data-suggest="${n.replace(/"/g, '&quot;')}" class="px-3.5 py-2.5 text-sm clickable hover:bg-slate-50">${n}</div>`).join('');
+      if (q && !exact) rows += `<div data-suggest-new="${q.replace(/"/g, '&quot;')}" class="px-3.5 py-2.5 text-sm clickable hover:bg-cyan-50 text-cyan-700 font-semibold${rows ? ' border-t border-slate-100' : ''}">＋ New swimmer “${q}”</div>`;
+      if (!rows) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+      box.innerHTML = rows;
       box.classList.remove('hidden');
     };
-    el.addEventListener('input', show);
+    // Typing = unlink any pre-selected swimmer (picking a suggestion re-links) - same semantics as the split-predictor name field.
+    el.addEventListener('input', () => { delete form.sid; show(); });
     el.addEventListener('focus', show);
     el.addEventListener('blur', () => setTimeout(() => box.classList.add('hidden'), 150));
     box.addEventListener('mousedown', (e) => {
+      const nu = e.target.closest('[data-suggest-new]');
+      if (nu) { e.preventDefault(); const nm = nu.getAttribute('data-suggest-new'); el.value = nm; form.name = nm; delete form.sid; box.classList.add('hidden'); return; }
       const opt = e.target.closest('[data-suggest]'); if (!opt) return;
       e.preventDefault();
       const nm = opt.getAttribute('data-suggest'); el.value = nm; form.name = nm;
@@ -1858,7 +1864,7 @@ function renderSavedSwimmer() {
     ${rowOpen(s.id)}
       <div class="flex-1 min-w-0">
         <div class="font-semibold text-[15px]">${s.stroke} Stroke Index <span class="text-xs font-normal text-muted">${s.pace || '100'} pace${s.test ? ' · ' + (mmTestLabel[s.test] || s.test) : ''} · ${sexL(s)}</span></div>
-        <div class="text-xs text-muted mt-0.5">${s.si != null ? 'SI ' + (+s.si).toFixed(2) + (s.pctElite != null ? ' · ' + Math.round(s.pctElite) + '% elite' : '') : (s.scoreCount != null ? 'score ' + (+s.scoreCount).toFixed(1) : '')}${s.date ? ' · ' + s.date : ''}</div>
+        <div class="text-xs text-muted mt-0.5">${s.si != null ? 'SI ' + (+s.si).toFixed(2) + (s.pctElite != null ? ' · ' + Math.round(s.pctElite) + '% elite' : '') : (s.predict ? 'target ' + (s.dist || '?') + ' m ' + (s.course || 'LCM') + ' ' + ((s.t || 0) >= 60 ? formatTime(s.t) : (+(s.t || 0)).toFixed(2)) : (s.scoreCount != null ? 'score ' + (+s.scoreCount).toFixed(1) : ''))}${s.date ? ' · ' + s.date : ''}</div>
       </div>
       ${editing ? delBtn(s.id, 'efficiency test') : arrow('Open →')}
     </div>`).join('');
@@ -1983,7 +1989,7 @@ const PROG_KINDS = { race: 'Race', fifty: '50 m splits', eff: 'Efficiency' };
 function progSig(s) {
   if (s.kind === 'race') return `${s.distance} ${s.stroke} ${s.pool}`;
   if (s.kind === 'fifty') return `50 ${s.stroke} LCM splits`;
-  if (s.kind === 'eff') return s.test ? `${s.stroke} SI score · ${s.pace || '100'} pace · ${mmTestLabel[s.test] || s.test}` : `${s.stroke} SI · ${s.pace || '100'} pace`;
+  if (s.kind === 'eff') return s.predict ? null : (s.test ? `${s.stroke} SI score · ${s.pace || '100'} pace · ${mmTestLabel[s.test] || s.test}` : `${s.stroke} SI · ${s.pace || '100'} pace`);
   return null;
 }
 
@@ -2640,14 +2646,14 @@ function renderEfficiency() {
       </div>
       ${scInput}
       <div id="eff-result">${effResultHtml()}</div>
-      ${mode === 'score' ? `<div class="bg-white border border-slate-200 rounded-2xl p-3">
+      <div class="bg-white border border-slate-200 rounded-2xl p-3">
         <div class="label-cap text-muted mb-2">Save to swimmer</div>
         <div class="flex gap-2 items-center">
           <input data-toolname data-form="eff" value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="Swimmer name" class="flex-1 bg-slate-100 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300" />
           <input data-eff-date type="date" value="${f.date || ''}" class="bg-slate-100 rounded-xl px-2.5 py-2.5 text-sm outline-none" aria-label="Date" />
-          <button class="px-4 py-2.5 bg-cyan-600 text-white rounded-xl text-sm font-semibold hover:bg-cyan-700 active:scale-95 transition" data-action="save-effscore">${state.reviewId ? 'Update' : 'Save'}</button>
+          <button class="px-4 py-2.5 bg-cyan-600 text-white rounded-xl text-sm font-semibold hover:bg-cyan-700 active:scale-95 transition" data-action="${mode === 'score' ? 'save-effscore' : 'save-effpredict'}">${state.reviewId ? 'Update' : 'Save'}</button>
         </div>
-      </div>` : ''}
+      </div>
     </div>
   `;
 }
@@ -4000,7 +4006,9 @@ document.addEventListener('click', (e) => {
           state.adjForm = { stroke: entry.stroke, sex: entry.sex, pool: entry.pool, distance: entry.distance, seconds: entry.seconds, name: entry.name, sid: entry.sid };
           navigate('adjacent', { reviewId: entry.id });
         } else if (entry.kind === 'eff') {
-          if (entry.test) {
+          if (entry.predict) {
+            state.effForm = { stroke: entry.stroke, sex: entry.sex, mode: 'predict', dist: entry.dist || '50', course: entry.course || 'LCM', t: entry.t || 0, pace: entry.pace || '100', test: '50scm', sc: 0, name: entry.name, sid: entry.sid, date: entry.date || '' };
+          } else if (entry.test) {
             const key = (entry.pace || '100') + '_' + entry.test;
             const lg = {}; lg[key] = { ...(entry.cps || {}) };
             state.effForm = { stroke: entry.stroke, sex: entry.sex, mode: 'score', pace: entry.pace || '100', test: entry.test, t: entry.t || 0, sc: entry.sc || 0, dist: '50', course: 'LCM', logs: lg, name: entry.name, sid: entry.sid, date: entry.date || '' };
@@ -4234,6 +4242,18 @@ function handleAction(action, el) {
         eliteSI: r.eliteSI, eliteSIfloor: r.eliteSIfloor, srElite: r.srElite,
         date: f.date || new Date().toISOString().slice(0, 10) });
       showToast(`${upd ? 'Updated' : 'Saved'} ${f.name.trim()} · SI ${SI.toFixed(2)}`);
+      break;
+    }
+    case 'save-effpredict': {
+      const f = state.effForm;
+      if (!(f.name || '').trim()) { showToast('Add a swimmer name to save'); break; }
+      if (!(f.t > 0)) { showToast('Enter a desired time first'); break; }
+      const dist = ['50', '100', '200'].includes(f.dist) ? f.dist : '50';
+      const course = f.course === 'SCM' ? 'SCM' : 'LCM';
+      const upd = upsertSaved({ id: 'ef' + Date.now().toString(36), sid: resolveSid(f), kind: 'eff', predict: true, name: f.name.trim(),
+        stroke: f.stroke, sex: f.sex, dist: dist, course: course, t: f.t, pace: dist === '200' ? '200' : '100', distance: +dist,
+        date: f.date || new Date().toISOString().slice(0, 10) });
+      showToast(`${upd ? 'Updated' : 'Saved'} ${f.name.trim()} · SI targets`);
       break;
     }
     case 'save-effscore': {
