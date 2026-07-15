@@ -1857,7 +1857,7 @@ function renderSavedSwimmer() {
   const effRows = effs.slice().reverse().map(s => `
     ${rowOpen(s.id)}
       <div class="flex-1 min-w-0">
-        <div class="font-semibold text-[15px]">${s.stroke} Stroke Index <span class="text-xs font-normal text-muted">${s.pace || '100'} pace · ${sexL(s)}</span></div>
+        <div class="font-semibold text-[15px]">${s.stroke} Stroke Index <span class="text-xs font-normal text-muted">${s.pace || '100'} pace${s.test ? ' · ' + (mmTestLabel[s.test] || s.test) : ''} · ${sexL(s)}</span></div>
         <div class="text-xs text-muted mt-0.5">${s.si != null ? 'SI ' + (+s.si).toFixed(2) + (s.pctElite != null ? ' · ' + Math.round(s.pctElite) + '% elite' : '') : (s.scoreCount != null ? 'score ' + (+s.scoreCount).toFixed(1) : '')}${s.date ? ' · ' + s.date : ''}</div>
       </div>
       ${editing ? delBtn(s.id, 'efficiency test') : arrow('Open →')}
@@ -1983,7 +1983,7 @@ const PROG_KINDS = { race: 'Race', fifty: '50 m splits', eff: 'Efficiency' };
 function progSig(s) {
   if (s.kind === 'race') return `${s.distance} ${s.stroke} ${s.pool}`;
   if (s.kind === 'fifty') return `50 ${s.stroke} LCM splits`;
-  if (s.kind === 'eff') return `${s.stroke} SI · ${s.pace || '100'} pace`;
+  if (s.kind === 'eff') return s.test ? `${s.stroke} SI score · ${s.pace || '100'} pace · ${mmTestLabel[s.test] || s.test}` : `${s.stroke} SI · ${s.pace || '100'} pace`;
   return null;
 }
 
@@ -2016,6 +2016,7 @@ function progMetrics(s) {
     if (s.si != null) {
       if (s.pctElite != null) out.push({ key: 'pctElite', label: '% of elite', value: s.pctElite, t: 'pct', hb: true, primary: true });
       if (s.spinnerPct != null) out.push({ key: 'spinner', label: '% where it should be', value: s.spinnerPct, t: 'pct', hb: true });
+      if (s.pctGood != null) out.push({ key: 'pctGood', label: '% good @ speed', value: s.pctGood, t: 'pct', hb: true });
       out.push({ key: 'si', label: 'Stroke Index', value: s.si, t: 'si', hb: true });
       if (s.srActual != null) out.push({ key: 'sr', label: 'Stroke rate', value: s.srActual, t: 'count' });
     } else if (s.siCount != null || s.scoreCount != null) {
@@ -2025,6 +2026,13 @@ function progMetrics(s) {
     } else if (s.actual) {
       const N = { '25scm': '25 SCM', '50scm': '50 SCM', '50lcm': '50 LCM' };
       ['25scm', '50scm', '50lcm'].forEach((tk) => { const x = s.actual[tk]; if (x && typeof x.t === 'number' && typeof x.s === 'number') out.push({ key: tk + ':score', label: N[tk] + ' score', value: x.t + x.s, t: 'score', primary: tk === '50lcm' }); });
+    }
+    if (s.cps) {
+      const scm = s.test === '50scm';
+      [15, 20, 25, 30, 35, 40, 45, 50].forEach((mk) => {
+        const r2 = effSegScore(mk, s.cps['sg' + mk + 't'] || 0, s.cps['sg' + mk + 's'] || 0, s.stroke, s.sex, scm);
+        if (r2) out.push({ key: 'cp' + mk, label: mk + ' m SI', value: r2.si, t: 'si', hb: true });
+      });
     }
     if (out.length && !out.some((m) => m.primary)) out[0].primary = true;
   }
@@ -2632,6 +2640,14 @@ function renderEfficiency() {
       </div>
       ${scInput}
       <div id="eff-result">${effResultHtml()}</div>
+      ${mode === 'score' ? `<div class="bg-white border border-slate-200 rounded-2xl p-3">
+        <div class="label-cap text-muted mb-2">Save to swimmer</div>
+        <div class="flex gap-2 items-center">
+          <input data-toolname data-form="eff" value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="Swimmer name" class="flex-1 bg-slate-100 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300" />
+          <input data-eff-date type="date" value="${f.date || ''}" class="bg-slate-100 rounded-xl px-2.5 py-2.5 text-sm outline-none" aria-label="Date" />
+          <button class="px-4 py-2.5 bg-cyan-600 text-white rounded-xl text-sm font-semibold hover:bg-cyan-700 active:scale-95 transition" data-action="save-effscore">${state.reviewId ? 'Update' : 'Save'}</button>
+        </div>
+      </div>` : ''}
     </div>
   `;
 }
@@ -3984,7 +4000,13 @@ document.addEventListener('click', (e) => {
           state.adjForm = { stroke: entry.stroke, sex: entry.sex, pool: entry.pool, distance: entry.distance, seconds: entry.seconds, name: entry.name, sid: entry.sid };
           navigate('adjacent', { reviewId: entry.id });
         } else if (entry.kind === 'eff') {
-          state.effForm = { stroke: entry.stroke, sex: entry.sex, pace: entry.pace || '100', s15t: entry.s15t || 0, s15sc: entry.s15sc || 0, name: entry.name, sid: entry.sid, date: entry.date || '' };
+          if (entry.test) {
+            const key = (entry.pace || '100') + '_' + entry.test;
+            const lg = {}; lg[key] = { ...(entry.cps || {}) };
+            state.effForm = { stroke: entry.stroke, sex: entry.sex, mode: 'score', pace: entry.pace || '100', test: entry.test, t: entry.t || 0, sc: entry.sc || 0, dist: '50', course: 'LCM', logs: lg, name: entry.name, sid: entry.sid, date: entry.date || '' };
+          } else {
+            state.effForm = { stroke: entry.stroke, sex: entry.sex, pace: entry.pace || '100', s15t: entry.s15t || 0, s15sc: entry.s15sc || 0, name: entry.name, sid: entry.sid, date: entry.date || '' };
+          }
           navigate('efficiency', { reviewId: entry.id });
         } else {
           state.swimmer = null;
@@ -4214,6 +4236,31 @@ function handleAction(action, el) {
       showToast(`${upd ? 'Updated' : 'Saved'} ${f.name.trim()} · SI ${SI.toFixed(2)}`);
       break;
     }
+    case 'save-effscore': {
+      const f = state.effForm;
+      if (!(f.name || '').trim()) { showToast('Add a swimmer name to save'); break; }
+      const pace = ['50', '100', '200'].includes(f.pace) ? f.pace : '100';
+      const test = ['50lcm', '50scm', '25scm'].includes(f.test) ? f.test : '50scm';
+      const L = (f.logs || {})[pace + '_' + test] || {};
+      const cps = {}; Object.keys(L).forEach((k) => { if (/^sg\d+[ts]$/.test(k) && L[k] > 0) cps[k] = L[k]; });
+      const t = Math.max(0, f.t || 0), sc = Math.max(0, Math.round(f.sc || 0));
+      if (!(t > 0 && sc > 0) && !Object.keys(cps).length) { showToast('Enter a time + strokes (or checkpoints) first'); break; }
+      const spc = mmSpc[f.stroke];
+      const swum = { '50lcm': 45, '50scm': 41, '25scm': 20 }[test];
+      const siElite = pace === '50' ? mmSI50[f.stroke][f.sex] : mmSIfresh[pace][f.stroke][f.sex];
+      const ampRef = pace === '50' ? mmAmp50[f.stroke][f.sex] : (pace === '200' ? mmAmpCruise : mmAmpSprint)[f.stroke][f.sex];
+      let si = null, pctElite = null, pctGood = null;
+      if (t > 0 && sc > 0) {
+        let v; if (test === '25scm') { const t50 = 2 * (t - 0.30); v = t50 > 0 ? 50 / t50 : 0; } else { v = 50 / t; }
+        if (v > 0) { si = swum * spc * v / sc; pctElite = siElite > 0 ? si / siElite * 100 : null; pctGood = ampRef > 0 ? (swum * spc / sc) / ampRef * 100 : null; }
+      }
+      const upd = upsertSaved({ id: 'ef' + Date.now().toString(36), sid: resolveSid(f), kind: 'eff', name: f.name.trim(),
+        stroke: f.stroke, sex: f.sex, pace: pace, test: test, distance: pace === '200' ? 200 : (pace === '50' ? 50 : 100),
+        t: t || null, sc: sc || null, si: si, pctElite: pctElite, pctGood: pctGood, eliteSI: siElite, ampRef: ampRef,
+        cps: cps, date: f.date || new Date().toISOString().slice(0, 10) });
+      showToast(`${upd ? 'Updated' : 'Saved'} ${f.name.trim()}${si != null ? ' · SI ' + si.toFixed(2) : ' · checkpoints'}`);
+      break;
+    }
     case 'save-adj': {
       const f = state.adjForm;
       if (!(f.name || '').trim()) { showToast('Add a swimmer name to save'); break; }
@@ -4235,7 +4282,7 @@ function handleAction(action, el) {
     }
     case 'add-eff': {
       const sid = state.savedSid; const evs = entriesOf(sid); const last = evs[evs.length - 1];
-      state.effForm = { stroke: 'Free', sex: last ? last.sex : 'M', dist: '50', course: 'LCM', t: 0, mode: 'predict', pace: '100', test: '50scm', sc: 0 };
+      state.effForm = { stroke: 'Free', sex: last ? last.sex : 'M', dist: '50', course: 'LCM', t: 0, mode: 'score', pace: '100', test: '50scm', sc: 0, name: swimmerName(sid), sid: sid, date: '' };
       navigate('efficiency'); break;
     }
     case 'add-convert': {
