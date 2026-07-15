@@ -2536,7 +2536,7 @@ function renderEfficiency() {
   const f = state.effForm;
   const strokes = ['Free', 'Back', 'Breast', 'Fly'];
   const secs = Math.max(0, f.t || 0);
-  const emin = Math.floor(secs / 60), esec = Math.floor(secs % 60), eth = Math.min(9, Math.round((secs - Math.floor(secs)) * 10));
+  const emin = Math.floor(secs / 60), esec = Math.floor(secs % 60), ehh = Math.round((secs - Math.floor(secs)) * 100);
   const dist = f.dist === '200' ? '200' : (f.dist === '100' ? '100' : '50'), course = f.course === 'SCM' ? 'SCM' : 'LCM';
   const mode = f.mode === 'score' ? 'score' : 'predict';
   const pace = f.pace === '200' ? '200' : '100';
@@ -2575,7 +2575,7 @@ function renderEfficiency() {
             <div class="time-seg-sep">:</div>
             <div class="text-center"><input data-esec inputmode="numeric" maxlength="2" value="${String(esec).padStart(2, '0')}" class="time-seg" aria-label="Seconds" /><div class="time-seg-label">sec</div></div>
             <div class="time-seg-sep">.</div>
-            <div class="text-center"><input data-ehh data-tenths inputmode="numeric" maxlength="1" value="${eth}" class="time-seg" aria-label="Tenths" /><div class="time-seg-label">tenth</div></div>
+            <div class="text-center"><input data-ehh inputmode="numeric" maxlength="2" value="${String(ehh).padStart(2, '0')}" class="time-seg" aria-label="Hundredths" /><div class="time-seg-label">hund.</div></div>
           </div>
         </div>
       </div>
