@@ -1652,9 +1652,12 @@ function render() {
       const q = nameInput.value.trim();
       const names = [...new Set(state.saved.map(s => s.name).filter(Boolean))];
       const matches = q ? names.filter(n => nameMatches(n, q)) : [];
-      if (!matches.length) { box.classList.add('hidden'); box.innerHTML = ''; return; }
-      box.innerHTML = matches.slice(0, 8).map(n =>
+      const exact = q && names.some(n => normName(n) === normName(q));
+      let rows = matches.slice(0, 8).map(n =>
         `<div data-suggest="${n.replace(/"/g, '&quot;')}" class="px-3.5 py-2.5 text-sm clickable hover:bg-slate-50">${n}</div>`).join('');
+      if (q && !exact) rows += `<div data-suggest-new="${q.replace(/"/g, '&quot;')}" class="px-3.5 py-2.5 text-sm clickable hover:bg-cyan-50 text-cyan-700 font-semibold${rows ? ' border-t border-slate-100' : ''}">＋ New swimmer “${q}”</div>`;
+      if (!rows) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+      box.innerHTML = rows;
       box.classList.remove('hidden');
     };
     nameInput.addEventListener('input', showSuggest);
@@ -1663,6 +1666,8 @@ function render() {
     nameInput.addEventListener('input', () => { state.form.sid = null; });
     nameInput.addEventListener('blur', () => setTimeout(() => box && box.classList.add('hidden'), 150));
     if (box) box.addEventListener('mousedown', (e) => {
+      const nu = e.target.closest('[data-suggest-new]');
+      if (nu) { e.preventDefault(); const nm = nu.getAttribute('data-suggest-new'); nameInput.value = nm; state.form.name = nm; state.form.sid = null; box.classList.add('hidden'); return; }
       const opt = e.target.closest('[data-suggest]');
       if (opt) {
         e.preventDefault();
@@ -2914,14 +2919,6 @@ function renderQuickCalc() {
     </div>
     <div class="scrollable px-5 py-4 space-y-6">
       <div>
-        <div class="label-cap mb-2">Swimmer name <span class="text-faint" style="text-transform:none;letter-spacing:0;font-weight:400;">(optional — enables save &amp; search)</span></div>
-        <div class="relative">
-          <input type="text" data-name-input autocomplete="off" value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="e.g. Tegan O'Neill"
-            class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-base outline-none focus:ring-2 focus:ring-cyan-300" />
-          <div data-name-suggest class="hidden" style="position:absolute;left:0;right:0;top:100%;margin-top:4px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 8px 24px rgba(15,23,42,.12);z-index:60;max-height:200px;overflow-y:auto;"></div>
-        </div>
-      </div>
-      <div>
         <div class="label-cap mb-2">Stroke</div>
         <div class="flex gap-2 flex-wrap">
           ${strokes.map(s => `<span class="pill ${f.stroke === s ? 'active' : ''}" data-stroke="${s}">${s}</span>`).join('')}
@@ -2971,6 +2968,14 @@ function renderQuickCalc() {
           </div>
         </div>
         <div class="text-center text-xs text-muted mt-2">Tap a box and type · minutes : seconds . hundredths</div>
+      </div>
+      <div>
+        <div class="label-cap mb-2">Swimmer name <span class="text-faint" style="text-transform:none;letter-spacing:0;font-weight:400;">(optional — enables save &amp; search)</span></div>
+        <div class="relative">
+          <input type="text" data-name-input autocomplete="off" value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="e.g. Tegan O'Neill"
+            class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-base outline-none focus:ring-2 focus:ring-cyan-300" />
+          <div data-name-suggest class="hidden" style="position:absolute;left:0;right:0;bottom:100%;margin-bottom:4px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 8px 24px rgba(15,23,42,.12);z-index:60;max-height:200px;overflow-y:auto;"></div>
+        </div>
       </div>
     </div>
     <div class="border-t border-slate-200 px-5 py-4 pb-5 bg-white flex-shrink-0">
@@ -3660,14 +3665,6 @@ function renderRaceEntry() {
     </div>
     <div class="scrollable px-5 py-4 space-y-5">
       <div>
-        <div class="label-cap mb-2">Swimmer name <span class="text-faint" style="text-transform:none;letter-spacing:0;font-weight:400;">(optional)</span></div>
-        <div class="relative">
-          <input type="text" data-name-input autocomplete="off" value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="e.g. Tegan O'Neill"
-            class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-base outline-none focus:ring-2 focus:ring-cyan-300" />
-          <div data-name-suggest class="hidden" style="position:absolute;left:0;right:0;top:100%;margin-top:4px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 8px 24px rgba(15,23,42,.12);z-index:60;max-height:200px;overflow-y:auto;"></div>
-        </div>
-      </div>
-      <div>
         <div class="label-cap mb-2">Stroke</div>
         <div class="flex gap-2 flex-wrap">
           ${strokes.map(s => `<span class="pill ${f.stroke === s ? 'active' : ''}" data-stroke="${s}">${s}</span>`).join('')}
@@ -3722,6 +3719,14 @@ function renderRaceEntry() {
       <div>
         <div class="label-cap mb-2">Notes</div>
         <textarea data-race-notes rows="3" placeholder="What happened, technique cues, how it felt…" class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-sm outline-none focus:ring-2 focus:ring-cyan-300 resize-none">${(rf.notes || '').replace(/</g, '&lt;')}</textarea>
+      </div>
+      <div>
+        <div class="label-cap mb-2">Swimmer name <span class="text-faint" style="text-transform:none;letter-spacing:0;font-weight:400;">(optional)</span></div>
+        <div class="relative">
+          <input type="text" data-name-input autocomplete="off" value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="e.g. Tegan O'Neill"
+            class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-base outline-none focus:ring-2 focus:ring-cyan-300" />
+          <div data-name-suggest class="hidden" style="position:absolute;left:0;right:0;bottom:100%;margin-bottom:4px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 8px 24px rgba(15,23,42,.12);z-index:60;max-height:200px;overflow-y:auto;"></div>
+        </div>
       </div>
     </div>
     <div class="border-t border-slate-200 px-5 py-4 pb-5 bg-white flex-shrink-0">
