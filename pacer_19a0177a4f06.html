@@ -2414,14 +2414,14 @@ const mmTestLabel = { '25scm':'25 SCM', '50scm':'50 SCM', '50lcm':'50 LCM' };
 const mmAmpSprint = { Free:{M:2.32,F:2.12}, Back:{M:2.17,F:1.97}, Fly:{M:1.96,F:1.75}, Breast:{M:1.81,F:1.71} }; // 100-pace target distance/stroke (m/cycle)
 const mmAmpCruise = { Free:{M:2.63,F:2.31}, Back:{M:2.38,F:2.16}, Fly:{M:2.03,F:1.79}, Breast:{M:2.41,F:2.33} }; // 200-pace target distance/stroke (m/cycle)
 const mmSI50 = { Free:{M:4.47,F:3.83}, Back:{M:3.74,F:3.10}, Fly:{M:3.70,F:3.08}, Breast:{M:2.59,F:2.20} }; // elite 50m-EVENT whole-race SI (Table A, Paris+Fukuoka finals = clean-window v×amp; stroke_index_elite_vs_renens.csv)
-const mmSI50low = { Free:{M:4.35,F:3.71}, Back:{M:3.55,F:2.95}, Fly:{M:3.60,F:2.96}, Breast:{M:2.48,F:2.19} }; // elite 50m-event SI IQR-low = "weakest elite finalist" stroke floor (no fatigue floor exists for a one-50 race)
+const mmSI50low = { Free:{M:4.30,F:3.71}, Back:{M:3.65,F:3.04}, Fly:{M:3.62,F:3.02}, Breast:{M:2.52,F:2.13} }; // 50m floor = back-window (25-45 m) SI of the same 50 finals - the fatigue definition, consistent with the 100/200 floors (cross-check: field IQR-low of whole-race SI lands within ~1%)
 const mmAmp50 = { Free:{M:2.08,F:1.97}, Back:{M:1.97,F:1.82}, Fly:{M:1.86,F:1.69}, Breast:{M:1.53,F:1.43} }; // elite 50m-event amplitude m/cycle (60·v/SR over the 15-25/25-45 clean windows, 50m_sprint_data.csv)
 const mmSI = { '100': { Free:{M:4.68,F:3.86}, Back:{M:3.91,F:3.17}, Fly:{M:3.69,F:2.97}, Breast:{M:2.93,F:2.53} },
                '200': { Free:{M:4.69,F:3.82}, Back:{M:3.81,F:3.19}, Fly:{M:3.40,F:2.74}, Breast:{M:3.44,F:3.04} } }; // elite SI whole-race avg (STROKE_INDEX_README Table A)
 const mmSIfresh = { '100': { Free:{M:4.96,F:4.04}, Back:{M:4.13,F:3.31}, Fly:{M:3.93,F:3.21}, Breast:{M:3.20,F:2.76} },
                     '200': { Free:{M:5.04,F:4.01}, Back:{M:4.10,F:3.37}, Fly:{M:3.76,F:3.05}, Breast:{M:3.73,F:3.34} } }; // 1st-50 fresh SI target
-const mmSIfloor = { '100': { Free:{M:4.40,F:3.67}, Back:{M:3.69,F:3.03}, Fly:{M:3.45,F:2.75}, Breast:{M:2.65,F:2.30} },
-                    '200': { Free:{M:4.17,F:3.58}, Back:{M:3.42,F:2.94}, Fly:{M:3.07,F:2.43}, Breast:{M:2.77,F:2.57} } }; // last-50 SI floor = set-modify trigger
+const mmSIfloor = { '100': { Free:{M:4.26,F:3.53}, Back:{M:3.56,F:2.94}, Fly:{M:3.33,F:2.63}, Breast:{M:2.52,F:2.19} },
+                    '200': { Free:{M:4.07,F:3.52}, Back:{M:3.34,F:2.85}, Fly:{M:2.98,F:2.38}, Breast:{M:2.61,F:2.48} } }; // FLOOR = SI of the last 25 of the FINAL lap (video zone stops ~5 m before the wall) = the worst stroking an elite still shows; set-modify trigger (Gaël 2026-07-15; was the full last-lap 15-45 window, ~2-5% higher)
 const predAmp = { // elite stroke length m/cycle (sprint basis): mean + shortest(min) = most strokes
   Free: {M:{mean:2.324,min:2.080},F:{mean:2.124,min:2.050}}, Back: {M:{mean:2.167,min:1.820},F:{mean:1.966,min:1.790}},
   Fly: {M:{mean:1.963,min:1.810},F:{mean:1.752,min:1.630}}, Breast: {M:{mean:1.805,min:1.560},F:{mean:1.714,min:1.570}} };
@@ -2451,7 +2451,7 @@ function effCompute() {
   const base50 = vc > 0 ? (5/vc + 20/(vc*mmSeg.front) + 20/(vc*mmSeg.back) + 5/(vc*finF)) : 0; // 0-5 push + 5-25 front window + 25-45 back window + measured last-5 m finish
   const pace = dist === 200 ? '200' : '100';
   const siGoal = dist === 50 ? mmSI50[st][sx] : mmSIfresh[pace][st][sx]; // 50 input -> the real 50m-EVENT SI (4.47 not 4.96 for free M); else 1st-50 fresh SI
-  const siLimit = dist === 50 ? mmSI50low[st][sx] : ((mmSIfloor[pace][st] && mmSIfloor[pace][st][sx]) || 0); // 50 -> IQR-low of the 50m field; else last-50 breakdown floor
+  const siLimit = dist === 50 ? mmSI50low[st][sx] : ((mmSIfloor[pace][st] && mmSIfloor[pace][st][sx]) || 0); // floor = deepest-fatigue window: 50 -> own back window; 100/200 -> last 25 of the final lap
   const cr50 = convRatios[st] && convRatios[st][sx] && convRatios[st][sx][50];
   const t50scm = cr50 ? base50 / cr50.mean : base50;
   const timeUp = (mmTimeUp[st] && mmTimeUp[st][dist]) || 1.02;  // slowest-time factor from the ratio's upper edge
