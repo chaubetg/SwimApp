@@ -1212,6 +1212,7 @@ function navigate(view, opts = {}) {
   state.view = view;
   state.editing = false; // leave edit mode whenever we change screens
   state.reviewId = null; // default: a fresh open is a new entry (review-clicks pass reviewId in opts)
+  state.cmpMode = null;  // comparisons start closed on every screen change
   Object.assign(state, rest);
   render();
 }
@@ -2076,7 +2077,7 @@ function renderTrends() {
     }
     const first = list[0].total, last = list[list.length - 1].total, best = Math.min(...list.map(r => r.total));
     const drop = first - last;
-    const targetRef = list[list.length - 1].target;
+    const targetRef = null; // goal line retired — the top field now records the swum time
     return `<div class="bg-white border border-slate-200 rounded-2xl p-4">
       <div class="flex items-baseline justify-between mb-0.5">
         <div class="font-semibold text-[15px]">${k}</div>
@@ -3827,7 +3828,7 @@ function renderRaceEntry() {
       </div>
       <div class="bg-gradient-to-br from-cyan-50 to-white border border-cyan-100 rounded-2xl px-4 py-3">
         <div class="flex items-center justify-between gap-3">
-          <div class="label-cap text-cyan-800">Predicted / goal</div>
+          <div class="label-cap text-cyan-800">Time swam</div>
           ${timeBoxes('target', rf.times.target)}
         </div>
       </div>
@@ -3898,7 +3899,11 @@ function renderRaceAnalysis() {
   const deltaColor = beat ? 'text-emerald-700' : 'text-rose-600';
   const deltaBg = beat ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100';
   const sr = race.sr || {};
-  const expL = expectedLast15(race);
+  // Data-entry check: the official time typed at the top vs what the splits add up to.
+  // (For 50s and 400+ the total IS the typed field, so they can never disagree.)
+  const _mm = (race.targetSeconds > 0 && c.actualTotal > 0) ? c.actualTotal - race.targetSeconds : 0;
+  const mismatch = Math.abs(_mm) > 0.10 ? _mm : null;
+  const expL = PUBLIC_BUILD ? null : expectedLast15(race); // V1 keeps stroke rate simple: no expected last-15
   const defs = raceRowDefs(race.stroke, race.distance);
   const pt = predict(race.stroke, race.sex, race.pool, race.distance, race.targetSeconds);
   const predAt = defs.map(def => {
@@ -3909,8 +3914,8 @@ function renderRaceAnalysis() {
     const i = def.idxFromEnd != null ? pt.splits.length - 1 - def.idxFromEnd : def.idx;
     return pt.splits[i];
   });
-  const GT = 'display:grid;grid-template-columns:minmax(0,1fr) 5rem 5rem 2.7rem 2.1rem;gap:4px;align-items:center;';
-  const head = `<div style="${GT}" class="px-3 pt-3 pb-1"><span class="label-cap text-muted">Split</span><span class="label-cap text-muted" style="text-align:right;">Pred</span><span class="label-cap text-muted" style="text-align:right;">Swam</span><span class="label-cap text-muted" style="text-align:right;">Δ</span><span class="label-cap text-muted" style="text-align:center;">SR</span></div>`;
+  const GT = 'display:grid;grid-template-columns:minmax(0,1fr) 4rem 4rem 2.9rem 2.1rem;gap:4px;align-items:center;';
+  const head = `<div style="${GT}" class="px-3 pt-3 pb-1"><span class="label-cap text-muted">Split</span><span class="label-cap text-muted" style="text-align:right;">Ideal</span><span class="label-cap text-muted" style="text-align:right;">Swam</span><span class="label-cap text-muted" style="text-align:right;">Δ</span><span class="label-cap text-muted" style="text-align:center;">SR</span></div>`;
   // Running cumulatives shown in () beside each split — skipped on the first row (it would
   // repeat the split), on the averaged middle row, and on single-row (50 m) events.
   let cumP = 0, cumA = 0;
@@ -3920,8 +3925,9 @@ function renderRaceAnalysis() {
     const dc = d == null ? 'text-slate-400' : (d > 0.05 ? 'text-rose-600' : (d < -0.05 ? 'text-emerald-700' : 'text-slate-500'));
     if (pred != null && def.kind !== 'total' && def.kind !== 'mid') cumP += pred;
     if (r.actual != null && def.kind !== 'total' && def.kind !== 'mid') cumA += r.actual;
-    const showCum = i > 0 && def.kind !== 'total' && def.kind !== 'mid' && c.rows.length > 1;
-    const cumTag = (v) => showCum ? `<span class="mono text-[9px] text-faint"> (${formatTime(v)})</span>` : '';
+    // No cumulative on the first split (repeats it) or the last (that's the finish time).
+    const showCum = i > 0 && i < c.rows.length - 1 && def.kind !== 'total' && def.kind !== 'mid';
+    const cumTag = (v) => showCum ? `<div class="mono text-[10px] text-faint leading-none mt-0.5">(${formatTime(v)})</div>` : '';
     return `<div style="${GT}" class="px-3 py-2 border-b border-slate-100 last:border-0">
       <div class="text-sm font-semibold text-slate-700 leading-tight">${r.label}</div>
       <div class="mono text-xs text-slate-500 leading-tight" style="text-align:right;">${pred != null ? formatTime(pred) : '—'}${pred != null ? cumTag(cumP) : ''}</div>
@@ -3931,23 +3937,32 @@ function renderRaceAnalysis() {
     </div>`;
   }).join('');
 
-  // --- vs their best: same swimmer, same distance+stroke+pool, fastest OTHER saved race ---
+  // --- comparisons on demand: their best, or their previous race of the same event ---
+  // Candidates = same swimmer + distance + stroke + pool, excluding this swim.
+  const cmpPool = state.saved.filter(s => s.kind === 'race' && race.sid && s.sid === race.sid && s.id !== race.id
+    && s.distance === race.distance && s.stroke === race.stroke && s.pool === race.pool)
+    .map(s => ({ s: s, c: buildRaceComparison(s) }))
+    .filter(x => x.c && x.c.actualTotal > 0);
+  const cmpBest = cmpPool.reduce((m, x) => (!m || x.c.actualTotal < m.c.actualTotal) ? x : m, null);
+  const cmpLast = cmpPool.slice().sort((a, b) =>
+    String(b.s.date || '').localeCompare(String(a.s.date || '')) || String(b.s.id).localeCompare(String(a.s.id)))[0] || null;
+  const cmpChoice = state.cmpMode === 'best' ? cmpBest : (state.cmpMode === 'last' ? cmpLast : null);
+  const cmpBtn = (mode, label, avail) => avail
+    ? `<button class="flex-1 rounded-xl px-3 py-2.5 text-xs font-semibold transition ${state.cmpMode === mode ? 'bg-cyan-600 text-white shadow' : 'bg-white border border-slate-200 text-slate-700 hover:border-cyan-300 hover:bg-cyan-50/40'}" data-action="cmp-mode" data-mode="${mode}">${label}</button>`
+    : '';
+  const cmpButtons = (cmpBest || cmpLast)
+    ? `<div class="flex gap-2">${cmpBtn('best', 'Compare to best time', cmpBest)}${cmpBtn('last', 'Compare to last race', cmpLast)}</div>`
+    : '';
+
   let bestCard = '';
-  (function () {
-    if (!race.sid) return;
-    let best = null, bestT = Infinity, isSelfBest = true;
-    state.saved.forEach(s => {
-      if (s.kind !== 'race' || s.sid !== race.sid || s.id === race.id) return;
-      if (s.distance !== race.distance || s.stroke !== race.stroke || s.pool !== race.pool) return;
-      const bc = buildRaceComparison(s);
-      if (!bc || !(bc.actualTotal > 0)) return;
-      if (bc.actualTotal < bestT) { bestT = bc.actualTotal; best = { s: s, c: bc }; }
-    });
-    if (!best) return;
-    isSelfBest = c.actualTotal <= bestT;
-    const gap = c.actualTotal - bestT;
+  if (cmpChoice) {
+    const other = cmpChoice.s, oc = cmpChoice.c;
+    const otherT = oc.actualTotal;
+    const gap = c.actualTotal - otherT;
     const gc = gap > 0.005 ? 'text-rose-600' : 'text-emerald-700';
-    const rows = best.c.rows.map((br, i) => {
+    const isBestMode = state.cmpMode === 'best';
+    const beatsBest = isBestMode && c.actualTotal < otherT;
+    const rows = oc.rows.map((br, i) => {
       const cur = c.rows[i];
       if (!cur) return '';
       const dd = (cur.actual != null && br.actual != null) ? cur.actual - br.actual : null;
@@ -3961,15 +3976,15 @@ function renderRaceAnalysis() {
     }).join('');
     bestCard = `<div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">
       <div class="px-3 pt-3 pb-1 flex items-baseline justify-between gap-2">
-        <span class="label-cap text-muted">vs their best</span>
-        <span class="text-[11px] text-muted">${formatTime(bestT)}${best.s.date ? ' · ' + best.s.date : ''}${best.s.competition ? ' · ' + best.s.competition : ''}</span>
+        <span class="label-cap text-muted">${isBestMode ? 'vs their best' : 'vs last race'}</span>
+        <span class="text-[11px] text-muted">${formatTime(otherT)}${other.date ? ' · ' + other.date : ''}${other.competition ? ' · ' + other.competition : ''}${other.round ? ' · ' + other.round : ''}</span>
       </div>
-      ${isSelfBest ? `<div class="px-3 pb-2"><span class="text-xs font-semibold text-emerald-700">New best for this event — ${Math.abs(gap).toFixed(2)}s faster than the previous.</span></div>`
-                   : `<div class="px-3 pb-2"><span class="text-xs ${gc} font-semibold">${gap >= 0 ? '+' : ''}${gap.toFixed(2)}s vs their best</span></div>`}
-      <div style="display:grid;grid-template-columns:minmax(0,1fr) 4rem 4rem 3rem;gap:4px;align-items:center;" class="px-3 pb-1"><span class="label-cap text-muted">Split</span><span class="label-cap text-muted" style="text-align:right;">Best</span><span class="label-cap text-muted" style="text-align:right;">This</span><span class="label-cap text-muted" style="text-align:right;">Δ</span></div>
+      ${beatsBest ? `<div class="px-3 pb-2"><span class="text-xs font-semibold text-emerald-700">New best for this event — ${Math.abs(gap).toFixed(2)}s faster.</span></div>`
+                  : `<div class="px-3 pb-2"><span class="text-xs ${gc} font-semibold">${gap >= 0 ? '+' : ''}${gap.toFixed(2)}s vs ${isBestMode ? 'their best' : 'that race'}</span></div>`}
+      <div style="display:grid;grid-template-columns:minmax(0,1fr) 4rem 4rem 3rem;gap:4px;align-items:center;" class="px-3 pb-1"><span class="label-cap text-muted">Split</span><span class="label-cap text-muted" style="text-align:right;">${isBestMode ? 'Best' : 'Last'}</span><span class="label-cap text-muted" style="text-align:right;">This</span><span class="label-cap text-muted" style="text-align:right;">Δ</span></div>
       ${rows}
     </div>`;
-  })();
+  }
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
@@ -3984,16 +3999,15 @@ function renderRaceAnalysis() {
       </div>
     </div>
     <div class="px-5 py-3 bg-white border-b border-slate-100">
-      <div class="${deltaBg} border rounded-2xl p-4">
-        <div class="grid grid-cols-3 gap-2">
-          <div><div class="label-cap text-muted">Predicted</div><div class="hero-time text-xl mt-1">${formatTime(c.target)}</div></div>
-          <div class="text-center border-l border-r border-slate-200/60"><div class="label-cap text-muted">Swam</div><div class="hero-time text-xl mt-1">${formatTime(c.actualTotal)}</div></div>
-          <div class="text-right"><div class="label-cap ${deltaColor}">Delta</div><div class="hero-time text-xl mt-1 ${deltaColor}">${c.delta >= 0 ? '+' : ''}${c.delta.toFixed(2)}</div></div>
-        </div>
+      <div class="bg-cyan-50 border border-cyan-100 rounded-2xl p-4 text-center">
+        <div class="label-cap text-muted">Time swam</div>
+        <div class="hero-time text-3xl mt-1 text-cyan-900">${formatTime(c.actualTotal)}</div>
+        ${mismatch != null ? `<div class="text-[11px] text-amber-700 mt-1.5">Official time entered ${formatTime(race.targetSeconds)} · splits add up to ${formatTime(c.actualTotal)} (${mismatch >= 0 ? '+' : ''}${mismatch.toFixed(2)})</div>` : ''}
       </div>
     </div>
     <div class="scrollable px-5 py-3 space-y-3 bg-slate-50">
       <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">${head}${splitRows}</div>
+      ${cmpButtons}
       ${bestCard}
       ${(sr.first25 > 0 || sr.second25 > 0 || sr.last15 > 0 || expL) ? `<div class="bg-white rounded-2xl border border-slate-200 p-4"><div class="label-cap text-muted mb-1">Stroke rate</div><div class="text-sm text-slate-700">${[sr.first25 > 0 ? `1st 25 <span class="mono font-semibold">${sr.first25}</span>` : '', sr.second25 > 0 ? `2nd 25 <span class="mono font-semibold">${sr.second25}</span>` : '', sr.last15 > 0 ? `last 15 m <span class="mono font-semibold ${expL && parseFloat(sr.last15) < expL * 0.95 ? 'text-rose-600' : ''}">${sr.last15}</span>${expL ? ` <span class="text-xs text-muted">(expected ~${expL.toFixed(1)})</span>` : ''}` : (expL ? `expected last 15 m ≈ <span class="mono font-semibold">${expL.toFixed(1)}</span>` : '')].filter(Boolean).join(' · ')}${expL && sr.last15 > 0 && parseFloat(sr.last15) < expL * 0.95 ? `<div class="text-xs text-rose-600 mt-1">Rate faded more than the elite pattern (−5%+) — finishing tempo collapsed.</div>` : ''}</div></div>` : ''}
       ${race.notes ? `<div class="bg-white rounded-2xl border border-slate-200 p-4"><div class="label-cap text-muted mb-1">Notes</div><div class="text-sm text-slate-700 leading-relaxed" style="white-space:pre-wrap;">${(race.notes || '').replace(/</g, '&lt;')}</div></div>` : ''}
@@ -4512,6 +4526,12 @@ function handleAction(action, el) {
       state.saved.forEach(s => { if (s.sid === sid) s.name = nn; });
       persistSaved(); render();
       showToast(`Renamed to ${nn}`);
+      break;
+    }
+    case 'cmp-mode': {
+      const m = el?.getAttribute('data-mode');
+      state.cmpMode = state.cmpMode === m ? null : m; // tap the active button again to close
+      render();
       break;
     }
     case 'back': back(); break;
