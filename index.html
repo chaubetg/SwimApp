@@ -143,6 +143,14 @@
     .tb-sep { font-family: 'JetBrains Mono', monospace; font-size: 16px; font-weight: 700; color: #94a3b8; }
     .clickable { cursor: pointer; }
     .clickable:active { background: #f1f5f9; }
+    /* No double-tap-to-zoom: taps fire immediately (rapid ±0.1 nudging). Pinch-zoom is
+       intentionally still available — on iOS it's the only way to enlarge an installed
+       PWA, so we never disable it. */
+    html { touch-action: manipulation; }
+    button, .clickable, .pill, .seg, [data-action] { touch-action: manipulation; }
+    /* iOS zooms the page when a focused input is under 16px — keep every input at 16px
+       and let the box shrink instead. */
+    input, select, textarea { font-size: 16px; }
     .toast {
       position: fixed; bottom: 32px; left: 50%; transform: translateX(-50%);
       background: #0f172a; color: white;
@@ -3268,11 +3276,11 @@ function renderPredictedSplits() {
     // Distance: cumulative on First + Last only (middle is collapsed). Others: every row but the
     // first (where cumulative would just repeat the split).
     const showCum = isDistanceCollapsed ? (isFirstRow || isLastRow) : !isFirstRow;
-    const cumBlock = showCum
-      ? `<div class="text-center mt-1.5 leading-tight">
-           <div class="text-[10px] text-faint mono">(${formatTime(cumRun)})</div>
-           <div class="text-[11px] text-slate-600 mono font-semibold">${formatTime(fastCum)} – ${formatTime(slowCum)}</div>
-         </div>`
+    // Cumulative median rides beside the split time; the fast/slow cumulative sit under
+    // the 'faster' / 'slower' labels so each end lines up with the split it belongs to.
+    const cumInline = showCum ? ` <span class="mono text-[15px] text-slate-500 font-semibold">(${formatTime(cumRun)})</span>` : '';
+    const cumEnds = (showCum && !isLastRow)
+      ? `<div class="flex justify-between text-[10px] text-faint mono mt-0.5"><span>(${formatTime(fastCum)})</span><span>(${formatTime(slowCum)})</span></div>`
       : '';
     // The faster time (q25) always sits on the left, slower (q75) on the right.
     // Only the *labels* change, and front/back-end is reserved for true opening/closing splits:
@@ -3292,20 +3300,22 @@ function renderPredictedSplits() {
     const ends = `<span><span class="mono">${formatTime(row.lo)}</span> <span class="${cap}">${leftCap}</span></span>
          <span><span class="${cap}">${rightCap}</span> <span class="mono">${formatTime(row.hi)}</span></span>`;
     return `
-      <div class="px-4 py-3.5 ${i < rows.length - 1 ? 'border-b border-slate-100' : ''}">
-        <div class="text-center mb-1.5">
-          <span class="label-cap text-faint">${row.label}</span>
-          <div class="hero-time text-2xl leading-tight">${formatTime(row.time)}</div>
+      <div class="px-4 pt-2.5 pb-3 ${i < rows.length - 1 ? 'border-b border-slate-100' : ''}">
+        <div class="border-b border-slate-200 pb-1 mb-2">
+          <span class="text-[13px] font-bold text-slate-700 tracking-wide">${row.label}</span>
+        </div>
+        <div class="text-center ${isLastRow ? '' : 'mb-1.5'}">
+          <div class="leading-tight"><span class="hero-time text-2xl">${formatTime(row.time)}</span>${cumInline}</div>
           ${(() => { const sp = per50 && (row.srIdx != null ? per50[row.srIdx] : per50[i]); return sp ? `<div class="text-[10px] text-faint">SR ~${Math.round(sp.avg)} (${Math.round(sp.lo)}–${Math.round(sp.hi)}) cyc/min</div>` : ''; })()}
         </div>
-        <div class="relative">
+        ${isLastRow ? '' : `<div class="relative">
           <div class="range-track">
             <div class="range-fill" style="left: ${padding.toFixed(1)}%; right: ${padding.toFixed(1)}%;"></div>
             <div class="range-tick" style="left: 50%;"></div>
           </div>
           <div class="flex justify-between items-baseline text-[11px] text-muted mt-1.5">${ends}</div>
-        </div>
-        ${cumBlock}
+          ${cumEnds}
+        </div>`}
       </div>
     `;
   }).join('');
@@ -4065,6 +4075,48 @@ function renderSquadTargets() {
 // ============================================================
 // EVENTS
 // ============================================================
+
+// Press-and-hold on the target nudges: first repeat after 500 ms, then every 120 ms,
+// accelerating to 60 ms once held past ~1.5 s. Pointer events cover mouse + touch; the
+// click that follows the press is suppressed so a hold doesn't add one extra step.
+(function holdRepeat() {
+  let timer = null, started = 0, suppressClick = false;
+  const stop = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  // NOTE: render() rebuilds the screen on every step, so the pressed button element is
+  // detached each tick — we hold the DELTA, not the node, and re-check that a matching
+  // nudge button still exists (i.e. we're still on the splits screen) before repeating.
+  const fire = (delta) => {
+    if (!delta || !state.result) return stop();
+    const next = Math.max(10, state.result.targetSeconds + delta);
+    state.form.targetSeconds = next;
+    state.result = predict(state.result.stroke, state.result.sex, state.result.pool, state.result.distance, next);
+    render();
+  };
+  document.addEventListener('pointerdown', (e) => {
+    const el = e.target.closest('[data-action="nudge-target"]');
+    if (!el) return;
+    const delta = parseFloat(el.getAttribute('data-delta') || '0');
+    const sel = `[data-action="nudge-target"][data-delta="${el.getAttribute('data-delta')}"]`;
+    started = Date.now();
+    suppressClick = false;
+    const tick = () => {
+      if (!document.querySelector(sel)) return stop();
+      suppressClick = true;
+      fire(delta);
+      timer = setTimeout(tick, Date.now() - started > 1500 ? 60 : 120);
+    };
+    timer = setTimeout(tick, 500);
+  });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(evt =>
+    document.addEventListener(evt, stop));
+  document.addEventListener('click', (e) => {
+    if (suppressClick && e.target.closest('[data-action="nudge-target"]')) {
+      suppressClick = false;
+      e.stopPropagation();
+      e.preventDefault();
+    }
+  }, true);
+})();
 
 document.addEventListener('click', (e) => {
   const phone = document.getElementById('phone');
