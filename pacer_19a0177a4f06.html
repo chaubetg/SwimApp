@@ -1739,13 +1739,13 @@ function renderRoster() {
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-2 pb-4">
-      <div class="text-[28px] font-bold tracking-tight leading-none">Perfect Pace</div>
+      <div class="text-[28px] font-bold tracking-tight leading-none text-center">Perfect Pace</div>
     </div>
     <div class="px-5 pb-2 grid grid-cols-2 gap-2">
-      <button class="bg-gradient-to-br from-cyan-500 to-cyan-700 rounded-2xl px-4 py-4 text-left hover:from-cyan-600 hover:to-cyan-800 active:scale-[0.99] transition shadow-lg shadow-cyan-600/25" data-action="quick-calc">
+      <button class="bg-gradient-to-br from-cyan-500 to-cyan-700 rounded-2xl px-4 py-4 text-center hover:from-cyan-600 hover:to-cyan-800 active:scale-[0.99] transition shadow-lg shadow-cyan-600/25" data-action="quick-calc">
         <div class="font-bold text-white text-[15px]">Split Predictor</div>
       </button>
-      <button class="bg-white border border-slate-200 rounded-2xl px-4 py-4 text-left hover:border-cyan-300 hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm" data-action="new-race">
+      <button class="bg-white border border-slate-200 rounded-2xl px-4 py-4 text-center hover:border-cyan-300 hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm" data-action="new-race">
         <div class="font-bold text-slate-800 text-[15px]">Record Races</div>
       </button>
     </div>
@@ -3783,7 +3783,7 @@ function renderRaceEntry() {
       <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0">
         <div class="text-lg font-semibold">Record Races</div>
-        <div class="text-xs text-muted truncate">${f.name ? f.name : 'Predicted vs what they swam'}</div>
+        ${f.name ? `<div class="text-xs text-muted truncate">${f.name}</div>` : ''}
       </div>
     </div>
     <div class="scrollable px-5 py-4 space-y-5">
@@ -3832,7 +3832,7 @@ function renderRaceEntry() {
         </div>
       </div>
       <div>
-        <div class="label-cap mb-2">What they swam · time${showRowSr ? ' + SR' : ''} ${distFree ? '<span class="text-faint" style="text-transform:none;letter-spacing:0;font-weight:400;">· middle 50s averaged</span>' : ''}</div>
+        <div class="label-cap mb-2">What they swam · time${showRowSr ? ' + SR <span class="text-faint" style="text-transform:none;letter-spacing:0;font-weight:400;">(optional)</span>' : ''} ${distFree ? '<span class="text-faint" style="text-transform:none;letter-spacing:0;font-weight:400;">· middle 50s averaged</span>' : ''}</div>
         <div class="bg-white border border-slate-200 rounded-2xl px-4 py-1">${fieldRows}</div>
       </div>
       ${extraSrRows ? `<div>
@@ -3841,7 +3841,7 @@ function renderRaceEntry() {
       </div>` : ''}
       <div>
         <div class="label-cap mb-2">Notes</div>
-        <textarea data-race-notes rows="3" placeholder="What happened, technique cues, how it felt…" class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-sm outline-none focus:ring-2 focus:ring-cyan-300 resize-none">${(rf.notes || '').replace(/</g, '&lt;')}</textarea>
+        <textarea data-race-notes rows="3" placeholder="What was good?&#10;What could have been better?&#10;What's the one thing to change next time?" class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-sm outline-none focus:ring-2 focus:ring-cyan-300 resize-none">${(rf.notes || '').replace(/</g, '&lt;')}</textarea>
       </div>
       <div>
         <div class="label-cap mb-2">Search or Add Swimmer</div>
@@ -3909,20 +3909,67 @@ function renderRaceAnalysis() {
     const i = def.idxFromEnd != null ? pt.splits.length - 1 - def.idxFromEnd : def.idx;
     return pt.splits[i];
   });
-  const GT = 'display:grid;grid-template-columns:1fr 3.3rem 3.3rem 2.9rem 2.3rem;gap:5px;align-items:center;';
+  const GT = 'display:grid;grid-template-columns:minmax(0,1fr) 5rem 5rem 2.7rem 2.1rem;gap:4px;align-items:center;';
   const head = `<div style="${GT}" class="px-3 pt-3 pb-1"><span class="label-cap text-muted">Split</span><span class="label-cap text-muted" style="text-align:right;">Pred</span><span class="label-cap text-muted" style="text-align:right;">Swam</span><span class="label-cap text-muted" style="text-align:right;">Δ</span><span class="label-cap text-muted" style="text-align:center;">SR</span></div>`;
+  // Running cumulatives shown in () beside each split — skipped on the first row (it would
+  // repeat the split), on the averaged middle row, and on single-row (50 m) events.
+  let cumP = 0, cumA = 0;
   const splitRows = c.rows.map((r, i) => {
     const def = defs[i], pred = predAt[i];
     const d = (r.actual != null && pred != null) ? r.actual - pred : null;
     const dc = d == null ? 'text-slate-400' : (d > 0.05 ? 'text-rose-600' : (d < -0.05 ? 'text-emerald-700' : 'text-slate-500'));
+    if (pred != null && def.kind !== 'total' && def.kind !== 'mid') cumP += pred;
+    if (r.actual != null && def.kind !== 'total' && def.kind !== 'mid') cumA += r.actual;
+    const showCum = i > 0 && def.kind !== 'total' && def.kind !== 'mid' && c.rows.length > 1;
+    const cumTag = (v) => showCum ? `<span class="mono text-[9px] text-faint"> (${formatTime(v)})</span>` : '';
     return `<div style="${GT}" class="px-3 py-2 border-b border-slate-100 last:border-0">
       <div class="text-sm font-semibold text-slate-700 leading-tight">${r.label}</div>
-      <div class="mono text-xs text-slate-500" style="text-align:right;">${pred != null ? formatTime(pred) : '—'}</div>
-      <div class="mono text-sm font-semibold text-slate-800" style="text-align:right;">${r.actual != null ? formatTime(r.actual) : '—'}</div>
+      <div class="mono text-xs text-slate-500 leading-tight" style="text-align:right;">${pred != null ? formatTime(pred) : '—'}${pred != null ? cumTag(cumP) : ''}</div>
+      <div class="mono text-sm font-semibold text-slate-800 leading-tight" style="text-align:right;">${r.actual != null ? formatTime(r.actual) : '—'}${r.actual != null ? cumTag(cumA) : ''}</div>
       <div class="mono text-xs font-semibold ${dc}" style="text-align:right;">${d != null ? (d >= 0 ? '+' : '') + d.toFixed(2) : ''}</div>
       <div class="mono text-xs text-slate-600" style="text-align:center;">${sr[def.key] != null && sr[def.key] !== '' ? sr[def.key] : '—'}</div>
     </div>`;
   }).join('');
+
+  // --- vs their best: same swimmer, same distance+stroke+pool, fastest OTHER saved race ---
+  let bestCard = '';
+  (function () {
+    if (!race.sid) return;
+    let best = null, bestT = Infinity, isSelfBest = true;
+    state.saved.forEach(s => {
+      if (s.kind !== 'race' || s.sid !== race.sid || s.id === race.id) return;
+      if (s.distance !== race.distance || s.stroke !== race.stroke || s.pool !== race.pool) return;
+      const bc = buildRaceComparison(s);
+      if (!bc || !(bc.actualTotal > 0)) return;
+      if (bc.actualTotal < bestT) { bestT = bc.actualTotal; best = { s: s, c: bc }; }
+    });
+    if (!best) return;
+    isSelfBest = c.actualTotal <= bestT;
+    const gap = c.actualTotal - bestT;
+    const gc = gap > 0.005 ? 'text-rose-600' : 'text-emerald-700';
+    const rows = best.c.rows.map((br, i) => {
+      const cur = c.rows[i];
+      if (!cur) return '';
+      const dd = (cur.actual != null && br.actual != null) ? cur.actual - br.actual : null;
+      const ddc = dd == null ? 'text-slate-400' : (dd > 0.05 ? 'text-rose-600' : (dd < -0.05 ? 'text-emerald-700' : 'text-slate-500'));
+      return `<div style="display:grid;grid-template-columns:minmax(0,1fr) 4rem 4rem 3rem;gap:4px;align-items:center;" class="px-3 py-2 border-b border-slate-100 last:border-0">
+        <div class="text-sm font-semibold text-slate-700 leading-tight">${br.label}</div>
+        <div class="mono text-xs text-slate-500" style="text-align:right;">${br.actual != null ? formatTime(br.actual) : '—'}</div>
+        <div class="mono text-sm font-semibold text-slate-800" style="text-align:right;">${cur.actual != null ? formatTime(cur.actual) : '—'}</div>
+        <div class="mono text-xs font-semibold ${ddc}" style="text-align:right;">${dd != null ? (dd >= 0 ? '+' : '') + dd.toFixed(2) : ''}</div>
+      </div>`;
+    }).join('');
+    bestCard = `<div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+      <div class="px-3 pt-3 pb-1 flex items-baseline justify-between gap-2">
+        <span class="label-cap text-muted">vs their best</span>
+        <span class="text-[11px] text-muted">${formatTime(bestT)}${best.s.date ? ' · ' + best.s.date : ''}${best.s.competition ? ' · ' + best.s.competition : ''}</span>
+      </div>
+      ${isSelfBest ? `<div class="px-3 pb-2"><span class="text-xs font-semibold text-emerald-700">New best for this event — ${Math.abs(gap).toFixed(2)}s faster than the previous.</span></div>`
+                   : `<div class="px-3 pb-2"><span class="text-xs ${gc} font-semibold">${gap >= 0 ? '+' : ''}${gap.toFixed(2)}s vs their best</span></div>`}
+      <div style="display:grid;grid-template-columns:minmax(0,1fr) 4rem 4rem 3rem;gap:4px;align-items:center;" class="px-3 pb-1"><span class="label-cap text-muted">Split</span><span class="label-cap text-muted" style="text-align:right;">Best</span><span class="label-cap text-muted" style="text-align:right;">This</span><span class="label-cap text-muted" style="text-align:right;">Δ</span></div>
+      ${rows}
+    </div>`;
+  })();
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
@@ -3947,6 +3994,7 @@ function renderRaceAnalysis() {
     </div>
     <div class="scrollable px-5 py-3 space-y-3 bg-slate-50">
       <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">${head}${splitRows}</div>
+      ${bestCard}
       ${(sr.first25 > 0 || sr.second25 > 0 || sr.last15 > 0 || expL) ? `<div class="bg-white rounded-2xl border border-slate-200 p-4"><div class="label-cap text-muted mb-1">Stroke rate</div><div class="text-sm text-slate-700">${[sr.first25 > 0 ? `1st 25 <span class="mono font-semibold">${sr.first25}</span>` : '', sr.second25 > 0 ? `2nd 25 <span class="mono font-semibold">${sr.second25}</span>` : '', sr.last15 > 0 ? `last 15 m <span class="mono font-semibold ${expL && parseFloat(sr.last15) < expL * 0.95 ? 'text-rose-600' : ''}">${sr.last15}</span>${expL ? ` <span class="text-xs text-muted">(expected ~${expL.toFixed(1)})</span>` : ''}` : (expL ? `expected last 15 m ≈ <span class="mono font-semibold">${expL.toFixed(1)}</span>` : '')].filter(Boolean).join(' · ')}${expL && sr.last15 > 0 && parseFloat(sr.last15) < expL * 0.95 ? `<div class="text-xs text-rose-600 mt-1">Rate faded more than the elite pattern (−5%+) — finishing tempo collapsed.</div>` : ''}</div></div>` : ''}
       ${race.notes ? `<div class="bg-white rounded-2xl border border-slate-200 p-4"><div class="label-cap text-muted mb-1">Notes</div><div class="text-sm text-slate-700 leading-relaxed" style="white-space:pre-wrap;">${(race.notes || '').replace(/</g, '&lt;')}</div></div>` : ''}
     </div>
