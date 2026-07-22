@@ -177,7 +177,7 @@
 <div class="stage">
   <div class="wordmark">
     <div class="wm-title">Perfect Pace</div>
-    <div class="wm-sub">Race split predictor · v3 preview</div>
+    <div class="wm-sub">v3 preview</div>
   </div>
   <div class="phone" id="phone">
     <div class="screen" id="screen-container"></div>
@@ -1724,7 +1724,7 @@ function renderRoster() {
     <div class="flex flex-col items-center justify-center text-center px-8 py-20 text-slate-400">
       <div class="w-14 h-14 rounded-2xl bg-cyan-50 flex items-center justify-center text-2xl mb-3">🏊</div>
       <div class="text-sm font-semibold text-slate-600">No swimmers yet</div>
-      <div class="text-xs mt-1.5 leading-relaxed max-w-[220px]">Tap <span class="font-semibold text-cyan-700">Split predictor</span>, enter a goal time and a name, then <span class="font-semibold">Save</span> to build your roster.</div>
+      <div class="text-xs mt-1.5 leading-relaxed max-w-[220px]">Tap <span class="font-semibold text-cyan-700">Split Predictor</span>, enter a goal time and a name, then <span class="font-semibold">Save</span> to build your roster.</div>
       <button class="mt-4 text-xs font-semibold text-cyan-700 hover:underline" data-action="import-json">Import a backup</button>
     </div>`;
 
@@ -1732,16 +1732,13 @@ function renderRoster() {
     <div class="statusbar"></div>
     <div class="px-5 pt-2 pb-4">
       <div class="text-[28px] font-bold tracking-tight leading-none">Perfect Pace</div>
-      <div class="text-xs text-muted mt-1">Race split predictor</div>
     </div>
     <div class="px-5 pb-2 grid grid-cols-2 gap-2">
       <button class="bg-gradient-to-br from-cyan-500 to-cyan-700 rounded-2xl px-4 py-4 text-left hover:from-cyan-600 hover:to-cyan-800 active:scale-[0.99] transition shadow-lg shadow-cyan-600/25" data-action="quick-calc">
-        <div class="font-bold text-white text-[15px]">Split predictor</div>
-        <div class="text-[11px] text-cyan-50/90 mt-0.5 leading-snug">Predict splits from a goal</div>
+        <div class="font-bold text-white text-[15px]">Split Predictor</div>
       </button>
       <button class="bg-white border border-slate-200 rounded-2xl px-4 py-4 text-left hover:border-cyan-300 hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm" data-action="new-race">
-        <div class="font-bold text-slate-800 text-[15px]">Race Review</div>
-        <div class="text-[11px] text-muted mt-0.5 leading-snug">Compare a swim to the plan</div>
+        <div class="font-bold text-slate-800 text-[15px]">Record Races</div>
       </button>
     </div>
     ${PUBLIC_BUILD ? '' : `<div class="px-5 pb-2 space-y-2">
@@ -1786,7 +1783,7 @@ function renderRoster() {
     </div>
     <div class="px-5 pb-1 flex items-center gap-2 text-[11px] text-slate-400">
       <span class="uppercase tracking-wide text-faint text-[10px]">Data</span>
-      <button class="font-semibold hover:text-cyan-700 transition" data-action="export-csv">Analysis CSV</button>
+      <button class="font-semibold hover:text-cyan-700 transition" data-action="export-csv">Download CSV</button>
       <span class="text-slate-200">·</span>
       <button class="font-semibold hover:text-cyan-700 transition" data-action="backup-json">Backup</button>
       <span class="text-slate-200">·</span>
@@ -1956,7 +1953,7 @@ function renderSavedSwimmer() {
     </div>
     ${compareBtn}`}
     <div class="scrollable px-3 pb-2 bg-slate-50">
-      ${section('Race Review', raceRowsHtml, true)}
+      ${section('Record Races', raceRowsHtml, true)}
       ${section('Race Predictor', predRows, true)}
       ${section('Adjacent events', adjRows)}
       ${section('50 m LCM splits', fiftyRows)}
@@ -3006,9 +3003,7 @@ function renderQuickCalc() {
   const f = state.form;
   const strokes = ['Free', 'Back', 'Breast', 'Fly', 'IM'];
   const distances = [50, 100, 200, 400, 800, 1500];
-  const ctxLine = state.swimmer
-    ? `${state.swimmer.name}`
-    : 'No swimmer required';
+  const ctxLine = state.swimmer ? `${state.swimmer.name}` : '';
   const tt = Math.max(0, f.targetSeconds || 0);
   const tmin = Math.floor(tt / 60);
   const tsec = Math.floor(tt % 60);
@@ -3019,8 +3014,8 @@ function renderQuickCalc() {
     <div class="px-5 pt-3 pb-3 flex items-center gap-3">
       <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0">
-        <div class="text-lg font-semibold">${state.swimmer ? 'Pace plan' : 'Split predictor'}</div>
-        <div class="text-xs text-muted truncate">${ctxLine}</div>
+        <div class="text-lg font-semibold">${state.swimmer ? 'Pace plan' : 'Split Predictor'}</div>
+        ${ctxLine ? `<div class="text-xs text-muted truncate">${ctxLine}</div>` : ''}
       </div>
     </div>
     <div class="scrollable px-5 py-4 space-y-6">
@@ -3073,10 +3068,9 @@ function renderQuickCalc() {
             </div>
           </div>
         </div>
-        <div class="text-center text-xs text-muted mt-2">Tap a box and type · minutes : seconds . hundredths</div>
       </div>
       <div>
-        <div class="label-cap mb-2">Swimmer name <span class="text-faint" style="text-transform:none;letter-spacing:0;font-weight:400;">(optional — enables save &amp; search)</span></div>
+        <div class="label-cap mb-2">Search or Add Swimmer</div>
         <div class="relative">
           <input type="text" data-name-input autocomplete="off" value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="e.g. Tegan O'Neill"
             class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-base outline-none focus:ring-2 focus:ring-cyan-300" />
@@ -3414,13 +3408,10 @@ function renderPredictedSplits() {
             </div>
           </div>
         </div>
+        ${state.swimmer && state.swimmer.bestEvent.stroke === r.stroke && state.swimmer.bestEvent.distance === r.distance ? `
         <div class="flex gap-1.5 mt-3 text-xs flex-wrap">
-          ${state.swimmer && state.swimmer.bestEvent.stroke === r.stroke && state.swimmer.bestEvent.distance === r.distance ? `
-            <button class="px-2.5 py-1.5 rounded-full bg-white border border-slate-200 text-slate-700 font-semibold hover:bg-slate-50 transition" data-action="target-preset" data-mode="pb">PB</button>
-          ` : ''}
-          <button class="px-2.5 py-1.5 rounded-full bg-white border border-slate-200 text-slate-700 font-semibold hover:bg-slate-50 transition" data-action="target-preset" data-mode="minus1">−1%</button>
-          <button class="px-2.5 py-1.5 rounded-full bg-white border border-slate-200 text-slate-700 font-semibold hover:bg-slate-50 transition" data-action="target-preset" data-mode="plus1">+1%</button>
-        </div>
+          <button class="px-2.5 py-1.5 rounded-full bg-white border border-slate-200 text-slate-700 font-semibold hover:bg-slate-50 transition" data-action="target-preset" data-mode="pb">PB</button>
+        </div>` : ''}
       </div>
     </div>
 
@@ -3781,7 +3772,7 @@ function renderRaceEntry() {
     <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
       <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0">
-        <div class="text-lg font-semibold">Race Review</div>
+        <div class="text-lg font-semibold">Record Races</div>
         <div class="text-xs text-muted truncate">${f.name ? f.name : 'Predicted vs what they swam'}</div>
       </div>
     </div>
@@ -3843,7 +3834,7 @@ function renderRaceEntry() {
         <textarea data-race-notes rows="3" placeholder="What happened, technique cues, how it felt…" class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-sm outline-none focus:ring-2 focus:ring-cyan-300 resize-none">${(rf.notes || '').replace(/</g, '&lt;')}</textarea>
       </div>
       <div>
-        <div class="label-cap mb-2">Swimmer name <span class="text-faint" style="text-transform:none;letter-spacing:0;font-weight:400;">(optional)</span></div>
+        <div class="label-cap mb-2">Search or Add Swimmer</div>
         <div class="relative">
           <input type="text" data-name-input autocomplete="off" value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="e.g. Tegan O'Neill"
             class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-base outline-none focus:ring-2 focus:ring-cyan-300" />
