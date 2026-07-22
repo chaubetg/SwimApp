@@ -3,16 +3,16 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Pacer — v3 (private preview)</title>
+  <title>Perfect Pace — v3 (private preview)</title>
   <link rel="manifest" href="manifest-v3.webmanifest">
   <meta name="theme-color" content="#0891b2">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="Pacer+">
+  <meta name="apple-mobile-web-app-title" content="Perfect Pace">
   <link rel="apple-touch-icon" href="icon-192.png">
   <!--
-    Pacer — swim race split predictor.
+    Perfect Pace — swim race split predictor.
     © 2026 Gaël Chaubet. All rights reserved.
     This source, its design, and the pacing dataset embedded within are the
     property of Gaël Chaubet. Do not copy, redistribute, or reuse without permission.
@@ -176,7 +176,7 @@
 
 <div class="stage">
   <div class="wordmark">
-    <div class="wm-title">Pacer</div>
+    <div class="wm-title">Perfect Pace</div>
     <div class="wm-sub">Race split predictor · v3 preview</div>
   </div>
   <div class="phone" id="phone">
@@ -1240,8 +1240,8 @@ function downloadFile(filename, content, mime) {
 // --- Analysis CSV: tidy "long" format, one row per split (numeric seconds for pivots/charts) ---
 function exportAnalysisCsv() {
   if (!state.saved.length) { showToast('No saved swimmers to export'); return; }
-  const header = ['entry_id', 'swimmer', 'sex', 'type', 'stroke', 'distance', 'pool', 'round', 'date',
-    'target_s', 'actual_total_s', 'delta_s', 'segment', 'segment_m', 'split_s', 'cumulative_s'];
+  const header = ['swimmer', 'sex', 'type', 'stroke', 'distance', 'pool', 'round', 'date',
+    'target_s', 'actual_total_s', 'delta_s', 'segment', 'segment_m', 'split_s', 'cumulative_s']; // entry_id kept internally, dropped from the export (2026-07-22d)
   const lines = [header];
   const fmt = (v) => (v == null || v === '' || isNaN(v)) ? '' : (+v).toFixed(2);
   const segM = (label) => { const m = String(label).match(/(\d+)\s*m/); return m ? +m[1] : ''; };
@@ -1250,7 +1250,7 @@ function exportAnalysisCsv() {
     (a.name || '').localeCompare(b.name || '') || String(a.kind || '').localeCompare(String(b.kind || '')));
   sorted.forEach(s => {
     const type = kindOf(s);
-    const base = [s.id, s.name, s.sex, type, s.stroke, s.distance ?? '', s.pool ?? '',
+    const base = [s.name, s.sex, type, s.stroke, s.distance ?? '', s.pool ?? '',
       s.kind === 'race' ? (s.round || '') : '', s.kind === 'race' ? (s.date || '') : ''];
     if (s.kind === 'race') {
       const c = buildRaceComparison(s); if (!c) return;
@@ -1273,7 +1273,7 @@ function exportAnalysisCsv() {
   });
   const csv = '﻿' + lines.map(row => row.map(csvCell).join(',')).join('\r\n'); // BOM → Excel reads accents
   const stamp = new Date().toISOString().slice(0, 10);
-  downloadFile(`pacer_analysis_${stamp}.csv`, csv, 'text/csv');
+  downloadFile(`perfect_pace_analysis_${stamp}.csv`, csv, 'text/csv');
   showToast(`Exported ${state.saved.length} saved ${state.saved.length === 1 ? 'entry' : 'entries'}`);
 }
 
@@ -1282,7 +1282,7 @@ function exportBackupJson() {
   if (!state.saved.length) { showToast('Nothing to back up'); return; }
   const payload = { app: 'pacer', schema: 2, exported: new Date().toISOString(), saved: state.saved };
   const stamp = new Date().toISOString().slice(0, 10);
-  downloadFile(`pacer_backup_${stamp}.json`, JSON.stringify(payload, null, 2), 'application/json');
+  downloadFile(`perfect_pace_backup_${stamp}.json`, JSON.stringify(payload, null, 2), 'application/json');
   showToast(`Backed up ${state.saved.length} ${state.saved.length === 1 ? 'entry' : 'entries'}`);
 }
 
@@ -1305,7 +1305,7 @@ function importBackupData(text) {
   let data;
   try { data = JSON.parse(String(text).replace(/^﻿/, '')); } catch (e) { showToast('Could not read that file'); return; }
   const arr = Array.isArray(data) ? data : (data && Array.isArray(data.saved) ? data.saved : null);
-  if (!arr) { showToast('Not a Pacer backup file'); return; }
+  if (!arr) { showToast('Not a Perfect Pace backup file'); return; }
   const existing = new Set(state.saved.map(s => s.id));
   let added = 0;
   arr.forEach(e => {
@@ -1402,6 +1402,7 @@ function render() {
     case 'trends': html = renderTrends(); break;
     case 'progress': html = renderProgress(); break;
     case 'progress-group': html = renderProgressGroup(); break;
+    case 'best-times': html = renderBestTimes(); break;
     default: html = '<div class="p-8 text-slate-500">Unknown view</div>';
   }
   host.innerHTML = html;
@@ -1729,7 +1730,7 @@ function renderRoster() {
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-2 pb-4">
-      <div class="text-[28px] font-bold tracking-tight leading-none">Pacer</div>
+      <div class="text-[28px] font-bold tracking-tight leading-none">Perfect Pace</div>
       <div class="text-xs text-muted mt-1">Race split predictor</div>
     </div>
     <div class="px-5 pb-2 grid grid-cols-2 gap-2">
@@ -1817,27 +1818,63 @@ function renderSavedSwimmer() {
   const arrow = (t) => `<span class="text-cyan-700 text-sm font-bold">${t}</span>`;
   const sexL = (s) => s.sex === 'M' ? 'Men' : 'Women';
 
-  const predRows = plans.slice().reverse().map(s => `
+  // Group races and plans by event: one header row per distance+stroke+pool, tap to expand.
+  state.rgOpen = state.rgOpen || {};
+  const strokeOrd = { Free: 0, Back: 1, Breast: 2, Fly: 3, IM: 4 };
+  const groupByEvent = (arr) => {
+    const g = {};
+    arr.forEach(s => { const k = s.distance + '|' + s.stroke + '|' + s.pool; (g[k] = g[k] || []).push(s); });
+    return Object.keys(g).sort((a, b) => {
+      const A = a.split('|'), B = b.split('|');
+      return (strokeOrd[A[1]] ?? 9) - (strokeOrd[B[1]] ?? 9) || (+A[0]) - (+B[0]) || A[2].localeCompare(B[2]);
+    }).map(k => [k, g[k]]);
+  };
+  const groupHead = (gk, dist, stk, pool, sub, open) => `
+    <div class="px-3 py-3.5 flex items-center gap-3 clickable rounded-xl border-b border-slate-100" data-rgroup="${gk}" style="min-height:52px;">
+      <div class="flex-1 min-w-0">
+        <div class="font-semibold text-[15px]">${dist} ${stk} <span class="text-xs font-normal text-muted">${pool}</span></div>
+        <div class="text-xs text-muted mt-0.5">${sub}</div>
+      </div>
+      <span class="text-slate-400 text-base">${open ? '▾' : '▸'}</span>
+    </div>`;
+
+  const planRow = (s) => `
     ${rowOpen(s.id)}
       <div class="flex-1 min-w-0">
-        <div class="font-semibold text-[15px]">${s.distance} ${s.stroke} <span class="text-xs font-normal text-muted">${s.pool} · ${sexL(s)}</span></div>
-        <div class="text-xs text-muted mt-0.5">Target <span class="mono font-semibold text-slate-700">${formatTime(s.targetSeconds)}</span></div>
+        <div class="font-semibold text-[15px]">Target <span class="mono text-slate-700">${formatTime(s.targetSeconds)}</span></div>
+        <div class="text-xs text-muted mt-0.5">${s.pool} · ${sexL(s)}</div>
       </div>
       ${editing ? delBtn(s.id, 'pace plan') : arrow('Splits →')}
-    </div>`).join('');
+    </div>`;
+  const predRows = groupByEvent(plans).map(([k, list]) => {
+    const [dist, stk, pool] = k.split('|');
+    const gk = 'p:' + k;
+    const open = editing || !!state.rgOpen[gk];
+    const latest = list[list.length - 1];
+    const sub = list.length + ' plan' + (list.length === 1 ? '' : 's') + ' · latest <span class="mono font-semibold text-slate-700">' + formatTime(latest.targetSeconds) + '</span>';
+    return groupHead(gk, dist, stk, pool, sub, open) + (open ? `<div style="padding-left:14px;">${list.slice().reverse().map(planRow).join('')}</div>` : '');
+  }).join('');
 
-  const raceRowsHtml = races.slice().reverse().map(s => {
+  const raceRow = (s) => {
     const c = buildRaceComparison(s);
     const tot = c ? c.actualTotal : 0, d = c ? c.delta : 0;
     const dc = d > 0 ? 'text-rose-600' : 'text-emerald-700';
     return `
     ${rowOpen(s.id)}
       <div class="flex-1 min-w-0">
-        <div class="font-semibold text-[15px]">${s.distance} ${s.stroke} <span class="text-xs font-normal text-muted">${s.pool}${s.competition ? ' · ' + s.competition : ''}${s.date ? ' · ' + s.date : ''}</span></div>
-        <div class="text-xs text-muted mt-0.5"><span class="mono font-semibold text-slate-700">${formatTime(tot)}</span> <span class="${dc} font-semibold">(${d >= 0 ? '+' : ''}${d.toFixed(2)})</span></div>
+        <div class="font-semibold text-[15px] mono">${formatTime(tot)} <span class="${dc} text-xs font-semibold">(${d >= 0 ? '+' : ''}${d.toFixed(2)})</span></div>
+        <div class="text-xs text-muted mt-0.5">${s.round ? s.round + ' · ' : ''}${s.competition ? s.competition + ' · ' : ''}${s.date || ''}</div>
       </div>
       ${editing ? delBtn(s.id, 'race') : `<span class="text-slate-300 text-2xl">›</span>`}
     </div>`;
+  };
+  const raceRowsHtml = groupByEvent(races).map(([k, list]) => {
+    const [dist, stk, pool] = k.split('|');
+    const gk = 'r:' + k;
+    const open = editing || !!state.rgOpen[gk];
+    const best = list.reduce((m, s) => { const c = buildRaceComparison(s); return c && c.actualTotal > 0 && (m == null || c.actualTotal < m) ? c.actualTotal : m; }, null);
+    const sub = list.length + ' race' + (list.length === 1 ? '' : 's') + (best != null ? ' · best <span class="mono font-semibold text-slate-700">' + formatTime(best) + '</span>' : '');
+    return groupHead(gk, dist, stk, pool, sub, open) + (open ? `<div style="padding-left:14px;">${list.slice().reverse().map(raceRow).join('')}</div>` : '');
   }).join('');
 
   const adjRows = adj.slice().reverse().map(s => `
@@ -1907,6 +1944,7 @@ function renderSavedSwimmer() {
       <button class="w-full bg-rose-50 text-rose-700 border border-rose-200 rounded-xl py-3 text-sm font-semibold hover:bg-rose-100 active:scale-[0.99] transition flex items-center justify-center gap-2" data-del-swimmer="${sid}">${TRASH_SVG} Delete this swimmer</button>
     </div>` : `
     ${hasProgress(sid) ? `<div class="px-5 pb-2"><button class="w-full bg-white border border-cyan-300 text-cyan-800 rounded-xl py-2.5 text-sm font-semibold hover:bg-cyan-50 active:scale-[0.99] transition" data-action="progress">📈 Progress over time</button></div>` : ''}
+    ${races.length ? `<div class="px-5 pb-2"><button class="w-full bg-white border border-amber-300 text-amber-800 rounded-xl py-2.5 text-sm font-semibold hover:bg-amber-50 active:scale-[0.99] transition" data-action="best-times">🏆 Best times</button></div>` : ''}
     <div class="px-5 pb-2 flex flex-wrap gap-2">
       <button class="bg-cyan-600 text-white rounded-xl px-3 py-2 text-xs font-semibold hover:bg-cyan-700 active:scale-[0.99] transition" data-action="add-event">+ Pace plan</button>
       <button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-race">+ Race</button>
@@ -1923,6 +1961,73 @@ function renderSavedSwimmer() {
       ${section('50 m LCM splits', fiftyRows)}
       ${section('Course conversions', convRows)}
       ${section('Efficiency tests', effRows)}
+    </div>
+  `;
+}
+
+// ----- Screen: Best times (fastest saved race per event, with time-window filters) -----
+function bestTimesFor(sid, f) {
+  const races = state.saved.filter(s => s.sid === sid && s.kind === 'race');
+  const now = new Date();
+  const inWin = (r) => {
+    if (f.mode === 'all') return true;
+    if (!r.date) return false;
+    const d = new Date(r.date + 'T12:00:00');
+    if (isNaN(d)) return false;
+    if (f.mode === 'year') return f.year != null && d.getFullYear() === f.year;
+    const c = new Date(now);
+    c.setMonth(c.getMonth() - ({ m1: 1, m3: 3, m6: 6, m9: 9 }[f.mode] || 0));
+    return d >= c;
+  };
+  const best = {};
+  races.forEach(r => {
+    if (!inWin(r)) return;
+    const c = buildRaceComparison(r);
+    if (!c || !(c.actualTotal > 0)) return;
+    const key = r.distance + '|' + r.stroke + '|' + r.pool;
+    if (!best[key] || c.actualTotal < best[key].t - 1e-9) best[key] = { r, t: c.actualTotal };
+  });
+  const order = { Free: 0, Back: 1, Breast: 2, Fly: 3, IM: 4 };
+  return Object.values(best).sort((a, b) =>
+    (order[a.r.stroke] ?? 9) - (order[b.r.stroke] ?? 9) || a.r.distance - b.r.distance || String(a.r.pool).localeCompare(String(b.r.pool)));
+}
+
+function renderBestTimes() {
+  const sid = state.savedSid;
+  const all = sid ? state.saved.filter(s => s.sid === sid) : [];
+  if (!all.length) return renderRoster();
+  const name = all[all.length - 1].name || '';
+  const f = state.btFilter || (state.btFilter = { mode: 'all', year: null });
+  const races = all.filter(s => s.kind === 'race');
+  const years = [...new Set(races.map(r => (r.date || '').slice(0, 4)).filter(y => /^\d{4}$/.test(y)))].sort().reverse();
+  const chips = [['m1', '1 mo'], ['m3', '3 mo'], ['m6', '6 mo'], ['m9', '9 mo'], ['year', 'Year'], ['all', 'All']];
+  const undated = races.filter(r => !r.date).length;
+  const list = bestTimesFor(sid, f);
+  const rows = list.map(({ r, t }) => `
+    <div class="px-3 py-3.5 flex items-center gap-3 clickable rounded-xl border-b border-slate-100" data-saved="${r.id}" style="min-height:56px;">
+      <div class="flex-1 min-w-0">
+        <div class="font-semibold text-[15px]">${r.distance} ${r.stroke} <span class="text-xs font-normal text-muted">${r.pool}</span></div>
+        <div class="text-xs text-muted mt-0.5">${r.date || 'no date'}${r.competition ? ' · ' + r.competition : ''}${r.round ? ' · ' + r.round : ''}</div>
+      </div>
+      <div class="mono font-bold text-[17px] text-cyan-800">${formatTime(t)}</div>
+      <span class="text-slate-300 text-2xl">›</span>
+    </div>`).join('');
+  return `
+    <div class="statusbar"></div>
+    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <div class="flex-1 min-w-0">
+        <div class="text-lg font-semibold truncate">Best times</div>
+        <div class="text-xs text-muted truncate">${name}</div>
+      </div>
+    </div>
+    <div class="px-5 pb-2 flex flex-wrap gap-2">
+      ${chips.map(([k, l]) => `<span class="pill ${f.mode === k ? 'active' : ''}" data-btmode="${k}">${k === 'year' && f.mode === 'year' && f.year ? f.year : l}</span>`).join('')}
+    </div>
+    ${state.btYearOpen ? `<div class="px-5 pb-2 flex flex-wrap gap-2">${years.length ? years.map(y => `<span class="pill ${f.year === +y ? 'active' : ''}" data-btyear="${y}">${y}</span>`).join('') : '<span class="text-xs text-muted">No dated races yet</span>'}</div>` : ''}
+    <div class="scrollable px-3 pb-2 bg-slate-50">
+      ${rows || `<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-6 m-2 text-center text-sm text-muted">No races ${f.mode === 'all' ? 'saved yet' : 'in this window'} — best times come from saved races.</div>`}
+      ${f.mode !== 'all' && undated ? `<div class="px-3 py-2 text-xs text-muted">${undated} race${undated === 1 ? '' : 's'} without a date only count under “All”.</div>` : ''}
     </div>
   `;
 }
@@ -3024,6 +3129,22 @@ function buildDisplaySegments(r) {
       { time: r.splits[n - 1], lo: r.lo[n - 1], hi: r.hi[n - 1], label: 'Last 50', count: 1, half: 'middle' },
     ];
   }
+  // SCM 100: show 25 m lines with cumulative (Gaël 2026-07-22e). Each 50 is sub-split
+  // with the stroke/sex SCM-50 per-25 shape (dive-50 table, applied to both laps), so the
+  // 25 and 75 marks are estimates; the 50 and 100 rows stay exactly on the pacing table.
+  if (!isIM && r.pool === 'SCM' && r.distance === 100 && r.splits.length === 2) {
+    const t50 = getRatios(r.stroke, r.sex, 'SCM', 50);
+    if (t50 && t50.median && t50.median.length === 2) {
+      const s0 = t50.median[0] + t50.median[1];
+      const fa = t50.median[0] / s0, fb = t50.median[1] / s0;
+      const out = [];
+      [0, 1].forEach(j => {
+        out.push({ time: r.splits[j] * fa, lo: r.lo[j] * fa, hi: r.hi[j] * fa, label: (j * 50 + 25) + ' m (est.)', srIdx: j, half: j === 0 ? 'front' : 'middle' });
+        out.push({ time: r.splits[j] * fb, lo: r.lo[j] * fb, hi: r.hi[j] * fb, label: (j * 50 + 50) + ' m', srIdx: j, half: j === 1 ? 'back' : 'middle' });
+      });
+      return out;
+    }
+  }
   const imL = isIM ? imLabels[r.distance] : null;
   const nSeg = r.splits.length;
   return r.splits.map((t, i) => ({
@@ -3180,7 +3301,7 @@ function renderPredictedSplits() {
         <div class="text-center mb-1.5">
           <span class="label-cap text-faint">${row.label}</span>
           <div class="hero-time text-2xl leading-tight">${formatTime(row.time)}</div>
-          ${per50 && per50[i] ? `<div class="text-[10px] text-faint">SR ~${Math.round(per50[i].avg)} (${Math.round(per50[i].lo)}–${Math.round(per50[i].hi)}) cyc/min</div>` : ''}
+          ${(() => { const sp = per50 && (row.srIdx != null ? per50[row.srIdx] : per50[i]); return sp ? `<div class="text-[10px] text-faint">SR ~${Math.round(sp.avg)} (${Math.round(sp.lo)}–${Math.round(sp.hi)}) cyc/min</div>` : ''; })()}
         </div>
         <div class="relative">
           <div class="range-track">
@@ -3641,14 +3762,14 @@ function renderRaceEntry() {
   const distances = [50, 100, 200, 400, 800, 1500];
   const fields = raceEntryFields(f.stroke, f.distance);
   const distFree = f.stroke !== 'IM' && f.distance >= 400;
-  const showRowSr = f.distance !== 50;
+  const showRowSr = f.distance !== 50 && f.distance < 400;
   const fieldRows = fields.map(fl => `
     <div class="flex items-center gap-2 py-2 border-b border-slate-100 last:border-0">
       <div class="text-sm font-semibold text-slate-700 flex-shrink-0" style="min-width:46px;">${fl.label}</div>
       ${timeBoxes(fl.key, rf.times[fl.key] ?? 0)}
       ${showRowSr ? `<input data-race-sr="${fl.key}" inputmode="decimal" value="${rf.sr && rf.sr[fl.key] != null ? rf.sr[fl.key] : ''}" placeholder="SR" class="w-11 bg-slate-100 rounded-lg px-1 py-1.5 text-sm text-center outline-none focus:ring-2 focus:ring-cyan-300 flex-shrink-0" />` : ''}
     </div>`).join('');
-  const extraSr = (f.distance === 50 ? [{ key: 'first25', label: '1st 25 SR' }, { key: 'second25', label: '2nd 25 SR' }] : []).concat([{ key: 'last15', label: 'Last 15 m SR' }]);
+  const extraSr = f.distance >= 400 ? [] : (f.distance === 50 ? [{ key: 'first25', label: '1st 25 SR' }, { key: 'second25', label: '2nd 25 SR' }] : []); // last-15 SR input removed — analysis shows the EXPECTED last-15 from the per-50 SRs instead
   const extraSrRows = extraSr.map(fl => `
       <div class="flex items-center justify-between gap-2 py-2 border-b border-slate-100 last:border-0">
         <div class="text-sm font-semibold text-slate-700">${fl.label}</div>
@@ -3712,10 +3833,10 @@ function renderRaceEntry() {
         <div class="label-cap mb-2">What they swam · time${showRowSr ? ' + SR' : ''} ${distFree ? '<span class="text-faint" style="text-transform:none;letter-spacing:0;font-weight:400;">· middle 50s averaged</span>' : ''}</div>
         <div class="bg-white border border-slate-200 rounded-2xl px-4 py-1">${fieldRows}</div>
       </div>
-      <div>
+      ${extraSrRows ? `<div>
         <div class="label-cap mb-2">Stroke rate</div>
         <div class="bg-white border border-slate-200 rounded-2xl px-4 py-1">${extraSrRows}</div>
-      </div>
+      </div>` : ''}
       <div>
         <div class="label-cap mb-2">Notes</div>
         <textarea data-race-notes rows="3" placeholder="What happened, technique cues, how it felt…" class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-sm outline-none focus:ring-2 focus:ring-cyan-300 resize-none">${(rf.notes || '').replace(/</g, '&lt;')}</textarea>
@@ -3737,6 +3858,34 @@ function renderRaceEntry() {
   `;
 }
 
+// Expected last-15 SR: the swimmer's own early-race SR × the elite late-race ratio.
+// Ratio = SR over the last 20 m of the race (excluding the final 5 m, i.e. the last-25
+// video segment) ÷ early-race SR, per swimmer, averaged over the Paris 2024 + Fukuoka
+// 2023 finals (50m_sprint_data.csv, sr_per25_by_swimmer.csv). Early-race baseline
+// matches what the coach types: 50 → 1st-25 SR · 100 → first-50 SR · 200 → mean SR of
+// the first three 50s. Sprints decay (~-2…-4%); 200s finish faster (Breast M +28%).
+const mmSrDrop = {
+  '50':  { Free: { M: 0.964, F: 0.961 }, Back: { M: 0.963, F: 0.971 }, Fly: { M: 0.981, F: 0.971 }, Breast: { M: 0.997, F: 0.994 } },
+  '100': { Free: { M: 0.978, F: 0.966 }, Back: { M: 0.978, F: 0.952 }, Fly: { M: 0.983, F: 0.978 }, Breast: { M: 1.070, F: 1.046 } },
+  '200': { Free: { M: 1.051, F: 1.029 }, Back: { M: 1.073, F: 0.993 }, Fly: { M: 1.016, F: 1.005 }, Breast: { M: 1.285, F: 1.148 } },
+};
+function expectedLast15(race) {
+  const d = mmSrDrop[String(race.distance)];
+  const t = d && d[race.stroke];
+  const fac = t && t[race.sex];
+  if (!fac) return null; // IM and 400+ have no reference
+  const sr = race.sr || {};
+  const num = (x) => { const v = parseFloat(x); return isFinite(v) && v > 0 ? v : null; };
+  let base;
+  if (race.distance === 50) base = num(sr.first25);
+  else if (race.distance === 100) base = num(sr.r0);
+  else {
+    const xs = [num(sr.r0), num(sr.r1), num(sr.r2)].filter(v => v != null);
+    base = xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
+  }
+  return base ? base * fac : null;
+}
+
 // ----- Screen: Race analysis -----
 function renderRaceAnalysis() {
   const race = state.race;
@@ -3747,6 +3896,7 @@ function renderRaceAnalysis() {
   const deltaColor = beat ? 'text-emerald-700' : 'text-rose-600';
   const deltaBg = beat ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100';
   const sr = race.sr || {};
+  const expL = expectedLast15(race);
   const defs = raceRowDefs(race.stroke, race.distance);
   const pt = predict(race.stroke, race.sex, race.pool, race.distance, race.targetSeconds);
   const predAt = defs.map(def => {
@@ -3795,7 +3945,7 @@ function renderRaceAnalysis() {
     </div>
     <div class="scrollable px-5 py-3 space-y-3 bg-slate-50">
       <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">${head}${splitRows}</div>
-      ${(sr.first25 > 0 || sr.second25 > 0 || sr.last15 > 0) ? `<div class="bg-white rounded-2xl border border-slate-200 p-4"><div class="label-cap text-muted mb-1">Stroke rate</div><div class="text-sm text-slate-700">${[sr.first25 > 0 ? `1st 25 <span class="mono font-semibold">${sr.first25}</span>` : '', sr.second25 > 0 ? `2nd 25 <span class="mono font-semibold">${sr.second25}</span>` : '', sr.last15 > 0 ? `last 15 m <span class="mono font-semibold">${sr.last15}</span>` : ''].filter(Boolean).join(' · ')}</div></div>` : ''}
+      ${(sr.first25 > 0 || sr.second25 > 0 || sr.last15 > 0 || expL) ? `<div class="bg-white rounded-2xl border border-slate-200 p-4"><div class="label-cap text-muted mb-1">Stroke rate</div><div class="text-sm text-slate-700">${[sr.first25 > 0 ? `1st 25 <span class="mono font-semibold">${sr.first25}</span>` : '', sr.second25 > 0 ? `2nd 25 <span class="mono font-semibold">${sr.second25}</span>` : '', sr.last15 > 0 ? `last 15 m <span class="mono font-semibold ${expL && parseFloat(sr.last15) < expL * 0.95 ? 'text-rose-600' : ''}">${sr.last15}</span>${expL ? ` <span class="text-xs text-muted">(expected ~${expL.toFixed(1)})</span>` : ''}` : (expL ? `expected last 15 m ≈ <span class="mono font-semibold">${expL.toFixed(1)}</span>` : '')].filter(Boolean).join(' · ')}${expL && sr.last15 > 0 && parseFloat(sr.last15) < expL * 0.95 ? `<div class="text-xs text-rose-600 mt-1">Rate faded more than the elite pattern (−5%+) — finishing tempo collapsed.</div>` : ''}</div></div>` : ''}
       ${race.notes ? `<div class="bg-white rounded-2xl border border-slate-200 p-4"><div class="label-cap text-muted mb-1">Notes</div><div class="text-sm text-slate-700 leading-relaxed" style="white-space:pre-wrap;">${(race.notes || '').replace(/</g, '&lt;')}</div></div>` : ''}
     </div>
   `;
@@ -3948,10 +4098,21 @@ document.addEventListener('click', (e) => {
     }
     const pg = e.target.closest('[data-proggroup]');
     if (pg) { state.progGroup = decodeURIComponent(pg.getAttribute('data-proggroup')); state.progMetric = null; state.progWindow = 'recent'; navigate('progress-group'); return; }
+    const bm = e.target.closest('[data-btmode]');
+    if (bm) {
+      const m = bm.getAttribute('data-btmode');
+      if (m === 'year') { state.btYearOpen = !state.btYearOpen; }
+      else { state.btFilter = { mode: m, year: null }; state.btYearOpen = false; }
+      render(); return;
+    }
+    const by = e.target.closest('[data-btyear]');
+    if (by) { state.btFilter = { mode: 'year', year: +by.getAttribute('data-btyear') }; state.btYearOpen = false; render(); return; }
     const pm = e.target.closest('[data-progmetric]');
     if (pm) { state.progMetric = pm.getAttribute('data-progmetric'); render(); return; }
     const pw = e.target.closest('[data-progwindow]');
     if (pw) { state.progWindow = pw.getAttribute('data-progwindow'); render(); return; }
+    const rg = e.target.closest('[data-rgroup]');
+    if (rg) { state.rgOpen = state.rgOpen || {}; const k = rg.getAttribute('data-rgroup'); state.rgOpen[k] = !state.rgOpen[k]; render(); return; }
     const sv = e.target.closest('[data-saved]');
     if (sv) {
       const entry = state.saved.find(x => x.id === sv.getAttribute('data-saved'));
@@ -4169,6 +4330,7 @@ function handleAction(action, el) {
     case 'adjacent': navigate('adjacent'); break;
     case 'trends': navigate('trends'); break;
     case 'progress': navigate('progress'); break;
+    case 'best-times': state.btFilter = { mode: 'all', year: null }; state.btYearOpen = false; navigate('best-times'); break;
     case 'save-conv': {
       const c = state.convForm;
       if (!(c.name || '').trim()) { showToast('Add a swimmer name to save'); break; }
@@ -4269,7 +4431,22 @@ function handleAction(action, el) {
       if (!nm) { showToast('Add a swimmer name to save'); break; }
       if (!state.result) { showToast('Nothing to save'); break; }
       const r = state.result;
-      const upd = upsertSaved({ id: 'sv' + Date.now().toString(36), sid: resolveSid(state.form), name: nm,
+      const sid = resolveSid(state.form);
+      // Same-event plan already saved for this swimmer? Offer replace (showing the old
+      // target) or keep both (Gaël 2026-07-22e). Edits-in-place (reviewId) skip the prompt.
+      if (!state.reviewId) {
+        const dup = state.saved.filter(x => x.sid === sid && (!x.kind || x.kind === 'plan') &&
+          x.distance === r.distance && x.stroke === r.stroke && x.pool === r.pool).pop();
+        if (dup) {
+          if (confirm(`${nm} already has a ${r.distance} ${r.stroke} ${r.pool} plan — target ${formatTime(dup.targetSeconds)}.\n\nOK = replace it with ${formatTime(r.targetSeconds)}\nCancel = keep both (saves a new entry)`)) {
+            dup.sex = r.sex; dup.targetSeconds = r.targetSeconds;
+            persistSaved();
+            showToast(`Replaced ${nm} · ${r.distance} ${r.stroke} ${r.pool} plan`);
+            break;
+          }
+        }
+      }
+      const upd = upsertSaved({ id: 'sv' + Date.now().toString(36), sid, name: nm,
         stroke: r.stroke, sex: r.sex, pool: r.pool, distance: r.distance, targetSeconds: r.targetSeconds });
       showToast(`${upd ? 'Updated' : 'Saved'} ${nm} · ${r.distance} ${r.stroke}`);
       break;
