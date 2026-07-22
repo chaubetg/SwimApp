@@ -948,6 +948,7 @@ function generateInsights(prediction, actualSplits, swimmer) {
 // STATE
 // ============================================================
 
+const PUBLIC_BUILD = false; // true in index.html — public root app: Split predictor + Race Review only
 // Saved predictions persist in the browser (localStorage) so a coach can search a
 // swimmer later and pull their splits. Multiple entries per name are allowed.
 const SAVED_KEY = 'pacer_saved_v2';
@@ -1743,7 +1744,7 @@ function renderRoster() {
         <div class="text-[11px] text-muted mt-0.5 leading-snug">Compare a swim to the plan</div>
       </button>
     </div>
-    <div class="px-5 pb-2 space-y-2">
+    ${PUBLIC_BUILD ? '' : `<div class="px-5 pb-2 space-y-2">
       <button class="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3.5 text-left hover:border-cyan-300 hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm flex items-center justify-between gap-3" data-action="converter">
         <div>
           <div class="font-bold text-slate-800 text-[15px]">Course converter</div>
@@ -1772,7 +1773,7 @@ function renderRoster() {
         </div>
         <span class="text-cyan-600 text-lg leading-none flex-shrink-0">⊿</span>
       </button>
-    </div>
+    </div>`}
     <div class="px-5 pb-1">
       <div class="bg-slate-100 rounded-xl px-3.5 py-3 flex items-center gap-2">
         <span class="text-muted">⌕</span>
@@ -1948,10 +1949,10 @@ function renderSavedSwimmer() {
     <div class="px-5 pb-2 flex flex-wrap gap-2">
       <button class="bg-cyan-600 text-white rounded-xl px-3 py-2 text-xs font-semibold hover:bg-cyan-700 active:scale-[0.99] transition" data-action="add-event">+ Pace plan</button>
       <button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-race">+ Race</button>
-      <button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-adjacent">+ Adjacent</button>
+      ${PUBLIC_BUILD ? '' : `<button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-adjacent">+ Adjacent</button>
       <button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-fifty">+ 50 m</button>
       <button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-convert">+ Conversion</button>
-      <button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-eff">+ Efficiency</button>
+      <button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-eff">+ Efficiency</button>`}
     </div>
     ${compareBtn}`}
     <div class="scrollable px-3 pb-2 bg-slate-50">
