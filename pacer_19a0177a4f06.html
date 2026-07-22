@@ -1919,7 +1919,7 @@ function renderSavedSwimmer() {
 
   const compareBtn = ''; // compare removed in the simplified race logger
 
-  const section = (label, rows) => rows ? `<div class="px-2 pt-3 pb-1"><span class="label-cap">${label}</span></div>${rows}` : '';
+  const section = (label, rows, big) => rows ? `<div class="px-2 ${big ? 'pt-4' : 'pt-3'} pb-1">${big ? `<span class="text-[17px] font-bold text-slate-800">${label}</span>` : `<span class="label-cap">${label}</span>`}</div>${rows}` : '';
   const subtitle = [
     plans.length ? `${plans.length} plan${plans.length === 1 ? '' : 's'}` : '',
     races.length ? `${races.length} race${races.length === 1 ? '' : 's'}` : '',
@@ -1956,8 +1956,8 @@ function renderSavedSwimmer() {
     </div>
     ${compareBtn}`}
     <div class="scrollable px-3 pb-2 bg-slate-50">
-      ${section('Races', raceRowsHtml)}
-      ${section('Pace plans', predRows)}
+      ${section('Race Review', raceRowsHtml, true)}
+      ${section('Race Predictor', predRows, true)}
       ${section('Adjacent events', adjRows)}
       ${section('50 m LCM splits', fiftyRows)}
       ${section('Course conversions', convRows)}
