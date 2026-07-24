@@ -864,6 +864,55 @@ function parseTime(str) {
   return m * 60 + s;
 }
 
+// ===== World Aquatics Point Scoring =====
+// P = 1000 * (B/T)^3, truncated to an integer. B = the 1000-point base time for that
+// event/sex/course (the standing World Record at the table's cut-off date).
+// LCM = 2026 table (01.01.2026-31.12.2026) · SCM = 2025 table (01.09.2025-31.08.2026).
+// Source PDFs live in sw_database/World Aquatics Points/.
+const waBase = {
+  M: {
+    LCM: { Free: { 50: 20.91, 100: 46.40, 200: 102.00, 400: 219.96, 800: 452.12, 1500: 870.67 },
+           Back: { 50: 23.55, 100: 51.60, 200: 111.92 }, Breast: { 50: 25.95, 100: 56.88, 200: 125.48 },
+           Fly:  { 50: 22.27, 100: 49.45, 200: 110.34 }, IM: { 200: 112.69, 400: 242.50 } },
+    SCM: { Free: { 50: 19.90, 100: 44.84, 200: 98.61, 400: 212.25, 800: 440.46, 1500: 846.88 },
+           Back: { 50: 22.11, 100: 48.33, 200: 105.63 }, Breast: { 50: 24.95, 100: 55.28, 200: 120.16 },
+           Fly:  { 50: 21.32, 100: 47.71, 200: 106.85 }, IM: { 100: 49.28, 200: 108.88, 400: 234.81 } },
+  },
+  F: {
+    LCM: { Free: { 50: 23.61, 100: 51.71, 200: 112.23, 400: 234.18, 800: 484.12, 1500: 920.48 },
+           Back: { 50: 26.86, 100: 57.13, 200: 123.14 }, Breast: { 50: 29.16, 100: 64.13, 200: 137.55 },
+           Fly:  { 50: 24.43, 100: 54.60, 200: 121.81 }, IM: { 200: 125.70, 400: 263.65 } },
+    SCM: { Free: { 50: 22.83, 100: 50.25, 200: 110.31, 400: 230.25, 800: 477.42, 1500: 908.24 },
+           Back: { 50: 25.23, 100: 54.02, 200: 118.04 }, Breast: { 50: 28.37, 100: 62.36, 200: 132.50 },
+           Fly:  { 50: 23.94, 100: 52.71, 200: 119.32 }, IM: { 100: 55.11, 200: 121.63, 400: 255.48 } },
+  },
+};
+// null when the event has no base time (SCY, or a distance that isn't swum for that stroke).
+function waBaseTime(stroke, distance, pool, sex) {
+  return (waBase[sex] && waBase[sex][pool] && waBase[sex][pool][stroke] && waBase[sex][pool][stroke][distance]) || null;
+}
+function waPoints(seconds, stroke, distance, pool, sex) {
+  const b = waBaseTime(stroke, distance, pool, sex);
+  if (!b || !(seconds > 0)) return null;
+  return Math.floor(1000 * Math.pow(b / seconds, 3));
+}
+// The SLOWEST hundredth that still scores >= P. Truncating the cubic estimate alone can
+// land a hundredth short (scoring P-1) because of float error at exact boundaries, so the
+// result is verified with the forward formula and stepped until it holds.
+function waTimeForPoints(points, stroke, distance, pool, sex) {
+  const b = waBaseTime(stroke, distance, pool, sex);
+  const P = Math.round(points);
+  if (!b || !(P > 0)) return null;
+  const pts = (x) => Math.floor(1000 * Math.pow(b / x, 3));
+  const hundredth = (x) => Math.round(x * 100) / 100;
+  let t = Math.floor(b * Math.pow(1000 / P, 1 / 3) * 100) / 100;
+  let guard = 0;
+  while (t > 0.01 && pts(t) < P && guard++ < 1000) t = hundredth(t - 0.01);
+  guard = 0;
+  while (pts(hundredth(t + 0.01)) >= P && guard++ < 1000) t = hundredth(t + 0.01);
+  return t;
+}
+
 function getRatios(stroke, sex, pool, distance) {
   return ratios?.[stroke]?.[sex]?.[pool]?.[distance] ?? null;
 }
@@ -1213,6 +1262,7 @@ function navigate(view, opts = {}) {
   state.editing = false; // leave edit mode whenever we change screens
   state.reviewId = null; // default: a fresh open is a new entry (review-clicks pass reviewId in opts)
   state.cmpMode = null;  // comparisons start closed on every screen change
+  if (view !== 'race-analysis') state.raceSaved = null; // the Saved chip belongs to the save that just happened
   Object.assign(state, rest);
   render();
 }
@@ -1448,18 +1498,42 @@ function render() {
   const tsec = host.querySelector('[data-tsec]');
   const thh = host.querySelector('[data-thh]');
   if (tmin && tsec && thh) {
+    const wapts = host.querySelector('[data-wapts]');
+    const showPts = () => {                    // keep the points box in step with the time
+      if (!wapts || document.activeElement === wapts) return;
+      const f = state.form;
+      const p = waPoints(f.targetSeconds, f.stroke, f.distance, f.pool, f.sex);
+      wapts.value = (p != null && p > 0) ? p : '';
+    };
     const sync = () => {
       const m = parseInt(tmin.value || '0', 10) || 0;
       const s = parseInt(tsec.value || '0', 10) || 0;
       const h = parseInt(thh.value || '0', 10) || 0;
       state.form.targetSeconds = m * 60 + s + h / 100;
+      showPts();
     };
+    if (wapts) {
+      wapts.addEventListener('focus', () => wapts.select());
+      wapts.addEventListener('input', () => {
+        wapts.value = wapts.value.replace(/\D/g, '').slice(0, 4);
+        const f = state.form;
+        const p = parseInt(wapts.value || '0', 10);
+        const t = p > 0 ? waTimeForPoints(p, f.stroke, f.distance, f.pool, f.sex) : null;
+        if (t == null) return;
+        state.form.targetSeconds = t;          // drive the time boxes, don't re-render (keeps the caret)
+        tmin.value = Math.floor(t / 60);
+        tsec.value = String(Math.floor(t % 60)).padStart(2, '0');
+        thh.value = String(Math.round((t - Math.floor(t)) * 100)).padStart(2, '0');
+      });
+      wapts.addEventListener('blur', () => render());
+    }
     [tmin, tsec, thh].forEach((el) => {
       el.addEventListener('focus', () => el.select());
       el.addEventListener('input', () => {
-        el.value = el.value.replace(/\D/g, '').slice(0, 2); // digits only, max 2
+        const cap = (el === tmin) ? minDigits(state.form.distance) : 2;
+        el.value = el.value.replace(/\D/g, '').slice(0, cap); // digits only
         sync();
-        if (el === tmin && el.value.length === 2) { tsec.focus(); tsec.select(); }
+        if (el === tmin && el.value.length === cap) { tsec.focus(); tsec.select(); }
         else if (el === tsec && el.value.length === 2) { thh.focus(); thh.select(); }
       });
       el.addEventListener('blur', () => {
@@ -1620,9 +1694,10 @@ function render() {
     [mi, se, hh].forEach((el) => {
       el.addEventListener('focus', () => el.select());
       el.addEventListener('input', () => {
-        el.value = el.value.replace(/\D/g, '').slice(0, 2);
+        const cap = (el === mi) ? minDigits(state.form.distance) : 2;
+        el.value = el.value.replace(/\D/g, '').slice(0, cap);
         sync();
-        if (el === mi && el.value.length === 2) { se.focus(); se.select(); }
+        if (el === mi && el.value.length === cap) { se.focus(); se.select(); }
         else if (el === se && el.value.length === 2) { hh.focus(); hh.select(); }
       });
       el.addEventListener('blur', () => {
@@ -3108,11 +3183,18 @@ function renderQuickCalc() {
         </div>
       </div>
       <div>
-        <div class="label-cap mb-2">Target time</div>
+        <div class="flex items-center justify-between gap-3 mb-2">
+          <div class="label-cap">Target time</div>
+          ${waBaseTime(f.stroke, f.distance, f.pool, f.sex) ? `<div class="flex items-center gap-1.5">
+            <span class="label-cap text-faint">Aqua pts</span>
+            <input data-wapts inputmode="numeric" value="${waPoints(f.targetSeconds, f.stroke, f.distance, f.pool, f.sex) || ''}" placeholder="—"
+              class="w-[4.5rem] bg-slate-100 rounded-lg px-2 py-1.5 text-sm text-center outline-none focus:ring-2 focus:ring-cyan-300" aria-label="World Aquatics points" />
+          </div>` : ''}
+        </div>
         <div class="bg-gradient-to-br from-cyan-50 to-white border-2 border-cyan-200 rounded-2xl px-4 py-5 focus-within:border-cyan-500 transition">
           <div class="flex items-end justify-center gap-1">
             <div class="text-center">
-              <input data-tmin inputmode="numeric" maxlength="2" value="${tmin}" class="time-seg" aria-label="Minutes" />
+              <input data-tmin inputmode="numeric" maxlength="${minDigits(f.distance)}" value="${tmin}" class="time-seg" aria-label="Minutes" />
               <div class="time-seg-label">min</div>
             </div>
             <div class="time-seg-sep">:</div>
@@ -3744,6 +3826,9 @@ function buildRaceComparison(race) {
   if (distFree || (race.distance === 50 && !scm50)) actualTotal = t.total;      // single-box 50 (LCM) / 400+
   else if (scm50 && t.r0 == null && t.r1 == null) actualTotal = t.total || 0;   // legacy 50 SCM saved as one total (pre-25-split)
   else actualTotal = defs.reduce((s, def) => s + (def.kind === 'mid' ? 0 : (t[def.key] || 0)), 0); // sum segs (incl. 50 SCM's two 25s)
+  // Splits are optional: if none were entered, fall back to the official time typed at the
+  // top so the race is still a complete record (a total with no splits is a valid swim).
+  if (!(actualTotal > 0)) actualTotal = race.targetSeconds || 0;
   const p = predict(race.stroke, race.sex, race.pool, race.distance, actualTotal);
   if (!p) return null;
   const nmid = p.splits.length - 2;
@@ -3833,11 +3918,16 @@ function raceInsights(rows, actualTotal, target, hit) {
 }
 
 // 3-box time entry (min : sec . hundredths) bound by key into state.raceForm.times.
-function timeBoxes(key, seconds) {
+// Nothing at 400 m or shorter is ever 10+ minutes, so the minutes box takes one digit
+// there (two for 800/1500) — fewer stray keystrokes on deck.
+function minDigits(distance) { return (distance && distance <= 400) ? 1 : 2; }
+
+function timeBoxes(key, seconds, distance) {
+  const md = minDigits(distance);
   const t = Math.max(0, seconds || 0);
   const m = Math.floor(t / 60), s = Math.floor(t % 60), h = Math.round((t - Math.floor(t)) * 100);
   return `<div class="flex items-center gap-1" data-tkey="${key}">
-      <input class="tb tb-min" inputmode="numeric" maxlength="2" value="${m}" aria-label="minutes" />
+      <input class="tb tb-min" inputmode="numeric" maxlength="${md}" value="${m}" aria-label="minutes" />
       <span class="tb-sep">:</span>
       <input class="tb tb-sec" inputmode="numeric" maxlength="2" value="${String(s).padStart(2, '0')}" aria-label="seconds" />
       <span class="tb-sep">.</span>
@@ -3859,7 +3949,7 @@ function renderRaceEntry() {
   const fieldRows = fields.map(fl => `
     <div class="flex items-center gap-2 py-2 border-b border-slate-100 last:border-0">
       <div class="text-sm font-semibold text-slate-700 flex-shrink-0" style="min-width:46px;">${fl.label}</div>
-      ${timeBoxes(fl.key, rf.times[fl.key] ?? 0)}
+      ${timeBoxes(fl.key, rf.times[fl.key] ?? 0, f.distance)}
       ${showRowSr ? `<input data-race-sr="${fl.key}" inputmode="decimal" value="${rf.sr && rf.sr[fl.key] != null ? rf.sr[fl.key] : ''}" placeholder="SR" class="w-11 bg-slate-100 rounded-lg px-1 py-1.5 text-sm text-center outline-none focus:ring-2 focus:ring-cyan-300 flex-shrink-0" />` : ''}
     </div>`).join('');
   const extraSr = f.distance >= 400 ? [] : (f.distance === 50 ? [{ key: 'first25', label: '1st 25 SR' }, { key: 'second25', label: '2nd 25 SR' }] : []); // last-15 SR input removed — analysis shows the EXPECTED last-15 from the per-50 SRs instead
@@ -3929,7 +4019,7 @@ function renderRaceEntry() {
       <div class="bg-gradient-to-br from-cyan-50 to-white border border-cyan-100 rounded-2xl px-4 py-3">
         <div class="flex items-center justify-between gap-3">
           <div class="label-cap text-cyan-800">Time swam</div>
-          ${timeBoxes('target', rf.times.target)}
+          ${timeBoxes('target', rf.times.target, f.distance)}
         </div>
       </div>
       <div>
@@ -4096,8 +4186,10 @@ function renderRaceAnalysis() {
         <div class="text-xs text-muted truncate">${race.distance} ${race.stroke} ${race.pool}${meetLabel(race) ? ' · ' + meetLabel(race) : ''}${race.date ? ' · ' + race.date : ''}</div>
       </div>
       <div class="flex items-center gap-1.5 flex-shrink-0">
+        ${state.raceSaved === 'saved' ? '<span class="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-[11px] font-semibold">Saved ✓</span>'
+          : state.raceSaved === 'noname' ? '<span class="px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 text-[11px] font-semibold">Not saved · no name</span>'
+          : state.raceSaved === 'notime' ? '<span class="px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 text-[11px] font-semibold">Not saved · no time</span>' : ''}
         <button class="px-3 py-2 rounded-full bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 transition" data-action="edit-race">Edit</button>
-        <button class="px-3.5 py-2 rounded-full bg-cyan-50 text-cyan-800 text-xs font-semibold hover:bg-cyan-100 transition" data-action="save-race">Save</button>
       </div>
     </div>
     <div class="px-5 py-3 bg-white border-b border-slate-100">
@@ -4507,9 +4599,12 @@ function handleAction(action, el) {
         notes: (rf.notes || '').trim(),
       };
       state.race = race;
-      // Save on the way to the comparison — only when named and the swim has a real total.
+      // Save on the way to the comparison. A time counts whether it came from the splits or
+      // from the official time at the top — splits are optional.
       const _cmp = buildRaceComparison(race);
-      const _named = !!race.name, _timed = !!(_cmp && _cmp.actualTotal > 0);
+      const _total = (_cmp && _cmp.actualTotal > 0) ? _cmp.actualTotal : (race.targetSeconds || 0);
+      const _named = !!race.name, _timed = _total > 0;
+      state.raceSaved = (_named && _timed) ? 'saved' : (!_named ? 'noname' : 'notime');
       if (_named && _timed) {
         if (state.raceEditId) {
           const i = state.saved.findIndex(x => x.id === state.raceEditId);
@@ -4525,7 +4620,7 @@ function handleAction(action, el) {
           if (dup) {
             const oc = buildRaceComparison(dup), oldT = oc ? formatTime(oc.actualTotal) : '—';
             const ml = meetLabel(race);
-            if (confirm(`Race already exists — ${race.name}'s ${race.distance} ${race.stroke} ${race.pool}${ml ? ' at ' + ml : ''}${race.date ? ' on ' + race.date : ''} (${oldT}).\n\nOK = replace it with ${formatTime(_cmp.actualTotal)}\nCancel = keep both`)) {
+            if (confirm(`Race already exists — ${race.name}'s ${race.distance} ${race.stroke} ${race.pool}${ml ? ' at ' + ml : ''}${race.date ? ' on ' + race.date : ''} (${oldT}).\n\nOK = replace it with ${formatTime(_total)}\nCancel = keep both`)) {
               race.id = dup.id; race.sid = dup.sid;
               const i = state.saved.findIndex(x => x.id === dup.id);
               state.saved[i] = race; persistSaved(); state.raceEditId = dup.id;
@@ -4539,8 +4634,10 @@ function handleAction(action, el) {
             showToast(`Saved ${race.name} · ${race.distance} ${race.stroke}`);
           }
         }
-      } else if (_timed && !_named) {
-        showToast('Add a swimmer name to save — showing comparison only');
+      } else if (!_named) {
+        showToast('Not saved — add a swimmer name');
+      } else {
+        showToast('Not saved — enter the time swam');
       }
       navigate('race-analysis');
       break;
