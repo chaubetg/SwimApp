@@ -1442,8 +1442,20 @@ function renderJumper() {
   `).join('');
 }
 
+let renderedView = null;   // which screen the DOM currently shows, for scroll restoration
+
 function render() {
   const host = document.getElementById('screen-container');
+  // Redrawing the SAME screen means a value changed — the coach should stay exactly where
+  // they were. Moving to a DIFFERENT screen still starts at the top, as expected.
+  const prevScroller = host.querySelector('.scrollable');
+  const keepScroll = (renderedView === state.view && prevScroller) ? prevScroller.scrollTop : 0;
+  // Remember which time box held the caret: every input node is about to be replaced.
+  const ae = document.activeElement;
+  const aeGrp = (ae && host.contains(ae) && ae.closest) ? ae.closest('[data-tkey]') : null;
+  const keepFocus = (renderedView === state.view && aeGrp)
+    ? { key: aeGrp.getAttribute('data-tkey'), box: (ae.className.split(' ').find((c) => c.indexOf('tb-') === 0) || '') }
+    : null;
   let html = '';
   switch (state.view) {
     case 'roster': html = renderRoster(); break;
@@ -1466,6 +1478,13 @@ function render() {
     default: html = '<div class="p-8 text-slate-500">Unknown view</div>';
   }
   host.innerHTML = html;
+  renderedView = state.view;
+  if (keepScroll) { const sc = host.querySelector('.scrollable'); if (sc) sc.scrollTop = keepScroll; }
+  if (keepFocus && keepFocus.box) {
+    const g = host.querySelector(`[data-tkey="${keepFocus.key}"]`);
+    const box = g && g.querySelector('.' + keepFocus.box);
+    if (box) { box.focus(); box.select(); }
+  }
   renderJumper();
   // Re-bind input event for time field if present
   const ti = host.querySelector('[data-time-input]');
@@ -1697,13 +1716,25 @@ function render() {
         const cap = (el === mi) ? minDigits(state.form.distance) : 2;
         el.value = el.value.replace(/\D/g, '').slice(0, cap);
         sync();
+        markSplitTouched(key);
         if (el === mi && el.value.length === cap) { se.focus(); se.select(); }
         else if (el === se && el.value.length === 2) { hh.focus(); hh.select(); }
       });
       el.addEventListener('blur', () => {
         if ((el === se || el === hh) && el.value !== '') el.value = el.value.padStart(2, '0');
         sync();
-        if (key !== 'target' && autoLastSplit(key)) { render(); }
+        if (key === 'target') return;
+        // Auto-advance (sec -> hh) fires blur too, so acting here would re-derive the last
+        // split and redraw the screen BETWEEN the seconds and the hundredths of the number
+        // being typed. Wait a tick and only act once focus has left the whole group — the
+        // same guard the target box uses.
+        setTimeout(() => {
+          if (grp.contains(document.activeElement)) return;
+          const changed = autoLastSplit(key);
+          // Patch the one derived box in place; only fall back to a full redraw if it's
+          // somehow not on screen.
+          if (changed && !paintTimeBoxes(changed, state.raceForm.times[changed])) render();
+        }, 0);
       });
     });
     // Goal-time box: re-seed the predicted "what they swam" splits once the goal changes.
@@ -3790,12 +3821,13 @@ function autoLastSplit(changedKey) {
   if (rem <= 0) return false;
   if (Math.abs((rf.times[lastKey] || 0) - rem) < 0.005) return false; // already correct
   rf.times[lastKey] = rem;
-  return true;
+  return lastKey;   // the caller repaints just this box instead of re-rendering the screen
 }
 
 // Pre-fill the actual-split boxes with the predicted splits for the target (coach edits to real).
 function seedRaceTimes() {
   const f = state.form;
+  const prev = state.raceForm.times || {};
   const tgt = state.raceForm.times.target ?? f.targetSeconds ?? 120;
   const p = predict(f.stroke, f.sex, f.pool, f.distance, tgt);
   const times = { target: tgt };
@@ -3812,6 +3844,10 @@ function seedRaceTimes() {
       });
     }
   }
+  // Only boxes the coach has NOT typed into follow the time swam. Anything entered by hand
+  // survives a re-seed — correcting the total by 0.1s must not wipe three real splits.
+  const touched = state.raceForm.touched || {};
+  Object.keys(touched).forEach((k) => { if (touched[k] && prev[k] != null) times[k] = prev[k]; });
   state.raceForm.times = times;
 }
 
@@ -3921,6 +3957,33 @@ function raceInsights(rows, actualTotal, target, hit) {
 // Nothing at 400 m or shorter is ever 10+ minutes, so the minutes box takes one digit
 // there (two for 800/1500) — fewer stray keystrokes on deck.
 function minDigits(distance) { return (distance && distance <= 400) ? 1 : 2; }
+
+// Write a time into an EXISTING min:sec.hh group without rebuilding the page. render()
+// would replace every input node, which drops focus, closes the mobile keyboard and resets
+// the scroll container — far too violent for "one derived number changed".
+function paintTimeBoxes(key, seconds) {
+  const grp = document.querySelector(`[data-tkey="${key}"]`);
+  if (!grp) return false;
+  // The caret is in this row: the coach is entering it by hand and their value wins. Report
+  // success so the caller doesn't fall back to a full re-render.
+  if (grp.contains(document.activeElement)) return true;
+  const t = Math.max(0, seconds || 0);
+  const m = Math.floor(t / 60), s = Math.floor(t % 60), h = Math.round((t - Math.floor(t)) * 100);
+  const mi = grp.querySelector('.tb-min'), se = grp.querySelector('.tb-sec'), hh = grp.querySelector('.tb-hh');
+  if (!mi || !se || !hh) return false;
+  mi.value = String(m);
+  se.value = String(s).padStart(2, '0');
+  hh.value = String(h).padStart(2, '0');
+  return true;
+}
+
+// A split the coach has typed into belongs to the coach: seedRaceTimes must never re-predict
+// over it. 'target' IS the time swam and 'total' mirrors it, so neither can be claimed.
+function markSplitTouched(key) {
+  if (key === 'target' || key === 'total') return;
+  const rf = state.raceForm;
+  (rf.touched = rf.touched || {})[key] = true;
+}
 
 function timeBoxes(key, seconds, distance) {
   const md = minDigits(distance);
@@ -4558,7 +4621,7 @@ function handleAction(action, el) {
     case 'new-race':
       state.swimmer = null;
       state.form = { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 200, targetSeconds: 120, name: '' };
-      state.raceForm = { times: {}, sr: {}, competition: '', round: 'Final', date: '', notes: '' };
+      state.raceForm = { times: {}, sr: {}, touched: {}, competition: '', round: 'Final', date: '', notes: '' };
       state.raceEditId = null;
       seedRaceTimes();
       navigate('race-entry');
@@ -4571,7 +4634,7 @@ function handleAction(action, el) {
         distance: last ? last.distance : 200, targetSeconds: (last && last.targetSeconds) || 120,
         name: swimmerName(sid), sid,
       };
-      state.raceForm = { times: {}, sr: {}, competition: '', round: 'Final', date: '', notes: '' };
+      state.raceForm = { times: {}, sr: {}, touched: {}, competition: '', round: 'Final', date: '', notes: '' };
       state.raceEditId = null;
       seedRaceTimes();
       navigate('race-entry');
@@ -4581,7 +4644,10 @@ function handleAction(action, el) {
       const r = state.race; if (!r) break;
       state.swimmer = null;
       state.form = { stroke: r.stroke, sex: r.sex, pool: r.pool, distance: r.distance, targetSeconds: r.targetSeconds, name: r.name, sid: r.sid };
-      state.raceForm = { times: { ...(r.times || {}) }, sr: { ...(r.sr || {}) }, competition: r.competition || '', round: r.round || 'Final', date: r.date || '', notes: r.notes || '' };
+      state.raceForm = { times: { ...(r.times || {}) }, sr: { ...(r.sr || {}) }, touched: {}, competition: r.competition || '', round: r.round || 'Final', date: r.date || '', notes: r.notes || '' };
+      // Everything already recorded is the coach's data — changing the time swam on a saved
+      // race must not re-predict over the splits that were actually timed.
+      Object.keys(r.times || {}).forEach((k) => markSplitTouched(k));
       state.raceEditId = r.id;
       navigate('race-entry');
       break;
