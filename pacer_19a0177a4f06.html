@@ -1628,6 +1628,7 @@ function render() {
       el.addEventListener('blur', () => {
         if ((el === se || el === hh) && el.value !== '') el.value = el.value.padStart(2, '0');
         sync();
+        if (key !== 'target' && autoLastSplit(key)) { render(); }
       });
     });
     // Goal-time box: re-seed the predicted "what they swam" splits once the goal changes.
@@ -1650,7 +1651,26 @@ function render() {
     const key = el.getAttribute('data-race-sr');
     el.addEventListener('input', () => { (state.raceForm.sr = state.raceForm.sr || {})[key] = el.value; });
   });
-  const rcomp = host.querySelector('[data-race-comp]'); if (rcomp) rcomp.addEventListener('input', () => { state.raceForm.competition = rcomp.value; });
+  const rcomp = host.querySelector('[data-race-comp]');
+  if (rcomp) {
+    const cbox = host.querySelector('[data-comp-suggest]');
+    const comps = [...new Set(state.saved.filter(s => s.kind === 'race' && (s.competition || '').trim()).map(s => s.competition.trim()))];
+    const showComp = () => {
+      if (!cbox) return;
+      const q = rcomp.value.trim().toLowerCase();
+      const m = q ? comps.filter(c => c.toLowerCase().startsWith(q) && c.toLowerCase() !== q) : [];
+      if (!m.length) { cbox.classList.add('hidden'); cbox.innerHTML = ''; return; }
+      cbox.innerHTML = m.slice(0, 8).map(c => `<div data-comp-pick="${c.replace(/"/g, '&quot;')}" class="px-3.5 py-2.5 text-sm clickable hover:bg-slate-50">${c.replace(/</g, '&lt;')}</div>`).join('');
+      cbox.classList.remove('hidden');
+    };
+    rcomp.addEventListener('input', () => { state.raceForm.competition = rcomp.value; showComp(); });
+    rcomp.addEventListener('focus', showComp);
+    rcomp.addEventListener('blur', () => setTimeout(() => cbox && cbox.classList.add('hidden'), 150));
+    if (cbox) cbox.addEventListener('mousedown', (e) => {
+      const opt = e.target.closest('[data-comp-pick]');
+      if (opt) { e.preventDefault(); const v = opt.getAttribute('data-comp-pick'); rcomp.value = v; state.raceForm.competition = v; cbox.classList.add('hidden'); }
+    });
+  }
   const rdate = host.querySelector('[data-race-date]'); if (rdate) rdate.addEventListener('input', () => { state.raceForm.date = rdate.value; });
   const rnotes = host.querySelector('[data-race-notes]'); if (rnotes) rnotes.addEventListener('input', () => { state.raceForm.notes = rnotes.value; });
   // Split-predictor name field: autocomplete from previously saved names (first/last prefix).
@@ -1870,7 +1890,7 @@ function renderSavedSwimmer() {
     ${rowOpen(s.id)}
       <div class="flex-1 min-w-0">
         <div class="font-semibold text-[15px] mono">${formatTime(tot)} <span class="${dc} text-xs font-semibold">(${d >= 0 ? '+' : ''}${d.toFixed(2)})</span></div>
-        <div class="text-xs text-muted mt-0.5">${s.round ? s.round + ' · ' : ''}${s.competition ? s.competition + ' · ' : ''}${s.date || ''}</div>
+        <div class="text-xs text-muted mt-0.5">${meetLabel(s) ? meetLabel(s) + ' · ' : ''}${s.date || ''}</div>
       </div>
       ${editing ? delBtn(s.id, 'race') : `<span class="text-slate-300 text-2xl">›</span>`}
     </div>`;
@@ -2014,7 +2034,7 @@ function renderBestTimes() {
     <div class="px-3 py-3.5 flex items-center gap-3 clickable rounded-xl border-b border-slate-100" data-saved="${r.id}" style="min-height:56px;">
       <div class="flex-1 min-w-0">
         <div class="font-semibold text-[15px]">${r.distance} ${r.stroke} <span class="text-xs font-normal text-muted">${r.pool}</span></div>
-        <div class="text-xs text-muted mt-0.5">${r.date || 'no date'}${r.competition ? ' · ' + r.competition : ''}${r.round ? ' · ' + r.round : ''}</div>
+        <div class="text-xs text-muted mt-0.5">${r.date || 'no date'}${meetLabel(r) ? ' · ' + meetLabel(r) : ''}</div>
       </div>
       <div class="mono font-bold text-[17px] text-cyan-800">${formatTime(t)}</div>
       <span class="text-slate-300 text-2xl">›</span>
@@ -2120,7 +2140,7 @@ function progMetrics(s) {
   const out = [];
   if (s.kind === 'race') {
     const c = buildRaceComparison(s); if (!c) return out;
-    const defs = raceRowDefs(s.stroke, s.distance);
+    const defs = raceRowDefs(s.stroke, s.distance, s.pool);
     out.push({ key: 'total', label: 'Total', value: c.actualTotal, t: 'time', primary: true });
     c.rows.forEach((row, i) => {
       const def = defs[i];
@@ -3596,7 +3616,13 @@ function _legacyRaceAnalysis() {
 // RACE ANALYSIS
 // ============================================================
 // Row structure for an event's comparison (predicted vs actual).
-function raceRowDefs(stroke, distance) {
+// "Competition (Round)" — e.g. USport (Final). Either part may be missing.
+function meetLabel(s) {
+  const c = (s.competition || '').trim(), r = (s.round || '').trim();
+  return c && r ? `${c} (${r})` : (c || (r ? `(${r})` : ''));
+}
+
+function raceRowDefs(stroke, distance, pool) {
   if (stroke === 'IM') {
     const labels = distance === 400 ? ['Fly 100', 'Back 100', 'Breast 100', 'Free 100']
                  : distance === 100 ? ['Fly 25', 'Back 25', 'Breast 25', 'Free 25']
@@ -3610,17 +3636,49 @@ function raceRowDefs(stroke, distance) {
       { key: 'last', label: 'Last 50', kind: 'seg', idxFromEnd: 0 },
     ];
   }
-  if (distance === 50) return [{ key: 'total', label: 'Time', kind: 'total' }];
+  if (distance === 50) {
+    // SCM 50: two 25 m splits (25 m wall) — avoids entering the 50 time twice and yields
+    // useful 25 splits. LCM 50 has no 25 wall, so it stays a single total box.
+    if (pool === 'SCM') return [
+      { key: 'r0', label: '25 m', kind: 'seg', idx: 0 },
+      { key: 'r1', label: '50 m', kind: 'seg', idx: 1 },
+    ];
+    return [{ key: 'total', label: 'Time', kind: 'total' }];
+  }
   const n = distance / 50;
   return Array.from({ length: n }, (_, i) => ({ key: 'r' + i, label: `${(i + 1) * 50} m`, kind: 'seg', idx: i }));
 }
 
 // Fields the coach actually types (400+ free: first/last/total; middle is derived).
-function raceEntryFields(stroke, distance) {
+function raceEntryFields(stroke, distance, pool) {
   if (stroke !== 'IM' && distance >= 400) {
     return [{ key: 'first', label: 'First 50' }, { key: 'last', label: 'Last 50' }, { key: 'total', label: 'Total time' }];
   }
-  return raceRowDefs(stroke, distance).map(r => ({ key: r.key, label: r.label }));
+  return raceRowDefs(stroke, distance, pool).map(r => ({ key: r.key, label: r.label }));
+}
+
+// Auto-fill the last split from the total once every earlier split is entered, so the
+// coach types the total + all-but-one split and the remainder is computed. Returns true
+// if it changed a value (caller re-renders). Skips 400+ free and single-box 50 LCM, and
+// never overrides the last box while the coach is editing it (changedKey === last).
+function autoLastSplit(changedKey) {
+  if (state.view !== 'race-entry') return false;
+  const f = state.form, rf = state.raceForm;
+  const total = rf.times.target || 0;
+  if (!(total > 0)) return false;
+  if (f.stroke !== 'IM' && f.distance >= 400) return false; // uses first/last/total, not per-lap
+  const segs = raceRowDefs(f.stroke, f.distance, f.pool).filter(d => d.kind === 'seg');
+  if (segs.length < 2) return false;                         // single-box 50 LCM / nothing to derive
+  const lastKey = segs[segs.length - 1].key;
+  if (changedKey === lastKey) return false;                  // respect a manual last split
+  const earlier = segs.slice(0, -1);
+  if (!earlier.every(d => (rf.times[d.key] || 0) > 0)) return false; // wait for all earlier splits
+  const sum = earlier.reduce((s, d) => s + (rf.times[d.key] || 0), 0);
+  const rem = Math.round((total - sum) * 100) / 100;
+  if (rem <= 0) return false;
+  if (Math.abs((rf.times[lastKey] || 0) - rem) < 0.005) return false; // already correct
+  rf.times[lastKey] = rem;
+  return true;
 }
 
 // Pre-fill the actual-split boxes with the predicted splits for the target (coach edits to real).
@@ -3635,7 +3693,7 @@ function seedRaceTimes() {
       times.last = p.splits[p.splits.length - 1];
       times.total = tgt;
     } else {
-      raceRowDefs(f.stroke, f.distance).forEach(def => {
+      raceRowDefs(f.stroke, f.distance, f.pool).forEach(def => {
         if (def.kind === 'hundo') { const j = def.idx; times[def.key] = p.splits[2 * j] + p.splits[2 * j + 1]; }
         else if (def.kind === 'seg') { const i = def.idxFromEnd != null ? p.splits.length - 1 - def.idxFromEnd : def.idx; times[def.key] = p.splits[i]; }
         else if (def.kind === 'total') { times.total = tgt; }
@@ -3648,12 +3706,14 @@ function seedRaceTimes() {
 function buildRaceComparison(race) {
   const t = race.times || {};
   const distFree = race.stroke !== 'IM' && race.distance >= 400;
-  const defs = raceRowDefs(race.stroke, race.distance);
+  const defs = raceRowDefs(race.stroke, race.distance, race.pool);
+  const scm50 = race.distance === 50 && race.pool === 'SCM'; // two-25-split 50
   // Actual total first — the shape bands are scaled to what they ACTUALLY swam,
   // so hitting/beating the goal doesn't get mislabelled "too fast".
   let actualTotal;
-  if (distFree || race.distance === 50) actualTotal = t.total;
-  else actualTotal = defs.reduce((s, def) => s + (def.kind === 'mid' ? 0 : (t[def.key] || 0)), 0);
+  if (distFree || (race.distance === 50 && !scm50)) actualTotal = t.total;      // single-box 50 (LCM) / 400+
+  else if (scm50 && t.r0 == null && t.r1 == null) actualTotal = t.total || 0;   // legacy 50 SCM saved as one total (pre-25-split)
+  else actualTotal = defs.reduce((s, def) => s + (def.kind === 'mid' ? 0 : (t[def.key] || 0)), 0); // sum segs (incl. 50 SCM's two 25s)
   const p = predict(race.stroke, race.sex, race.pool, race.distance, actualTotal);
   if (!p) return null;
   const nmid = p.splits.length - 2;
@@ -3763,7 +3823,7 @@ function renderRaceEntry() {
   if (!rf.date) rf.date = new Date().toISOString().slice(0, 10);
   const strokes = ['Free', 'Back', 'Breast', 'Fly', 'IM'];
   const distances = [50, 100, 200, 400, 800, 1500];
-  const fields = raceEntryFields(f.stroke, f.distance);
+  const fields = raceEntryFields(f.stroke, f.distance, f.pool);
   const distFree = f.stroke !== 'IM' && f.distance >= 400;
   const showRowSr = f.distance !== 50 && f.distance < 400;
   const fieldRows = fields.map(fl => `
@@ -3816,10 +3876,20 @@ function renderRaceEntry() {
           ${distances.map(d => `<span class="pill ${f.distance === d ? 'active' : ''}" data-distance="${d}">${d}</span>`).join('')}
         </div>
       </div>
+      <div>
+        <div class="label-cap mb-2">Round</div>
+        <div class="seg-group" style="max-width:240px;">
+          <div class="seg ${rf.round === 'Prelim' ? 'active' : ''}" data-round="Prelim">Prelim</div>
+          <div class="seg ${(rf.round || 'Final') !== 'Prelim' ? 'active' : ''}" data-round="Final">Final</div>
+        </div>
+      </div>
       <div class="flex gap-3">
         <div class="flex-1 min-w-0">
           <div class="label-cap mb-2">Competition</div>
-          <input type="text" data-race-comp value="${(rf.competition || '').replace(/"/g, '&quot;')}" placeholder="e.g. Winter Champs" class="w-full bg-slate-100 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300" />
+          <div class="relative">
+            <input type="text" data-race-comp autocomplete="off" value="${(rf.competition || '').replace(/"/g, '&quot;')}" placeholder="e.g. Winter Champs" class="w-full bg-slate-100 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300" />
+            <div data-comp-suggest class="hidden" style="position:absolute;left:0;right:0;top:100%;margin-top:4px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 8px 24px rgba(15,23,42,.12);z-index:60;max-height:200px;overflow-y:auto;"></div>
+          </div>
         </div>
         <div style="width:9rem;flex-shrink:0;">
           <div class="label-cap mb-2">Date</div>
@@ -3899,12 +3969,13 @@ function renderRaceAnalysis() {
   const deltaColor = beat ? 'text-emerald-700' : 'text-rose-600';
   const deltaBg = beat ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100';
   const sr = race.sr || {};
-  // Data-entry check: the official time typed at the top vs what the splits add up to.
-  // (For 50s and 400+ the total IS the typed field, so they can never disagree.)
+  // Data-entry check: the total typed at the top vs what the splits add up to.
+  // (LCM 50 and 400+ take the total directly, so they can't disagree; SCM 50 and the
+  // 100/200 sum their splits, so this catches a typo.)
   const _mm = (race.targetSeconds > 0 && c.actualTotal > 0) ? c.actualTotal - race.targetSeconds : 0;
   const mismatch = Math.abs(_mm) > 0.10 ? _mm : null;
   const expL = PUBLIC_BUILD ? null : expectedLast15(race); // V1 keeps stroke rate simple: no expected last-15
-  const defs = raceRowDefs(race.stroke, race.distance);
+  const defs = raceRowDefs(race.stroke, race.distance, race.pool);
   const pt = predict(race.stroke, race.sex, race.pool, race.distance, race.targetSeconds);
   const predAt = defs.map(def => {
     if (!pt) return null;
@@ -3977,12 +4048,13 @@ function renderRaceAnalysis() {
     bestCard = `<div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">
       <div class="px-3 pt-3 pb-1 flex items-baseline justify-between gap-2">
         <span class="label-cap text-muted">${isBestMode ? 'vs their best' : 'vs last race'}</span>
-        <span class="text-[11px] text-muted">${formatTime(otherT)}${other.date ? ' · ' + other.date : ''}${other.competition ? ' · ' + other.competition : ''}${other.round ? ' · ' + other.round : ''}</span>
+        <span class="text-[11px] text-muted">${formatTime(otherT)}${other.date ? ' · ' + other.date : ''}${meetLabel(other) ? ' · ' + meetLabel(other) : ''}</span>
       </div>
       ${beatsBest ? `<div class="px-3 pb-2"><span class="text-xs font-semibold text-emerald-700">New best for this event — ${Math.abs(gap).toFixed(2)}s faster.</span></div>`
                   : `<div class="px-3 pb-2"><span class="text-xs ${gc} font-semibold">${gap >= 0 ? '+' : ''}${gap.toFixed(2)}s vs ${isBestMode ? 'their best' : 'that race'}</span></div>`}
       <div style="display:grid;grid-template-columns:minmax(0,1fr) 4rem 4rem 3rem;gap:4px;align-items:center;" class="px-3 pb-1"><span class="label-cap text-muted">Split</span><span class="label-cap text-muted" style="text-align:right;">${isBestMode ? 'Best' : 'Last'}</span><span class="label-cap text-muted" style="text-align:right;">This</span><span class="label-cap text-muted" style="text-align:right;">Δ</span></div>
       ${rows}
+      ${(other.notes || '').trim() ? `<div class="px-3 py-2.5 border-t border-slate-100"><div class="label-cap text-muted mb-1">${isBestMode ? 'Best-race notes' : 'Last-race notes'}</div><div class="text-xs text-slate-600 leading-relaxed" style="white-space:pre-wrap;">${(other.notes || '').replace(/</g, '&lt;')}</div></div>` : ''}
     </div>`;
   }
   return `
@@ -3991,7 +4063,7 @@ function renderRaceAnalysis() {
       <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0">
         <div class="text-base font-semibold truncate">${race.name || 'Race'}</div>
-        <div class="text-xs text-muted truncate">${race.distance} ${race.stroke} ${race.pool}${race.competition ? ' · ' + race.competition : ''}${race.date ? ' · ' + race.date : ''}</div>
+        <div class="text-xs text-muted truncate">${race.distance} ${race.stroke} ${race.pool}${meetLabel(race) ? ' · ' + meetLabel(race) : ''}${race.date ? ' · ' + race.date : ''}</div>
       </div>
       <div class="flex items-center gap-1.5 flex-shrink-0">
         <button class="px-3 py-2 rounded-full bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 transition" data-action="edit-race">Edit</button>
@@ -4007,10 +4079,10 @@ function renderRaceAnalysis() {
     </div>
     <div class="scrollable px-5 py-3 space-y-3 bg-slate-50">
       <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">${head}${splitRows}</div>
-      ${cmpButtons}
-      ${bestCard}
       ${(sr.first25 > 0 || sr.second25 > 0 || sr.last15 > 0 || expL) ? `<div class="bg-white rounded-2xl border border-slate-200 p-4"><div class="label-cap text-muted mb-1">Stroke rate</div><div class="text-sm text-slate-700">${[sr.first25 > 0 ? `1st 25 <span class="mono font-semibold">${sr.first25}</span>` : '', sr.second25 > 0 ? `2nd 25 <span class="mono font-semibold">${sr.second25}</span>` : '', sr.last15 > 0 ? `last 15 m <span class="mono font-semibold ${expL && parseFloat(sr.last15) < expL * 0.95 ? 'text-rose-600' : ''}">${sr.last15}</span>${expL ? ` <span class="text-xs text-muted">(expected ~${expL.toFixed(1)})</span>` : ''}` : (expL ? `expected last 15 m ≈ <span class="mono font-semibold">${expL.toFixed(1)}</span>` : '')].filter(Boolean).join(' · ')}${expL && sr.last15 > 0 && parseFloat(sr.last15) < expL * 0.95 ? `<div class="text-xs text-rose-600 mt-1">Rate faded more than the elite pattern (−5%+) — finishing tempo collapsed.</div>` : ''}</div></div>` : ''}
       ${race.notes ? `<div class="bg-white rounded-2xl border border-slate-200 p-4"><div class="label-cap text-muted mb-1">Notes</div><div class="text-sm text-slate-700 leading-relaxed" style="white-space:pre-wrap;">${(race.notes || '').replace(/</g, '&lt;')}</div></div>` : ''}
+      ${cmpButtons}
+      ${bestCard}
     </div>
   `;
 }
@@ -4364,7 +4436,7 @@ function handleAction(action, el) {
     case 'new-race':
       state.swimmer = null;
       state.form = { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 200, targetSeconds: 120, name: '' };
-      state.raceForm = { times: {}, sr: {}, competition: '', date: '', notes: '' };
+      state.raceForm = { times: {}, sr: {}, competition: '', round: 'Final', date: '', notes: '' };
       state.raceEditId = null;
       seedRaceTimes();
       navigate('race-entry');
@@ -4377,7 +4449,7 @@ function handleAction(action, el) {
         distance: last ? last.distance : 200, targetSeconds: (last && last.targetSeconds) || 120,
         name: swimmerName(sid), sid,
       };
-      state.raceForm = { times: {}, sr: {}, competition: '', date: '', notes: '' };
+      state.raceForm = { times: {}, sr: {}, competition: '', round: 'Final', date: '', notes: '' };
       state.raceEditId = null;
       seedRaceTimes();
       navigate('race-entry');
@@ -4387,7 +4459,7 @@ function handleAction(action, el) {
       const r = state.race; if (!r) break;
       state.swimmer = null;
       state.form = { stroke: r.stroke, sex: r.sex, pool: r.pool, distance: r.distance, targetSeconds: r.targetSeconds, name: r.name, sid: r.sid };
-      state.raceForm = { times: { ...(r.times || {}) }, sr: { ...(r.sr || {}) }, competition: r.competition || '', date: r.date || '', notes: r.notes || '' };
+      state.raceForm = { times: { ...(r.times || {}) }, sr: { ...(r.sr || {}) }, competition: r.competition || '', round: r.round || 'Final', date: r.date || '', notes: r.notes || '' };
       state.raceEditId = r.id;
       navigate('race-entry');
       break;
@@ -4400,6 +4472,7 @@ function handleAction(action, el) {
         targetSeconds: rf.times.target ?? f.targetSeconds,
         times: { ...rf.times }, sr: { ...(rf.sr || {}) },
         competition: (rf.competition || '').trim(),
+        round: rf.round || 'Final',
         date: rf.date || new Date().toISOString().slice(0, 10),
         notes: (rf.notes || '').trim(),
       };
