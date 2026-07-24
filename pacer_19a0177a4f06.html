@@ -1203,7 +1203,7 @@ const state = {
   editing: false,   // roster / saved-swimmer delete mode toggle
   progGroup: null,  // selected progression signature
   progMetric: null, // selected metric key in a progression
-  progWindow: 'recent', // progression window: 'recent' (last N) or 'all'
+  progWindow: 'all', // progression window: '3m'/'6m'/'9m'/'12m' (months) or 'all'
 };
 
 function navigate(view, opts = {}) {
@@ -1654,7 +1654,10 @@ function render() {
   const rcomp = host.querySelector('[data-race-comp]');
   if (rcomp) {
     const cbox = host.querySelector('[data-comp-suggest]');
-    const comps = [...new Set(state.saved.filter(s => s.kind === 'race' && (s.competition || '').trim()).map(s => s.competition.trim()))];
+    const raceComps = state.saved.filter(s => s.kind === 'race' && (s.competition || '').trim());
+    const comps = [...new Set(raceComps.map(s => s.competition.trim()))];
+    const compDates = {};
+    raceComps.forEach(s => { const k = s.competition.trim().toLowerCase(); if (s.date && (!compDates[k] || s.date > compDates[k])) compDates[k] = s.date; });
     const showComp = () => {
       if (!cbox) return;
       const q = rcomp.value.trim().toLowerCase();
@@ -1668,7 +1671,14 @@ function render() {
     rcomp.addEventListener('blur', () => setTimeout(() => cbox && cbox.classList.add('hidden'), 150));
     if (cbox) cbox.addEventListener('mousedown', (e) => {
       const opt = e.target.closest('[data-comp-pick]');
-      if (opt) { e.preventDefault(); const v = opt.getAttribute('data-comp-pick'); rcomp.value = v; state.raceForm.competition = v; cbox.classList.add('hidden'); }
+      if (opt) {
+        e.preventDefault();
+        const v = opt.getAttribute('data-comp-pick');
+        rcomp.value = v; state.raceForm.competition = v;
+        const d = compDates[v.trim().toLowerCase()];      // pull that meet's last-used date
+        if (d) { state.raceForm.date = d; const rdate = host.querySelector('[data-race-date]'); if (rdate) rdate.value = d; }
+        cbox.classList.add('hidden');
+      }
     });
   }
   const rdate = host.querySelector('[data-race-date]'); if (rdate) rdate.addEventListener('input', () => { state.raceForm.date = rdate.value; });
@@ -1753,7 +1763,7 @@ function renderRoster() {
     <div class="flex flex-col items-center justify-center text-center px-8 py-20 text-slate-400">
       <div class="w-14 h-14 rounded-2xl bg-cyan-50 flex items-center justify-center text-2xl mb-3">🏊</div>
       <div class="text-sm font-semibold text-slate-600">No swimmers yet</div>
-      <div class="text-xs mt-1.5 leading-relaxed max-w-[220px]">Tap <span class="font-semibold text-cyan-700">Split Predictor</span>, enter a goal time and a name, then <span class="font-semibold">Save</span> to build your roster.</div>
+      <div class="text-xs mt-1.5 leading-relaxed max-w-[220px]">Tap <span class="font-semibold text-cyan-700">Record Races</span>, enter a swimmer's time and splits, then <span class="font-semibold">Save &amp; Compare</span> to build your roster.</div>
       <button class="mt-4 text-xs font-semibold text-cyan-700 hover:underline" data-action="import-json">Import a backup</button>
     </div>`;
 
@@ -1763,11 +1773,11 @@ function renderRoster() {
       <div class="text-[28px] font-bold tracking-tight leading-none text-center">Race Equation</div>
     </div>
     <div class="px-5 pb-2 grid grid-cols-2 gap-2">
-      <button class="bg-gradient-to-br from-cyan-500 to-cyan-700 rounded-2xl px-4 py-4 text-center hover:from-cyan-600 hover:to-cyan-800 active:scale-[0.99] transition shadow-lg shadow-cyan-600/25" data-action="quick-calc">
-        <div class="font-bold text-white text-[15px]">Split Predictor</div>
+      <button class="bg-gradient-to-br from-cyan-500 to-cyan-700 rounded-2xl px-4 py-4 text-center hover:from-cyan-600 hover:to-cyan-800 active:scale-[0.99] transition shadow-lg shadow-cyan-600/25" data-action="new-race">
+        <div class="font-bold text-white text-[15px]">Record Races</div>
       </button>
-      <button class="bg-white border border-slate-200 rounded-2xl px-4 py-4 text-center hover:border-cyan-300 hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm" data-action="new-race">
-        <div class="font-bold text-slate-800 text-[15px]">Record Races</div>
+      <button class="bg-white border border-slate-200 rounded-2xl px-4 py-4 text-center hover:border-cyan-300 hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm" data-action="quick-calc">
+        <div class="font-bold text-slate-800 text-[15px]">Split Predictor</div>
       </button>
     </div>
     ${PUBLIC_BUILD ? '' : `<div class="px-5 pb-2 space-y-2">
@@ -2230,7 +2240,18 @@ function progChartSvg(pts, hb, goal) {
   const showVal = (p, i) => N <= 6 || p.v === best || i === N - 1;
   const step = (N - 1) / 4;
   const showDate = (i) => N <= 7 || i === 0 || i === N - 1 || [1, 2, 3].some((k) => Math.round(k * step) === i);
-  const vlabs = pts.map((p, i) => showVal(p, i) ? `<text x="${X(i).toFixed(1)}" y="${(Y(p.v) - 6).toFixed(1)}" font-size="8" fill="${p.v === best ? '#059669' : '#475569'}" text-anchor="middle">${p.lab}</text>` : '').join('');
+  // Keep each value label clear of the line: above local peaks, below local valleys
+  // (by comparing the point's screen-Y to its neighbours'); flip near the top/bottom edge.
+  const labY = (i) => {
+    const yi = Y(pts[i].v);
+    const nb = [i > 0 ? Y(pts[i - 1].v) : null, i < N - 1 ? Y(pts[i + 1].v) : null].filter((v) => v != null);
+    const avg = nb.length ? nb.reduce((a, b) => a + b, 0) / nb.length : yi;
+    let above = yi <= avg;                       // point at/above its neighbours -> peak -> label above
+    if (above && yi - 8 < padT) above = false;   // too close to the top edge -> flip below
+    if (!above && yi + 12 > padT + plotH) above = true; // too close to the bottom -> flip above
+    return above ? yi - 6 : yi + 11;
+  };
+  const vlabs = pts.map((p, i) => showVal(p, i) ? `<text x="${X(i).toFixed(1)}" y="${labY(i).toFixed(1)}" font-size="8" fill="${p.v === best ? '#059669' : '#475569'}" text-anchor="middle">${p.lab}</text>` : '').join('');
   const xlabs = pts.map((p, i) => showDate(i) ? `<text x="${X(i).toFixed(1)}" y="${H - 7}" font-size="8" fill="#94a3b8" text-anchor="middle">${p.x}</text>` : '').join('');
   const gline = goal != null ? `<line x1="${padL}" y1="${Y(goal).toFixed(1)}" x2="${W - padR}" y2="${Y(goal).toFixed(1)}" stroke="#f59e0b" stroke-width="1" stroke-dasharray="4 3"/><text x="${W - padR}" y="${(Y(goal) - 2).toFixed(1)}" font-size="8" fill="#d97706" text-anchor="end">${goal}%</text>` : '';
   const yTop = `<text x="3" y="${padT + 3}" font-size="8" fill="#cbd5e1">${progFmtRaw(vmax)}</text>`;
@@ -2277,8 +2298,13 @@ function renderProgressGroup() {
   const g = progGroups(sid).find((x) => x.sig === state.progGroup);
   if (!g) return renderProgress();
   const allEntries = g.entries;
-  const WIN = 8;
-  const entries = (state.progWindow !== 'all' && allEntries.length > WIN) ? allEntries.slice(-WIN) : allEntries;
+  const MW = { '3m': 3, '6m': 6, '9m': 9, '12m': 12 };
+  const win = state.progWindow || 'all';
+  let entries = allEntries;
+  if (MW[win]) {
+    const cut = new Date(); cut.setMonth(cut.getMonth() - MW[win]);
+    entries = allEntries.filter((s) => { if (!s.date) return false; const d = new Date(s.date + 'T12:00:00'); return !isNaN(d) && d >= cut; });
+  }
   const order = [], seen = {};
   entries.forEach((s) => progMetrics(s).forEach((m) => { if (!(m.key in seen)) { seen[m.key] = m; order.push(m.key); } }));
   const perEntry = entries.map((s) => { const map = {}; progMetrics(s).forEach((m) => { map[m.key] = m.value; }); return map; });
@@ -2296,10 +2322,8 @@ function renderProgressGroup() {
     const dC = good ? 'text-emerald-700' : 'text-rose-600';
     summary = `<div class="text-[11px] text-muted mt-0.5">best <span class="mono font-semibold text-emerald-700">${progFmt(bestv, selT)}</span> · latest <span class="mono font-semibold text-slate-700">${progFmt(latest, selT)}</span>${series.length > 1 ? ` · <span class="${dC} font-semibold">Δ ${d >= 0 ? '+' : ''}${d.toFixed(1)}</span>` : ''}</div>`;
   }
-  const winToggle = allEntries.length > WIN ? `<div class="flex gap-1.5">
-      <button class="px-2.5 py-1 rounded-full text-[11px] font-semibold ${state.progWindow !== 'all' ? 'bg-cyan-600 text-white' : 'bg-slate-100 text-slate-600'}" data-progwindow="recent">Recent ${WIN}</button>
-      <button class="px-2.5 py-1 rounded-full text-[11px] font-semibold ${state.progWindow === 'all' ? 'bg-cyan-600 text-white' : 'bg-slate-100 text-slate-600'}" data-progwindow="all">All ${allEntries.length}</button>
-    </div>` : '';
+  const winOpts = [['3m', '3 mo'], ['6m', '6 mo'], ['9m', '9 mo'], ['12m', '12 mo'], ['all', 'All']];
+  const winToggle = `<div class="flex gap-1.5 flex-wrap">${winOpts.map(([k, l]) => `<button class="px-2.5 py-1 rounded-full text-[11px] font-semibold ${win === k ? 'bg-cyan-600 text-white' : 'bg-slate-100 text-slate-600'}" data-progwindow="${k}">${l}</button>`).join('')}</div>${entries.length === 0 ? `<div class="text-center text-xs text-muted p-4">No entries in the last ${({ '3m': '3', '6m': '6', '9m': '9', '12m': '12' }[win] || '')} months — widen the window.</div>` : ''}`;
   const dateHdr = entries.map((s, i) => `<th class="px-2 py-1.5 text-[10px] font-semibold text-muted text-right whitespace-nowrap">${progDateLabel(s, i)}</th>`).join('');
   const rowsHtml = order.map((k) => {
     const m = seen[k];
@@ -2317,7 +2341,7 @@ function renderProgressGroup() {
       <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0">
         <div class="text-lg font-semibold truncate">${g.sig}</div>
-        <div class="text-xs text-muted truncate">${name} · ${allEntries.length} entries</div>
+        <div class="text-xs text-muted truncate">${name} · ${win !== 'all' ? entries.length + ' of ' + allEntries.length : allEntries.length} entries</div>
       </div>
     </div>
     <div class="scrollable px-5 py-3 space-y-3 bg-slate-50">
@@ -3925,7 +3949,7 @@ function renderRaceEntry() {
     </div>
     <div class="border-t border-slate-200 px-5 py-4 pb-5 bg-white flex-shrink-0">
       <button class="w-full bg-cyan-600 text-white font-semibold rounded-xl py-4 text-base hover:bg-cyan-700 active:scale-[0.98] transition shadow-lg shadow-cyan-600/20" data-action="analyze-race">
-        See comparison →
+        Save &amp; Compare
       </button>
     </div>
   `;
@@ -4275,7 +4299,7 @@ document.addEventListener('click', (e) => {
       return;
     }
     const pg = e.target.closest('[data-proggroup]');
-    if (pg) { state.progGroup = decodeURIComponent(pg.getAttribute('data-proggroup')); state.progMetric = null; state.progWindow = 'recent'; navigate('progress-group'); return; }
+    if (pg) { state.progGroup = decodeURIComponent(pg.getAttribute('data-proggroup')); state.progMetric = null; state.progWindow = 'all'; navigate('progress-group'); return; }
     const bm = e.target.closest('[data-btmode]');
     if (bm) {
       const m = bm.getAttribute('data-btmode');
@@ -4466,7 +4490,7 @@ function handleAction(action, el) {
     }
     case 'analyze-race': {
       const f = state.form, rf = state.raceForm;
-      state.race = {
+      const race = {
         id: state.raceEditId || ('rc' + Date.now().toString(36)), kind: 'race', name: (f.name || '').trim(), sid: f.sid,
         stroke: f.stroke, sex: f.sex, pool: f.pool, distance: f.distance,
         targetSeconds: rf.times.target ?? f.targetSeconds,
@@ -4476,6 +4500,42 @@ function handleAction(action, el) {
         date: rf.date || new Date().toISOString().slice(0, 10),
         notes: (rf.notes || '').trim(),
       };
+      state.race = race;
+      // Save on the way to the comparison — only when named and the swim has a real total.
+      const _cmp = buildRaceComparison(race);
+      const _named = !!race.name, _timed = !!(_cmp && _cmp.actualTotal > 0);
+      if (_named && _timed) {
+        if (state.raceEditId) {
+          const i = state.saved.findIndex(x => x.id === state.raceEditId);
+          if (i >= 0) { state.saved[i] = race; persistSaved(); showToast('Updated race'); }
+          else { race.sid = resolveSid(f); state.saved.push(race); persistSaved(); }
+        } else {
+          const sid = race.sid || resolveSid(f); race.sid = sid;
+          const norm = x => (x || '').trim().toLowerCase();
+          const dup = state.saved.find(x => x.kind === 'race' && x.sid === sid && x.id !== race.id
+            && x.distance === race.distance && x.stroke === race.stroke && x.pool === race.pool
+            && norm(x.competition) === norm(race.competition) && (x.date || '') === (race.date || '')
+            && (x.round || 'Final') === (race.round || 'Final'));
+          if (dup) {
+            const oc = buildRaceComparison(dup), oldT = oc ? formatTime(oc.actualTotal) : '—';
+            const ml = meetLabel(race);
+            if (confirm(`Race already exists — ${race.name}'s ${race.distance} ${race.stroke} ${race.pool}${ml ? ' at ' + ml : ''}${race.date ? ' on ' + race.date : ''} (${oldT}).\n\nOK = replace it with ${formatTime(_cmp.actualTotal)}\nCancel = keep both`)) {
+              race.id = dup.id; race.sid = dup.sid;
+              const i = state.saved.findIndex(x => x.id === dup.id);
+              state.saved[i] = race; persistSaved(); state.raceEditId = dup.id;
+              showToast('Replaced race');
+            } else {
+              state.saved.push(race); persistSaved(); state.raceEditId = race.id;
+              showToast('Saved · kept both');
+            }
+          } else {
+            state.saved.push(race); persistSaved(); state.raceEditId = race.id;
+            showToast(`Saved ${race.name} · ${race.distance} ${race.stroke}`);
+          }
+        }
+      } else if (_timed && !_named) {
+        showToast('Add a swimmer name to save — showing comparison only');
+      }
       navigate('race-analysis');
       break;
     }
