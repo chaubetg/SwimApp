@@ -1,7 +1,7 @@
 {
-  "name": "Pacer — Swim Split Predictor",
-  "short_name": "Pacer",
-  "description": "Predict race splits from a goal time.",
+  "name": "Race Equation \u2014 Swim Split Predictor",
+  "short_name": "Race Equation",
+  "description": "Predict race splits, plan paces, review races.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
@@ -9,8 +9,23 @@
   "background_color": "#f1f5f9",
   "theme_color": "#0891b2",
   "icons": [
-    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
   ]
 }
