@@ -2032,8 +2032,8 @@ function renderSavedSwimmer() {
 
   const section = (label, rows, big) => rows ? `<div class="px-2 ${big ? 'pt-4' : 'pt-3'} pb-1">${big ? `<span class="text-[17px] font-bold text-slate-800">${label}</span>` : `<span class="label-cap">${label}</span>`}</div>${rows}` : '';
   const subtitle = [
-    plans.length ? `${plans.length} plan${plans.length === 1 ? '' : 's'}` : '',
     races.length ? `${races.length} race${races.length === 1 ? '' : 's'}` : '',
+    plans.length ? `${plans.length} plan${plans.length === 1 ? '' : 's'}` : '',
     adj.length ? `${adj.length} adjacent` : '',
     fifties.length ? `${fifties.length} × 50 m` : '',
     convs.length ? `${convs.length} conversion${convs.length === 1 ? '' : 's'}` : '',
@@ -2058,8 +2058,8 @@ function renderSavedSwimmer() {
     ${hasProgress(sid) ? `<div class="px-5 pb-2"><button class="w-full bg-white border border-cyan-300 text-cyan-800 rounded-xl py-2.5 text-sm font-semibold hover:bg-cyan-50 active:scale-[0.99] transition" data-action="progress">📈 Progress over time</button></div>` : ''}
     ${races.length ? `<div class="px-5 pb-2"><button class="w-full bg-white border border-amber-300 text-amber-800 rounded-xl py-2.5 text-sm font-semibold hover:bg-amber-50 active:scale-[0.99] transition" data-action="best-times">🏆 Best times</button></div>` : ''}
     <div class="px-5 pb-2 flex flex-wrap gap-2">
-      <button class="bg-cyan-600 text-white rounded-xl px-3 py-2 text-xs font-semibold hover:bg-cyan-700 active:scale-[0.99] transition" data-action="add-event">+ Pace plan</button>
-      <button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-race">+ Race</button>
+      <button class="bg-cyan-600 text-white rounded-xl px-3 py-2 text-xs font-semibold hover:bg-cyan-700 active:scale-[0.99] transition" data-action="add-race">+ Race</button>
+      <button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-event">+ Pace plan</button>
       ${PUBLIC_BUILD ? '' : `<button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-adjacent">+ Adjacent</button>
       <button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-fifty">+ 50 m</button>
       <button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-convert">+ Conversion</button>
@@ -4606,10 +4606,17 @@ function handleAction(action, el) {
       const _named = !!race.name, _timed = _total > 0;
       state.raceSaved = (_named && _timed) ? 'saved' : (!_named ? 'noname' : 'notime');
       if (_named && _timed) {
+        // A save UNBINDS the form from the record it wrote. Whatever happens next -- back
+        // arrow, change the time, Save & Compare again -- is judged on the race's identity
+        // (swimmer/event/pool/meet/date/round) by the duplicate check below, not on how the
+        // user got back to the form. Entering the next swim therefore creates a new race,
+        // while re-saving the SAME swim with a new time asks before replacing it.
+        // Only the Edit button binds deliberately (raceEditId), and that still updates in place.
         if (state.raceEditId) {
           const i = state.saved.findIndex(x => x.id === state.raceEditId);
           if (i >= 0) { state.saved[i] = race; persistSaved(); showToast('Updated race'); }
           else { race.sid = resolveSid(f); state.saved.push(race); persistSaved(); }
+          state.raceEditId = null;
         } else {
           const sid = race.sid || resolveSid(f); race.sid = sid;
           const norm = x => (x || '').trim().toLowerCase();
@@ -4623,14 +4630,14 @@ function handleAction(action, el) {
             if (confirm(`Race already exists — ${race.name}'s ${race.distance} ${race.stroke} ${race.pool}${ml ? ' at ' + ml : ''}${race.date ? ' on ' + race.date : ''} (${oldT}).\n\nOK = replace it with ${formatTime(_total)}\nCancel = keep both`)) {
               race.id = dup.id; race.sid = dup.sid;
               const i = state.saved.findIndex(x => x.id === dup.id);
-              state.saved[i] = race; persistSaved(); state.raceEditId = dup.id;
+              state.saved[i] = race; persistSaved(); state.raceEditId = null;
               showToast('Replaced race');
             } else {
-              state.saved.push(race); persistSaved(); state.raceEditId = race.id;
+              state.saved.push(race); persistSaved(); state.raceEditId = null;
               showToast('Saved · kept both');
             }
           } else {
-            state.saved.push(race); persistSaved(); state.raceEditId = race.id;
+            state.saved.push(race); persistSaved(); state.raceEditId = null;
             showToast(`Saved ${race.name} · ${race.distance} ${race.stroke}`);
           }
         }
