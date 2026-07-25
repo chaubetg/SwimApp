@@ -54,6 +54,17 @@
       to { opacity: 1; transform: translateY(0); }
     }
     .scrollable { overflow-y: auto; flex: 1; }
+    /* Training Pace print sheet: paper gets the table only, at full width, no app chrome. */
+    @media print {
+      body * { visibility: hidden; }
+      #tp-print, #tp-print * { visibility: visible; }
+      #tp-print { position: absolute; left: 0; top: 0; width: 100%; padding: 0; }
+      #tp-print table { width: 100%; border-collapse: collapse; }
+      #tp-print th, #tp-print td { padding: 3px 6px; }
+      #tp-print .tp-sec { break-inside: avoid; page-break-inside: avoid; }
+      .no-print, .statusbar, #jumper { display: none !important; }
+      .scrollable { overflow: visible !important; }
+    }
     .scrollable::-webkit-scrollbar { display: none; }
     .statusbar { height: 44px; flex-shrink: 0; }
     /* Bigger pills for deck use (wet fingers, glances) */
@@ -1232,7 +1243,7 @@ const state = {
   effForm: { stroke: 'Free', sex: 'M', dist: '50', course: 'LCM', t: 0, acts: {}, cps: {} }, // Stroke Index: goal + logged actuals
   fiftyForm: { stroke: 'Free', sex: 'M', seconds: 0, name: '', best: {}, sr: {}, sc: {}, date: '' }, // 50m LCM split calculator
   fiftyOpen: {}, // 50m tool: which metric rows are expanded for SR/SC input
-  tpForm: { stroke: 'Free', pool: 'SCM', distance: 50, basis: 'best' }, // Training Pace picker
+  tpForm: { pool: 'SCM', distance: 50, basis: 'best' }, // Training Pace picker (all strokes at once)
   tpShow: false,  // the table appears once "Show Training Table" is pressed
   adjForm: { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 100, seconds: 0, name: '' }, // adjacent-events predictor
   form: {
@@ -4071,63 +4082,84 @@ function timeBoxes(key, seconds, distance) {
 }
 
 // ===== Training Pace =====
-// Which distances the model can predict for this stroke + pool. 50 m LCM has no entry in
-// `ratios` — it comes from the separate fiftyRatios table via predict()'s fallback.
-function tpDistances(stroke, pool) {
-  const byStroke = ratios[stroke] || {};
+// Which distances the model can predict for this pool, across every stroke. 50 m LCM has no
+// entry in `ratios` — it comes from the separate fiftyRatios table via predict()'s fallback.
+const TP_STROKES = ['Free', 'Back', 'Breast', 'Fly', 'IM'];
+function tpDistances(pool) {
   const set = new Set();
-  Object.keys(byStroke).forEach((sex) => {
-    const byPool = byStroke[sex] && byStroke[sex][pool];
-    if (byPool) Object.keys(byPool).forEach((d) => set.add(+d));
+  TP_STROKES.forEach((stroke) => {
+    const byStroke = ratios[stroke] || {};
+    Object.keys(byStroke).forEach((sex) => {
+      const byPool = byStroke[sex] && byStroke[sex][pool];
+      if (byPool) Object.keys(byPool).forEach((d) => set.add(+d));
+    });
+    if (pool === 'LCM' && fiftyRatios[stroke]) set.add(50);
   });
-  if (pool === 'LCM' && fiftyRatios[stroke]) set.add(50);
   return [...set].sort((a, b) => a - b);
 }
 
-// One entry per swimmer holding a recorded time in this exact event, alphabetical by first name.
-// `basis` picks which of their swims sets the pace: 'best' (fastest) or 'recent' (latest date).
-// Sex is per swimmer, read from their own race record — that's why the picker has no sex.
+// One entry per swimmer PER STROKE holding a recorded time at this pool + distance, alphabetical
+// by first name. `basis` picks which of their swims sets the pace: 'best' (fastest) or 'recent'
+// (latest date). Sex is per swimmer, read from their own race record — hence no sex picker.
 // Segments come from buildDisplaySegments so a 100 SCM gets its four 25 s (25/75 estimated from
 // the SCM-50 shape), IM gets stroke legs, and 400+ gets the collapsed First/Middle/Last rows.
-function trainingRows(stroke, pool, distance, basis) {
-  const bySid = {};
+function trainingRows(pool, distance, basis) {
+  const byKey = {};
   state.saved.forEach((s) => {
     if (s.kind !== 'race' || !s.sid) return;
-    if (s.stroke !== stroke || s.pool !== pool || s.distance !== distance) return;
+    if (s.pool !== pool || s.distance !== distance) return;
     const c = buildRaceComparison(s);
     const t = c ? c.actualTotal : 0;
     if (!(t > 0)) return;
-    (bySid[s.sid] = bySid[s.sid] || []).push({ race: s, t });
+    const k = s.sid + '|' + s.stroke;
+    (byKey[k] = byKey[k] || []).push({ race: s, t });
   });
-  return Object.keys(bySid).map((sid) => {
-    const list = bySid[sid];
+  return Object.keys(byKey).map((k) => {
+    const list = byKey[k];
     const pick = basis === 'recent'
       ? list.slice().sort((a, b) => (a.race.date || '').localeCompare(b.race.date || ''))[list.length - 1]
       : list.reduce((m, x) => (x.t < m.t ? x : m), list[0]);
+    const sid = k.split('|')[0], stroke = pick.race.stroke;
     const sex = pick.race.sex || 'M';
     const p = predict(stroke, sex, pool, distance, pick.t);
     return {
-      sid, name: swimmerName(sid) || pick.race.name || '—', sex,
+      sid, stroke, sex, name: swimmerName(sid) || pick.race.name || '—',
       total: pick.t, date: pick.race.date || '', segs: p ? buildDisplaySegments(p) : null,
+      splits: (p && p.splits) || null,   // per-50 array, for the 400/800/1500 layouts
     };
   }).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 }
 
-// The columns for one event. A 100 SCM is laid out as each 25 with its 50 alongside, which is
-// how the set is actually called on deck; everything else is one column per segment.
+// Columns for one stroke at one event, in the order a coach calls the set: the 50 s first, then
+// every 25 in order. (Target is rendered separately as the first column.)
 const TP_ORD = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th'];
-function tpCells(segs, stroke, pool, distance) {
+function tpCells(segs, stroke, pool, distance, splits) {
   if (!segs || !segs.length) return [];
-  if (pool === 'SCM' && distance === 100 && segs.length === 4) {
+  // Distance events: an opening block, the average middle 50 and its doubled 100, and a closing
+  // block. Built from the per-50 splits, since buildDisplaySegments collapses without the 100.
+  if (stroke !== 'IM' && splits && distance >= 400 && splits.length >= 8) {
+    const n = splits.length;
+    const ends = distance === 400 ? 1 : 2;                 // 400 opens/closes on a 50, 800+ on a 100
+    const sum = (a, b) => splits.slice(a, b).reduce((s, x) => s + x, 0);
+    const mid = sum(ends, n - ends) / (n - 2 * ends);      // mean of every 50 in between
+    const lab = ends === 1 ? '50' : '100';
     return [
-      { h: '1st 25', v: segs[0].time }, { h: '2nd 25', v: segs[1].time },
-      { h: '1st 50', v: segs[0].time + segs[1].time },
-      { h: '3rd 25', v: segs[2].time }, { h: '4th 25', v: segs[3].time },
-      { h: '2nd 50', v: segs[2].time + segs[3].time },
+      { h: 'First ' + lab, v: sum(0, ends) },
+      { h: 'Middle 50', v: mid },
+      { h: 'Middle 100', v: mid * 2 },
+      { h: 'Last ' + lab, v: sum(n - ends, n) },
     ];
   }
-  // Uniform segments get "1st 50 / 2nd 50" style headings; collapsed 400+ rows and IM legs
-  // keep the label buildDisplaySegments gave them.
+  if (pool === 'SCM' && distance === 100 && segs.length === 4 && stroke !== 'IM') {
+    return [
+      { h: '1st 50', v: segs[0].time + segs[1].time },
+      { h: '2nd 50', v: segs[2].time + segs[3].time },
+      { h: '1st 25', v: segs[0].time }, { h: '2nd 25', v: segs[1].time },
+      { h: '3rd 25', v: segs[2].time }, { h: '4th 25', v: segs[3].time },
+    ];
+  }
+  // Uniform segments get "1st 50 / 2nd 50" style headings; collapsed 400+ rows and IM legs keep
+  // the label buildDisplaySegments gave them.
   const uniform = segs.every((s) => !s.count || s.count === 1) && distance % segs.length === 0;
   const seg = uniform ? distance / segs.length : 0;
   return segs.map((s, i) => ({
@@ -4139,9 +4171,8 @@ function tpCells(segs, stroke, pool, distance) {
 // ----- Screen: Training Pace -----
 function renderTrainingPace() {
   const f = state.tpForm;
-  const strokes = ['Free', 'Back', 'Breast', 'Fly', 'IM'];
   const pools = ['LCM', 'SCM', 'SCY'];
-  const dists = tpDistances(f.stroke, f.pool);
+  const dists = tpDistances(f.pool);
   if (dists.length && dists.indexOf(f.distance) < 0) f.distance = dists[0];
 
   const chip = (on) => `px-3 py-2 rounded-xl text-xs font-semibold border transition ${on
@@ -4153,58 +4184,78 @@ function renderTrainingPace() {
       <div class="flex flex-wrap gap-1.5">
         ${items.length
           ? items.map(([v, lab]) => `<button class="${chip(String(f[key]) === String(v))}" data-tp="${key}" data-tpv="${v}">${lab}</button>`).join('')
-          : '<span class="text-xs text-muted">No events for this combination</span>'}
+          : '<span class="text-xs text-muted">No events for this pool</span>'}
       </div>
     </div>`;
 
-  const rows = state.tpShow ? trainingRows(f.stroke, f.pool, f.distance, f.basis) : null;
-  const shape = rows && rows.find((r) => r.segs && r.segs.length);
-  const heads = shape ? tpCells(shape.segs, f.stroke, f.pool, f.distance).map((c) => c.h) : [];
-  const estimated = f.pool === 'SCM' && f.distance === 100 && heads.length === 6;
+  const rows = state.tpShow ? trainingRows(f.pool, f.distance, f.basis) : null;
+  const basisLab = f.basis === 'recent' ? 'most recent' : 'best';
+  let body = '';
+  let anyEstimate = false;
 
-  let table = '';
   if (rows && !rows.length) {
-    table = `<div class="px-4 py-8 text-center text-sm text-muted">No recorded times for ${f.distance} ${f.stroke} ${f.pool} yet.<br><span class="text-xs">Record a race for this event and the swimmer appears here.</span></div>`;
+    body = `<div class="px-4 py-8 text-center text-sm text-muted">No recorded times for ${f.distance} m ${f.pool} yet.<br><span class="text-xs">Record a race at this distance and the swimmer appears here.</span></div>`;
   } else if (rows) {
-    const head = `<tr class="text-[10px] uppercase tracking-wide text-faint border-b border-slate-200">
-        <th class="text-left font-semibold py-2 pl-3">Swimmer</th>
-        ${heads.map((h) => `<th class="text-right font-semibold px-2 whitespace-nowrap">${h}</th>`).join('')}
-        <th class="text-right font-semibold pr-3">Target</th>
-      </tr>`;
-    const body = rows.map((r) => {
-      const cells = tpCells(r.segs, f.stroke, f.pool, f.distance);
-      return `
-      <tr class="border-b border-slate-100">
-        <td class="py-2.5 pl-3">
-          <div class="font-semibold text-[13px] whitespace-nowrap">${r.name}</div>
-          ${r.date ? `<div class="text-[10px] text-faint leading-none mt-0.5">${r.date}</div>` : ''}
-        </td>
-        ${heads.map((h, i) => `<td class="text-right px-2 mono text-[13px] ${/50$/.test(h) && cells.length === 6 ? 'text-slate-900 font-semibold' : 'text-slate-600'}">${cells[i] ? formatTime(cells[i].v) : '—'}</td>`).join('')}
-        <td class="text-right pr-3 mono text-[13px] font-bold text-cyan-800">${formatTime(r.total)}</td>
-      </tr>`;
+    const byStroke = {};
+    rows.forEach((r) => { (byStroke[r.stroke] = byStroke[r.stroke] || []).push(r); });
+    // One section per stroke: the column count is a property of the stroke (400 Free collapses
+    // to three rows, 400 IM has eight legs), so a single shared header can't describe them all.
+    body = TP_STROKES.filter((s) => byStroke[s]).map((st) => {
+      const list = byStroke[st];
+      const shape = list.find((r) => r.segs && r.segs.length);
+      const heads = shape ? tpCells(shape.segs, st, f.pool, f.distance, shape.splits).map((c) => c.h) : [];
+      const est = f.pool === 'SCM' && f.distance === 100 && st !== 'IM' && heads.length === 6;
+      if (est) anyEstimate = true;
+      const head = `<tr class="text-[10px] uppercase tracking-wide text-faint border-b border-slate-300">
+          <th class="text-left font-semibold py-1.5 pl-3">Swimmer</th>
+          <th class="text-right font-semibold px-2">Target</th>
+          ${heads.map((h) => `<th class="text-right font-semibold px-2 whitespace-nowrap">${h}${est && /25$/.test(h) ? '*' : ''}</th>`).join('')}
+        </tr>`;
+      const trs = list.map((r) => {
+        const cells = tpCells(r.segs, st, f.pool, f.distance, r.splits);
+        return `
+        <tr class="border-b border-slate-100">
+          <td class="py-2 pl-3">
+            <div class="font-semibold text-[13px] whitespace-nowrap">${r.name}</div>
+            ${r.date ? `<div class="text-[10px] text-faint leading-none mt-0.5">${r.date}</div>` : ''}
+          </td>
+          <td class="text-right px-2 mono text-[13px] font-bold text-cyan-800">${formatTime(r.total)}</td>
+          ${heads.map((h, i) => `<td class="text-right px-2 mono text-[13px] ${/50$/.test(h) ? 'text-slate-900 font-semibold' : 'text-slate-600'}">${cells[i] ? formatTime(cells[i].v) : '—'}</td>`).join('')}
+        </tr>`;
+      }).join('');
+      return `<div class="tp-sec">
+          <div class="px-3 pt-3 pb-1 text-[13px] font-bold text-slate-800">${st}</div>
+          <div class="overflow-x-auto"><table class="w-full"><thead>${head}</thead><tbody>${trs}</tbody></table></div>
+        </div>`;
     }).join('');
-    table = `<div class="overflow-x-auto"><table class="w-full"><thead>${head}</thead><tbody>${body}</tbody></table></div>
-      <div class="px-3 py-2 text-[10px] text-faint leading-snug">Targets are the predicted splits for each swimmer's ${f.basis === 'recent' ? 'most recent' : 'best'} ${f.distance} ${f.stroke} ${f.pool}.${estimated ? ' The 25 m marks are estimated from the SCM 50 shape — the 50 s and the total sit exactly on the pacing table.' : ''}</div>`;
   }
+
+  const sheet = rows && rows.length ? `
+    <div id="tp-print" class="bg-white">
+      <div class="px-3 pt-3 pb-1">
+        <div class="text-[15px] font-bold text-slate-900">${f.distance} m ${f.pool} — training pace</div>
+        <div class="text-[11px] text-muted">Targets from each swimmer's ${basisLab} time${anyEstimate ? ' · *25 m marks estimated from the SCM 50 shape' : ''}</div>
+      </div>
+      ${body}
+    </div>` : body;
 
   return `
     <div class="statusbar"></div>
-    <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
+    <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white no-print">
       <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="home" aria-label="Back to the main page">‹</button>
       <div class="flex-1 min-w-0">
         <div class="text-lg font-semibold">Training Pace</div>
-        <div class="text-xs text-muted truncate">Split targets for every swimmer in one event</div>
       </div>
+      ${rows && rows.length ? '<button class="px-3.5 py-2 rounded-full bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 transition flex-shrink-0" data-action="tp-print">Print</button>' : ''}
     </div>
     <div class="scrollable bg-slate-50">
-      <div class="px-5 py-4 bg-white border-b border-slate-100">
-        ${group('Stroke', strokes.map((s) => [s, s]), 'stroke')}
+      <div class="px-5 py-4 bg-white border-b border-slate-100 no-print">
         ${group('Pool', pools.map((p) => [p, p]), 'pool')}
         ${group('Distance', dists.map((d) => [d, d + ' m']), 'distance')}
         ${group('Pace from', [['best', 'Best time'], ['recent', 'Most recent']], 'basis')}
         <button class="w-full bg-cyan-600 text-white font-semibold rounded-xl py-3.5 text-sm hover:bg-cyan-700 active:scale-[0.99] transition shadow-lg shadow-cyan-600/20" data-action="tp-show">Show Training Table</button>
       </div>
-      ${rows ? `<div class="m-3 bg-white rounded-2xl border border-slate-200 overflow-hidden">${table}</div>` : ''}
+      ${rows ? `<div class="m-3 bg-white rounded-2xl border border-slate-200 overflow-hidden">${sheet}</div>` : ''}
     </div>`;
 }
 
@@ -5066,6 +5117,7 @@ function handleAction(action, el) {
     case 'home': navigate('roster'); break;
     case 'training-pace': state.tpShow = false; navigate('training-pace'); break;
     case 'tp-show': state.tpShow = true; render(); break;
+    case 'tp-print': window.print(); break;
     case 'squad': navigate('squad-targets'); break;
     case 'settings': showToast('Settings — not in v1 mock'); break;
     case 'add-swimmer': showToast('Add swimmer — not in v1 mock'); break;
