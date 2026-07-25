@@ -61,7 +61,8 @@
       #tp-print { position: absolute; left: 0; top: 0; width: 100%; padding: 0; }
       #tp-print table { width: 100%; border-collapse: collapse; }
       #tp-print th, #tp-print td { padding: 3px 6px; }
-      #tp-print .tp-sec { break-inside: avoid; page-break-inside: avoid; }
+      #tp-print tr { break-inside: avoid; page-break-inside: avoid; }
+      #tp-print thead { display: table-header-group; }   /* repeat the header on every page */
       .no-print, .statusbar, #jumper { display: none !important; }
       .scrollable { overflow: visible !important; }
     }
@@ -4135,6 +4136,12 @@ function trainingRows(pool, distance, basis) {
 const TP_ORD = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th'];
 function tpCells(segs, stroke, pool, distance, splits) {
   if (!segs || !segs.length) return [];
+  // A 400 IM comes back as eight 50 s; it is swum and written as four 100 s, one per stroke.
+  if (stroke === 'IM' && splits && splits.length === 8) {
+    return ['Fly 100', 'Back 100', 'Breast 100', 'Free 100'].map((h, k) => ({
+      h, v: splits[2 * k] + splits[2 * k + 1],
+    }));
+  }
   // Distance events: an opening block, the average middle 50 and its doubled 100, and a closing
   // block. Built from the per-50 splits, since buildDisplaySegments collapses without the 100.
   if (stroke !== 'IM' && splits && distance >= 400 && splits.length >= 8) {
@@ -4190,6 +4197,8 @@ function renderTrainingPace() {
 
   const rows = state.tpShow ? trainingRows(f.pool, f.distance, f.basis) : null;
   const basisLab = f.basis === 'recent' ? 'most recent' : 'best';
+  const TP_ABBR = { Free: 'FR', Back: 'BK', Breast: 'BR', Fly: 'FLY', IM: 'IM' };
+  const TP_BLOCK = 'border-t-2 border-slate-400';   // the rule between stroke blocks
   let body = '';
   let anyEstimate = false;
 
@@ -4198,36 +4207,49 @@ function renderTrainingPace() {
   } else if (rows) {
     const byStroke = {};
     rows.forEach((r) => { (byStroke[r.stroke] = byStroke[r.stroke] || []).push(r); });
-    // One section per stroke: the column count is a property of the stroke (400 Free collapses
-    // to three rows, 400 IM has eight legs), so a single shared header can't describe them all.
-    body = TP_STROKES.filter((s) => byStroke[s]).map((st) => {
-      const list = byStroke[st];
-      const shape = list.find((r) => r.segs && r.segs.length);
-      const heads = shape ? tpCells(shape.segs, st, f.pool, f.distance, shape.splits).map((c) => c.h) : [];
-      const est = f.pool === 'SCM' && f.distance === 100 && st !== 'IM' && heads.length === 6;
-      if (est) anyEstimate = true;
-      const head = `<tr class="text-[10px] uppercase tracking-wide text-faint border-b border-slate-300">
-          <th class="text-left font-semibold py-1.5 pl-3">Swimmer</th>
-          <th class="text-right font-semibold px-2">Target</th>
-          ${heads.map((h) => `<th class="text-right font-semibold px-2 whitespace-nowrap">${h}${est && /25$/.test(h) ? '*' : ''}</th>`).join('')}
-        </tr>`;
-      const trs = list.map((r) => {
-        const cells = tpCells(r.segs, st, f.pool, f.distance, r.splits);
-        return `
-        <tr class="border-b border-slate-100">
-          <td class="py-2 pl-3">
-            <div class="font-semibold text-[13px] whitespace-nowrap">${r.name}</div>
-            ${r.date ? `<div class="text-[10px] text-faint leading-none mt-0.5">${r.date}</div>` : ''}
-          </td>
-          <td class="text-right px-2 mono text-[13px] font-bold text-cyan-800">${formatTime(r.total)}</td>
-          ${heads.map((h, i) => `<td class="text-right px-2 mono text-[13px] ${/50$/.test(h) ? 'text-slate-900 font-semibold' : 'text-slate-600'}">${cells[i] ? formatTime(cells[i].v) : '—'}</td>`).join('')}
-        </tr>`;
-      }).join('');
-      return `<div class="tp-sec">
-          <div class="px-3 pt-3 pb-1 text-[13px] font-bold text-slate-800">${st}</div>
-          <div class="overflow-x-auto"><table class="w-full"><thead>${head}</thead><tbody>${trs}</tbody></table></div>
-        </div>`;
-    }).join('');
+    // The four form strokes share a column shape at every event, so they share one header.
+    // IM's splits are its stroke legs (a 400 IM is 4 legs, not First/Middle/Last), so if its
+    // shape differs it gets its own header row inside the same table.
+    const FORM = ['Free', 'Back', 'Breast', 'Fly'];
+    const present = FORM.filter((s) => byStroke[s]);
+    const shapeOf = (st) => {
+      const r = byStroke[st].find((x) => x.segs && x.segs.length);
+      return r ? tpCells(r.segs, st, f.pool, f.distance, r.splits).map((c) => c.h) : [];
+    };
+    const mainHeads = present.length ? shapeOf(present[0]) : (byStroke.IM ? shapeOf('IM') : []);
+    const imHeads = byStroke.IM ? shapeOf('IM') : [];
+    const nCol = Math.max(mainHeads.length, imHeads.length);
+    anyEstimate = f.pool === 'SCM' && f.distance === 100 && mainHeads.length === 6;
+    const pad = (arr) => arr.concat(Array(Math.max(0, nCol - arr.length)).fill(null));
+
+    const headRow = (heads, cls) => `<tr class="text-[10px] uppercase tracking-wide text-faint ${cls}">
+        <th class="text-left font-semibold py-1.5 pl-3">Swimmer</th>
+        <th class="text-right font-semibold px-2">Target</th>
+        ${pad(heads).map((h) => `<th class="text-right font-semibold px-2 whitespace-nowrap">${h == null ? '' : h + (anyEstimate && /25$/.test(h) ? '*' : '')}</th>`).join('')}
+      </tr>`;
+
+    const rowHtml = (r, heads, opensBlock) => {
+      const cells = pad(tpCells(r.segs, r.stroke, f.pool, f.distance, r.splits));
+      return `<tr class="${opensBlock ? TP_BLOCK : 'border-t border-slate-100'}">
+        <td class="py-2 pl-3">
+          <div class="font-semibold text-[13px] whitespace-nowrap">${r.name}</div>
+          ${r.date ? `<div class="text-[10px] text-faint leading-none mt-0.5">${r.date}</div>` : ''}
+        </td>
+        <td class="text-right px-2 whitespace-nowrap"><span class="mono text-[13px] font-bold text-cyan-800">${formatTime(r.total)}</span> <span class="text-[10px] font-semibold text-slate-500">(${TP_ABBR[r.stroke] || r.stroke})</span></td>
+        ${cells.map((c, i) => `<td class="text-right px-2 mono text-[13px] ${c && /(^|\s)(1st|2nd|First|Last|Middle) ?(50|100)$/.test(heads[i] || '') ? 'text-slate-900 font-semibold' : 'text-slate-600'}">${c ? formatTime(c.v) : ''}</td>`).join('')}
+      </tr>`;
+    };
+
+    let trs = '';
+    present.forEach((st, bi) => {
+      byStroke[st].forEach((r, ri) => { trs += rowHtml(r, mainHeads, ri === 0 && bi > 0); });
+    });
+    if (byStroke.IM) {
+      const sameShape = JSON.stringify(imHeads) === JSON.stringify(mainHeads);
+      if (!sameShape && present.length) trs += headRow(imHeads, TP_BLOCK);
+      byStroke.IM.forEach((r, ri) => { trs += rowHtml(r, imHeads, ri === 0 && present.length > 0 && sameShape); });
+    }
+    body = `<div class="overflow-x-auto"><table class="w-full tp-table"><thead>${headRow(mainHeads, 'border-b-2 border-slate-400')}</thead><tbody>${trs}</tbody></table></div>`;
   }
 
   const sheet = rows && rows.length ? `
