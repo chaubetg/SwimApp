@@ -1265,6 +1265,7 @@ function navigate(view, opts = {}) {
   state.reviewId = null; // default: a fresh open is a new entry (review-clicks pass reviewId in opts)
   state.cmpMode = null;  // comparisons start closed on every screen change
   if (view !== 'race-analysis') state.raceSaved = null; // the Saved chip belongs to the save that just happened
+  if (view !== 'predicted-splits') state.planSaved = false; // ditto for the Split Predictor's Saved ✓
   Object.assign(state, rest);
   render();
 }
@@ -1420,7 +1421,7 @@ function deleteSwimmer(sid) {
 
 const screenLabels = {
   roster: { num: 1, label: 'Roster' },
-  'quick-calc': { num: 2, label: 'Split predictor' },
+  'quick-calc': { num: 2, label: 'Split Predictor' },
   'predicted-splits': { num: 3, label: 'Predicted splits' },
   'race-analysis': { num: 4, label: 'Race analysis' },
   'squad-targets': { num: 5, label: 'Squad targets' },
@@ -1432,7 +1433,7 @@ function renderJumper() {
   if (!host) return; // jumper rail removed in the clean coach build
   const items = [
     ['roster', 'Roster'],
-    ['quick-calc', 'Split predictor'],
+    ['quick-calc', 'Split Predictor'],
     ['predicted-splits', 'Predicted splits'],
     ['race-analysis', 'Race analysis'],
     ['squad-targets', 'Squad targets'],
@@ -2015,12 +2016,11 @@ function renderSavedSwimmer() {
 
   const raceRow = (s) => {
     const c = buildRaceComparison(s);
-    const tot = c ? c.actualTotal : 0, d = c ? c.delta : 0;
-    const dc = d > 0 ? 'text-rose-600' : 'text-emerald-700';
+    const tot = c ? c.actualTotal : 0;
     return `
     ${rowOpen(s.id)}
       <div class="flex-1 min-w-0">
-        <div class="font-semibold text-[15px] mono">${formatTime(tot)} <span class="${dc} text-xs font-semibold">(${d >= 0 ? '+' : ''}${d.toFixed(2)})</span></div>
+        <div class="font-semibold text-[15px] mono">${formatTime(tot)}</div>
         <div class="text-xs text-muted mt-0.5">${meetLabel(s) ? meetLabel(s) + ' · ' : ''}${s.date || ''}</div>
       </div>
       ${editing ? delBtn(s.id, 'race') : `<span class="text-slate-300 text-2xl">›</span>`}
@@ -2104,8 +2104,8 @@ function renderSavedSwimmer() {
     ${hasProgress(sid) ? `<div class="px-5 pb-2"><button class="w-full bg-white border border-cyan-300 text-cyan-800 rounded-xl py-2.5 text-sm font-semibold hover:bg-cyan-50 active:scale-[0.99] transition" data-action="progress">📈 Progress over time</button></div>` : ''}
     ${races.length ? `<div class="px-5 pb-2"><button class="w-full bg-white border border-amber-300 text-amber-800 rounded-xl py-2.5 text-sm font-semibold hover:bg-amber-50 active:scale-[0.99] transition" data-action="best-times">🏆 Best times</button></div>` : ''}
     <div class="px-5 pb-2 flex flex-wrap gap-2">
-      <button class="bg-cyan-600 text-white rounded-xl px-3 py-2 text-xs font-semibold hover:bg-cyan-700 active:scale-[0.99] transition" data-action="add-race">+ Race</button>
-      <button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-event">+ Pace plan</button>
+      <button class="bg-cyan-600 text-white rounded-xl px-3 py-2 text-xs font-semibold hover:bg-cyan-700 active:scale-[0.99] transition" data-action="add-race">+ Record Race</button>
+      <button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-event">+ Split Predictor</button>
       ${PUBLIC_BUILD ? '' : `<button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-adjacent">+ Adjacent</button>
       <button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-fifty">+ 50 m</button>
       <button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-convert">+ Conversion</button>
@@ -2114,7 +2114,7 @@ function renderSavedSwimmer() {
     ${compareBtn}`}
     <div class="scrollable px-3 pb-2 bg-slate-50">
       ${section('Record Races', raceRowsHtml, true)}
-      ${section('Race Predictor', predRows, true)}
+      ${section('Split Predictor', predRows, true)}
       ${section('Adjacent events', adjRows)}
       ${section('50 m LCM splits', fiftyRows)}
       ${section('Course conversions', convRows)}
@@ -2345,7 +2345,9 @@ function hasProgress(sid) { return progGroups(sid).some((g) => g.entries.length 
 
 // Dependency-free line chart over [{v,x,lab}]; lower v sits lower (faster/better). Green dot = best.
 function progChartSvg(pts, hb, goal) {
-  const W = 320, H = 148, padL = 34, padR = 12, padT = 16, padB = 30; // padB leaves room for a value label under a bottom point
+  // No y-axis labels, and the end date labels are anchored inward, so the sides need almost
+  // no padding — the plot gets the width instead. padB still holds a label under a low point.
+  const W = 320, H = 148, padL = 6, padR = 6, padT = 16, padB = 30;
   const N = pts.length;
   const vals = pts.map((p) => p.v);
   let vmin = Math.min(...vals), vmax = Math.max(...vals);
@@ -2379,11 +2381,10 @@ function progChartSvg(pts, hb, goal) {
   const labAnchor = (i) => (N > 1 && i === N - 1) ? 'end' : ((N > 1 && i === 0) ? 'start' : 'middle');
   const labX = (i) => (N > 1 && i === N - 1) ? (W - 2) : X(i);
   const vlabs = pts.map((p, i) => showVal(p, i) ? `<text x="${labX(i).toFixed(1)}" y="${labY(i).toFixed(1)}" font-size="8" fill="${p.v === best ? '#059669' : '#475569'}" text-anchor="${labAnchor(i)}">${p.lab}</text>` : '').join('');
-  const xlabs = pts.map((p, i) => showDate(i) ? `<text x="${X(i).toFixed(1)}" y="${H - 7}" font-size="8" fill="#94a3b8" text-anchor="middle">${p.x}</text>` : '').join('');
+  const xAnchor = (i) => (N > 1 && i === N - 1) ? 'end' : ((N > 1 && i === 0) ? 'start' : 'middle');
+  const xlabs = pts.map((p, i) => showDate(i) ? `<text x="${X(i).toFixed(1)}" y="${H - 7}" font-size="8" fill="#94a3b8" text-anchor="${xAnchor(i)}">${p.x}</text>` : '').join('');
   const gline = goal != null ? `<line x1="${padL}" y1="${Y(goal).toFixed(1)}" x2="${W - padR}" y2="${Y(goal).toFixed(1)}" stroke="#f59e0b" stroke-width="1" stroke-dasharray="4 3"/><text x="${W - padR}" y="${(Y(goal) - 2).toFixed(1)}" font-size="8" fill="#d97706" text-anchor="end">${goal}%</text>` : '';
-  const yTop = `<text x="3" y="${padT + 3}" font-size="8" fill="#cbd5e1">${progFmtRaw(vmax)}</text>`;
-  const yBot = `<text x="3" y="${(padT + plotH).toFixed(0)}" font-size="8" fill="#cbd5e1">${progFmtRaw(vmin)}</text>`;
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block">${gline}${yTop}${yBot}<polyline points="${line}" fill="none" stroke="#0891b2" stroke-width="2"/>${dots}${vlabs}${xlabs}</svg>`;
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block">${gline}<polyline points="${line}" fill="none" stroke="#0891b2" stroke-width="2"/>${dots}${vlabs}${xlabs}</svg>`;
 }
 function renderProgress() {
   const sid = state.savedSid, name = swimmerName(sid);
@@ -2492,7 +2493,6 @@ function renderSwimmerDetail() {
   const last = sampleRace.swimmerId === s.id ? sampleRace : null;
 
   const actualTotal = last ? last.actualSplits.reduce((a,b)=>a+b,0) : 0;
-  const lastDelta = last ? actualTotal - last.targetSeconds : 0;
 
   return `
     <div class="statusbar"></div>
@@ -2537,7 +2537,7 @@ function renderSwimmerDetail() {
             <div class="flex items-center justify-between">
               <div>
                 <div class="font-semibold text-sm">${last.distance} ${last.stroke} ${last.pool}</div>
-                <div class="text-xs text-muted mt-1 mono">${formatTime(actualTotal)} <span class="${lastDelta > 0 ? 'text-rose-600' : 'text-emerald-700'} font-semibold">(${lastDelta >= 0 ? '+' : ''}${lastDelta.toFixed(2)})</span></div>
+                <div class="text-xs text-muted mt-1 mono">${formatTime(actualTotal)}</div>
               </div>
               <span class="text-cyan-700 text-sm font-bold">View →</span>
             </div>
@@ -3194,7 +3194,7 @@ function renderQuickCalc() {
     <div class="px-5 pt-3 pb-3 flex items-center gap-3">
       <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0">
-        <div class="text-lg font-semibold">${state.swimmer ? 'Pace plan' : 'Split Predictor'}</div>
+        <div class="text-lg font-semibold">Split Predictor</div>
         ${ctxLine ? `<div class="text-xs text-muted truncate">${ctxLine}</div>` : ''}
       </div>
     </div>
@@ -3427,7 +3427,7 @@ function renderPredictedSplits() {
       <div class="statusbar"></div>
       <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
         <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
-        <div class="text-lg font-semibold">Pace plan</div>
+        <div class="text-lg font-semibold">Split Predictor</div>
       </div>
       <div class="p-8 text-center">
         <div class="text-slate-700 font-semibold text-sm mb-1">No data for this combination</div>
@@ -3571,12 +3571,17 @@ function renderPredictedSplits() {
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-2 flex items-center gap-3 bg-white">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="home" aria-label="Done — back to the main page">‹</button>
       <div class="flex-1 min-w-0">
-        <div class="text-base font-semibold">${state.swimmer ? state.swimmer.name : (state.form.name || 'Pace plan')}</div>
+        <div class="text-base font-semibold truncate">${state.swimmer ? state.swimmer.name : (state.form.name || 'Split Predictor')}</div>
         <div class="text-xs text-muted truncate">${r.distance} ${r.stroke} · ${r.pool} · ${r.sex === 'M' ? 'Men' : 'Women'}</div>
       </div>
-      <button class="px-3.5 py-2 rounded-full bg-cyan-50 text-cyan-800 text-xs font-semibold hover:bg-cyan-100 transition" data-action="save">${state.reviewId ? 'Update' : 'Save'}</button>
+      <div class="flex items-center gap-1.5 flex-shrink-0">
+        <button class="px-3 py-2 rounded-full bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 transition" data-action="edit-plan">Edit</button>
+        ${state.planSaved
+          ? '<button class="px-4 py-2.5 rounded-full bg-emerald-50 text-emerald-700 text-sm font-semibold" data-action="save">Saved ✓</button>'
+          : `<button class="px-4 py-2.5 rounded-full bg-cyan-600 text-white text-sm font-semibold shadow-sm shadow-cyan-600/20 hover:bg-cyan-700 active:scale-[0.98] transition" data-action="save">${state.reviewId ? 'Update' : 'Save'}</button>`}
+      </div>
     </div>
 
     <!-- Target time hero, with quick nudge controls -->
@@ -4423,7 +4428,7 @@ function renderSquadTargets() {
         <button class="w-10 h-10 rounded-full bg-slate-50 flex items-center justify-center text-slate-700 text-xl leading-none" data-action="back">‹</button>
         <div class="flex-1 min-w-0">
           <div class="text-lg font-semibold">Squad targets</div>
-          <div class="text-xs text-slate-500">Pace plan for every swimmer</div>
+          <div class="text-xs text-slate-500">Predicted splits for every swimmer</div>
         </div>
         <button class="w-10 h-10 rounded-full bg-slate-50 flex items-center justify-center text-slate-500" title="Export">⎙</button>
       </div>
@@ -4914,16 +4919,23 @@ function handleAction(action, el) {
           if (confirm(`${nm} already has a ${r.distance} ${r.stroke} ${r.pool} plan — target ${formatTime(dup.targetSeconds)}.\n\nOK = replace it with ${formatTime(r.targetSeconds)}\nCancel = keep both (saves a new entry)`)) {
             dup.sex = r.sex; dup.targetSeconds = r.targetSeconds;
             persistSaved();
+            state.planSaved = true;
             showToast(`Replaced ${nm} · ${r.distance} ${r.stroke} ${r.pool} plan`);
+            render();
             break;
           }
         }
       }
       const upd = upsertSaved({ id: 'sv' + Date.now().toString(36), sid, name: nm,
         stroke: r.stroke, sex: r.sex, pool: r.pool, distance: r.distance, targetSeconds: r.targetSeconds });
+      state.planSaved = true;
       showToast(`${upd ? 'Updated' : 'Saved'} ${nm} · ${r.distance} ${r.stroke}`);
+      render();
       break;
     }
+    // Edit is the only route back to the Split Predictor form — the ‹ goes home, so the two
+    // controls in that header never lead to the same screen (same rule as Record Races, 24i).
+    case 'edit-plan': navigate('quick-calc'); break;
     case 'set-as-target': showToast(`Saved to ${state.swimmer.name}'s next race`); break;
     case 'plan-from-pb':
       state.form = {
@@ -4950,6 +4962,7 @@ function handleAction(action, el) {
     case 'nudge-target': {
       const delta = parseFloat(el?.getAttribute('data-delta') || '0');
       const next = Math.max(10, state.result.targetSeconds + delta);
+      state.planSaved = false;          // the target moved, so what's on screen is no longer saved
       state.form.targetSeconds = next;
       state.result = predict(state.result.stroke, state.result.sex, state.result.pool, state.result.distance, next);
       render();
