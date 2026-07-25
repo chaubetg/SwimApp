@@ -1258,6 +1258,8 @@ const state = {
 function navigate(view, opts = {}) {
   const { skipHistory, ...rest } = opts;
   if (!skipHistory && state.view !== view) state.history.push(state.view);
+  // The main page is the root: nothing can sit behind it, so no path can build up a loop.
+  if (view === 'roster') state.history.length = 0;
   state.view = view;
   state.editing = false; // leave edit mode whenever we change screens
   state.reviewId = null; // default: a fresh open is a new entry (review-clicks pass reviewId in opts)
@@ -1269,8 +1271,9 @@ function navigate(view, opts = {}) {
 
 function back() {
   if (state.history.length === 0) return navigate('roster');
-  state.view = state.history.pop();
-  render();
+  // Go through navigate() so a Back applies the SAME resets as any other screen change —
+  // a bare view swap left state.editing, cmpMode and reviewId from the previous screen.
+  navigate(state.history.pop(), { skipHistory: true });
 }
 
 function showToast(msg) {
@@ -1456,6 +1459,10 @@ function render() {
   const keepFocus = (renderedView === state.view && aeGrp)
     ? { key: aeGrp.getAttribute('data-tkey'), box: (ae.className.split(' ').find((c) => c.indexOf('tb-') === 0) || '') }
     : null;
+  // Back on the main page: forget which events were expanded, so opening any swimmer starts
+  // with every event collapsed. Drilling into a race and back keeps your place, because that
+  // path never passes through the roster.
+  if (state.view === 'roster') state.rgOpen = {};
   let html = '';
   switch (state.view) {
     case 'roster': html = renderRoster(); break;
@@ -1719,6 +1726,9 @@ function render() {
         markSplitTouched(key);
         if (el === mi && el.value.length === cap) { se.focus(); se.select(); }
         else if (el === se && el.value.length === 2) { hh.focus(); hh.select(); }
+        // The split is fully entered the moment the hundredths box fills — adjust the last
+        // split right then, so it lands without the coach having to tap anywhere.
+        if (key !== 'target' && el === hh && el.value.length === 2) deriveLastSplit(key);
       });
       el.addEventListener('blur', () => {
         if ((el === se || el === hh) && el.value !== '') el.value = el.value.padStart(2, '0');
@@ -1730,23 +1740,28 @@ function render() {
         // same guard the target box uses.
         setTimeout(() => {
           if (grp.contains(document.activeElement)) return;
-          const changed = autoLastSplit(key);
-          // Patch the one derived box in place; only fall back to a full redraw if it's
-          // somehow not on screen.
-          if (changed && !paintTimeBoxes(changed, state.raceForm.times[changed])) render();
+          deriveLastSplit(key);
         }, 0);
       });
     });
-    // Goal-time box: re-seed the predicted "what they swam" splits once the goal changes.
+    // Time-swam box: refresh the predicted "what they swam" splits whenever the time changes.
     if (key === 'target') {
       [mi, se, hh].forEach((el) => {
         el.addEventListener('focus', () => { if (grp._t0 == null) grp._t0 = state.raceForm.times.target; });
+        // The time is complete the moment the hundredths box fills — refresh the splits right
+        // then, instead of making the coach tap somewhere first.
+        el.addEventListener('input', () => {
+          if (el !== hh || el.value.length !== 2 || state.view !== 'race-entry') return;
+          seedRaceTimes();
+          repaintRaceSplits();
+        });
         el.addEventListener('blur', () => {
           setTimeout(() => {
             if (grp.contains(document.activeElement)) return;
             const changed = state.raceForm.times.target !== grp._t0;
             grp._t0 = null;
-            if (changed && state.view === 'race-entry') { seedRaceTimes(); render(); }
+            // Painted, never rendered — a redraw here is what used to move the screen.
+            if (changed && state.view === 'race-entry') { seedRaceTimes(); repaintRaceSplits(); }
           }, 0);
         });
       });
@@ -3848,6 +3863,24 @@ function seedRaceTimes() {
   // survives a re-seed — correcting the total by 0.1s must not wipe three real splits.
   const touched = state.raceForm.touched || {};
   Object.keys(touched).forEach((k) => { if (touched[k] && prev[k] != null) times[k] = prev[k]; });
+  // A held split and freshly predicted neighbours would not add up to the time swam, so the
+  // column on screen would contradict the swim. Stretch the untouched splits over whatever
+  // time is left; the last of them absorbs the rounding so the total is exact.
+  if (!(f.stroke !== 'IM' && f.distance >= 400)) {
+    const segKeys = raceRowDefs(f.stroke, f.distance, f.pool).filter((d) => d.kind === 'seg').map((d) => d.key);
+    const free = segKeys.filter((k) => !touched[k] && times[k] > 0);
+    const held = segKeys.filter((k) => touched[k]).reduce((s, k) => s + (times[k] || 0), 0);
+    const freeSum = free.reduce((s, k) => s + times[k], 0);
+    const rem = Math.round((tgt - held) * 100) / 100;
+    if (free.length && freeSum > 0 && rem > 0) {
+      const scale = rem / freeSum;
+      let acc = 0;
+      free.forEach((k, i) => {
+        if (i < free.length - 1) { times[k] = Math.round(times[k] * scale * 100) / 100; acc += times[k]; }
+        else times[k] = Math.round((rem - acc) * 100) / 100;
+      });
+    }
+  }
   state.raceForm.times = times;
 }
 
@@ -3975,6 +4008,22 @@ function paintTimeBoxes(key, seconds) {
   se.value = String(s).padStart(2, '0');
   hh.value = String(h).padStart(2, '0');
   return true;
+}
+
+// Recompute the final split from the time swam and paint it in place. Deliberately never
+// calls render(): a redraw is what used to throw the coach back to the top of the form. If the
+// row somehow isn't on screen the state is still correct and the next natural redraw shows it.
+function deriveLastSplit(changedKey) {
+  const changed = autoLastSplit(changedKey);
+  if (changed) paintTimeBoxes(changed, state.raceForm.times[changed]);
+}
+
+// Repaint every split box from state. Used when the time swam changes and the untouched
+// splits are re-predicted: painting keeps the caret in the time box and the screen exactly
+// where it is, which a render() would not.
+function repaintRaceSplits() {
+  const t = state.raceForm.times || {};
+  Object.keys(t).forEach((k) => { if (k !== 'target' && t[k] != null) paintTimeBoxes(k, t[k]); });
 }
 
 // A split the coach has typed into belongs to the coach: seedRaceTimes must never re-predict
@@ -4243,7 +4292,7 @@ function renderRaceAnalysis() {
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="home" aria-label="Done — back to the main page">‹</button>
       <div class="flex-1 min-w-0">
         <div class="text-base font-semibold truncate">${race.name || 'Race'}</div>
         <div class="text-xs text-muted truncate">${race.distance} ${race.stroke} ${race.pool}${meetLabel(race) ? ' · ' + meetLabel(race) : ''}${race.date ? ' · ' + race.date : ''}</div>
@@ -4844,6 +4893,9 @@ function handleAction(action, el) {
       break;
     }
     case 'back': back(); break;
+    // The race is finished with: go home. Edit is the only way back into the entry form, so
+    // the two controls in that header no longer lead to the same screen.
+    case 'home': navigate('roster'); break;
     case 'squad': navigate('squad-targets'); break;
     case 'settings': showToast('Settings — not in v1 mock'); break;
     case 'add-swimmer': showToast('Add swimmer — not in v1 mock'); break;
