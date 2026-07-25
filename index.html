@@ -1232,6 +1232,8 @@ const state = {
   effForm: { stroke: 'Free', sex: 'M', dist: '50', course: 'LCM', t: 0, acts: {}, cps: {} }, // Stroke Index: goal + logged actuals
   fiftyForm: { stroke: 'Free', sex: 'M', seconds: 0, name: '', best: {}, sr: {}, sc: {}, date: '' }, // 50m LCM split calculator
   fiftyOpen: {}, // 50m tool: which metric rows are expanded for SR/SC input
+  tpForm: { stroke: 'Free', pool: 'SCM', distance: 50, basis: 'best' }, // Training Pace picker
+  tpShow: false,  // the table appears once "Show Training Table" is pressed
   adjForm: { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 100, seconds: 0, name: '' }, // adjacent-events predictor
   form: {
     stroke: 'Free', sex: 'M', pool: 'LCM', distance: 200,
@@ -1425,6 +1427,7 @@ const screenLabels = {
   'predicted-splits': { num: 3, label: 'Predicted splits' },
   'race-analysis': { num: 4, label: 'Race analysis' },
   'squad-targets': { num: 5, label: 'Squad targets' },
+  'training-pace': { num: null, label: 'Training Pace' },
   'swimmer-detail': { num: null, label: 'Swimmer detail' },
 };
 
@@ -1483,6 +1486,7 @@ function render() {
     case 'progress': html = renderProgress(); break;
     case 'progress-group': html = renderProgressGroup(); break;
     case 'best-times': html = renderBestTimes(); break;
+    case 'training-pace': html = renderTrainingPace(); break;
     default: html = '<div class="p-8 text-slate-500">Unknown view</div>';
   }
   host.innerHTML = html;
@@ -1517,6 +1521,12 @@ function render() {
         render();
       }
     };
+    // The one time input without a minutes cap. Nothing at 400 m or shorter runs 10+ minutes,
+    // so trim the minutes portion to minDigits() exactly as the segmented boxes do.
+    tedit.addEventListener('input', () => {
+      const cap = minDigits(state.form.distance);
+      tedit.value = tedit.value.replace(/^(\s*)(\d+)(?=\s*:)/, (m, ws, d) => ws + d.slice(0, cap));
+    });
     tedit.addEventListener('blur', commit);
     tedit.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); tedit.blur(); } });
   }
@@ -1857,9 +1867,11 @@ function render() {
 
 // ----- Screen 1: Roster -----
 function renderRoster() {
-  // One row per swimmer (by stable id, most recently saved first) so same-name swimmers don't merge.
+  // One row per swimmer (by stable id, so same-name swimmers don't merge), alphabetical.
   const seen = new Set(); const orderedSids = [];
-  state.saved.slice().reverse().forEach(s => { if (s.sid && !seen.has(s.sid)) { seen.add(s.sid); orderedSids.push(s.sid); } });
+  state.saved.forEach(s => { if (s.sid && !seen.has(s.sid)) { seen.add(s.sid); orderedSids.push(s.sid); } });
+  // Names are stored first-name-first, so a plain locale compare IS "by first name".
+  orderedSids.sort((a, b) => (swimmerName(a) || '').localeCompare(swimmerName(b) || '', undefined, { sensitivity: 'base' }));
   const editing = state.editing;
   const savedRows = orderedSids.map(sid => {
     const evs = state.saved.filter(s => s.sid === sid);
@@ -1900,6 +1912,12 @@ function renderRoster() {
       </button>
       <button class="bg-white border border-slate-200 rounded-2xl px-4 py-4 text-center hover:border-cyan-300 hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm" data-action="quick-calc">
         <div class="font-bold text-slate-800 text-[15px]">Split Predictor</div>
+      </button>
+    </div>
+    <div class="px-5 pb-2">
+      <button class="w-full bg-white border border-slate-200 rounded-2xl px-4 py-4 text-center hover:border-cyan-300 hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm" data-action="training-pace">
+        <div class="font-bold text-slate-800 text-[15px]">Training Pace</div>
+        <div class="text-[11px] text-muted mt-0.5 leading-snug">Split targets for the whole squad, one event at a time</div>
       </button>
     </div>
     ${PUBLIC_BUILD ? '' : `<div class="px-5 pb-2 space-y-2">
@@ -4052,6 +4070,144 @@ function timeBoxes(key, seconds, distance) {
     </div>`;
 }
 
+// ===== Training Pace =====
+// Which distances the model can predict for this stroke + pool. 50 m LCM has no entry in
+// `ratios` — it comes from the separate fiftyRatios table via predict()'s fallback.
+function tpDistances(stroke, pool) {
+  const byStroke = ratios[stroke] || {};
+  const set = new Set();
+  Object.keys(byStroke).forEach((sex) => {
+    const byPool = byStroke[sex] && byStroke[sex][pool];
+    if (byPool) Object.keys(byPool).forEach((d) => set.add(+d));
+  });
+  if (pool === 'LCM' && fiftyRatios[stroke]) set.add(50);
+  return [...set].sort((a, b) => a - b);
+}
+
+// One entry per swimmer holding a recorded time in this exact event, alphabetical by first name.
+// `basis` picks which of their swims sets the pace: 'best' (fastest) or 'recent' (latest date).
+// Sex is per swimmer, read from their own race record — that's why the picker has no sex.
+// Segments come from buildDisplaySegments so a 100 SCM gets its four 25 s (25/75 estimated from
+// the SCM-50 shape), IM gets stroke legs, and 400+ gets the collapsed First/Middle/Last rows.
+function trainingRows(stroke, pool, distance, basis) {
+  const bySid = {};
+  state.saved.forEach((s) => {
+    if (s.kind !== 'race' || !s.sid) return;
+    if (s.stroke !== stroke || s.pool !== pool || s.distance !== distance) return;
+    const c = buildRaceComparison(s);
+    const t = c ? c.actualTotal : 0;
+    if (!(t > 0)) return;
+    (bySid[s.sid] = bySid[s.sid] || []).push({ race: s, t });
+  });
+  return Object.keys(bySid).map((sid) => {
+    const list = bySid[sid];
+    const pick = basis === 'recent'
+      ? list.slice().sort((a, b) => (a.race.date || '').localeCompare(b.race.date || ''))[list.length - 1]
+      : list.reduce((m, x) => (x.t < m.t ? x : m), list[0]);
+    const sex = pick.race.sex || 'M';
+    const p = predict(stroke, sex, pool, distance, pick.t);
+    return {
+      sid, name: swimmerName(sid) || pick.race.name || '—', sex,
+      total: pick.t, date: pick.race.date || '', segs: p ? buildDisplaySegments(p) : null,
+    };
+  }).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+}
+
+// The columns for one event. A 100 SCM is laid out as each 25 with its 50 alongside, which is
+// how the set is actually called on deck; everything else is one column per segment.
+const TP_ORD = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th'];
+function tpCells(segs, stroke, pool, distance) {
+  if (!segs || !segs.length) return [];
+  if (pool === 'SCM' && distance === 100 && segs.length === 4) {
+    return [
+      { h: '1st 25', v: segs[0].time }, { h: '2nd 25', v: segs[1].time },
+      { h: '1st 50', v: segs[0].time + segs[1].time },
+      { h: '3rd 25', v: segs[2].time }, { h: '4th 25', v: segs[3].time },
+      { h: '2nd 50', v: segs[2].time + segs[3].time },
+    ];
+  }
+  // Uniform segments get "1st 50 / 2nd 50" style headings; collapsed 400+ rows and IM legs
+  // keep the label buildDisplaySegments gave them.
+  const uniform = segs.every((s) => !s.count || s.count === 1) && distance % segs.length === 0;
+  const seg = uniform ? distance / segs.length : 0;
+  return segs.map((s, i) => ({
+    h: (stroke === 'IM' || !uniform) ? s.label : `${TP_ORD[i] || (i + 1) + 'th'} ${seg}`,
+    v: s.time,
+  }));
+}
+
+// ----- Screen: Training Pace -----
+function renderTrainingPace() {
+  const f = state.tpForm;
+  const strokes = ['Free', 'Back', 'Breast', 'Fly', 'IM'];
+  const pools = ['LCM', 'SCM', 'SCY'];
+  const dists = tpDistances(f.stroke, f.pool);
+  if (dists.length && dists.indexOf(f.distance) < 0) f.distance = dists[0];
+
+  const chip = (on) => `px-3 py-2 rounded-xl text-xs font-semibold border transition ${on
+    ? 'bg-cyan-600 text-white border-cyan-600'
+    : 'bg-white text-slate-700 border-slate-200 hover:border-cyan-300'}`;
+  const group = (label, items, key) => `
+    <div class="mb-3">
+      <div class="label-cap mb-1.5">${label}</div>
+      <div class="flex flex-wrap gap-1.5">
+        ${items.length
+          ? items.map(([v, lab]) => `<button class="${chip(String(f[key]) === String(v))}" data-tp="${key}" data-tpv="${v}">${lab}</button>`).join('')
+          : '<span class="text-xs text-muted">No events for this combination</span>'}
+      </div>
+    </div>`;
+
+  const rows = state.tpShow ? trainingRows(f.stroke, f.pool, f.distance, f.basis) : null;
+  const shape = rows && rows.find((r) => r.segs && r.segs.length);
+  const heads = shape ? tpCells(shape.segs, f.stroke, f.pool, f.distance).map((c) => c.h) : [];
+  const estimated = f.pool === 'SCM' && f.distance === 100 && heads.length === 6;
+
+  let table = '';
+  if (rows && !rows.length) {
+    table = `<div class="px-4 py-8 text-center text-sm text-muted">No recorded times for ${f.distance} ${f.stroke} ${f.pool} yet.<br><span class="text-xs">Record a race for this event and the swimmer appears here.</span></div>`;
+  } else if (rows) {
+    const head = `<tr class="text-[10px] uppercase tracking-wide text-faint border-b border-slate-200">
+        <th class="text-left font-semibold py-2 pl-3">Swimmer</th>
+        ${heads.map((h) => `<th class="text-right font-semibold px-2 whitespace-nowrap">${h}</th>`).join('')}
+        <th class="text-right font-semibold pr-3">Target</th>
+      </tr>`;
+    const body = rows.map((r) => {
+      const cells = tpCells(r.segs, f.stroke, f.pool, f.distance);
+      return `
+      <tr class="border-b border-slate-100">
+        <td class="py-2.5 pl-3">
+          <div class="font-semibold text-[13px] whitespace-nowrap">${r.name}</div>
+          ${r.date ? `<div class="text-[10px] text-faint leading-none mt-0.5">${r.date}</div>` : ''}
+        </td>
+        ${heads.map((h, i) => `<td class="text-right px-2 mono text-[13px] ${/50$/.test(h) && cells.length === 6 ? 'text-slate-900 font-semibold' : 'text-slate-600'}">${cells[i] ? formatTime(cells[i].v) : '—'}</td>`).join('')}
+        <td class="text-right pr-3 mono text-[13px] font-bold text-cyan-800">${formatTime(r.total)}</td>
+      </tr>`;
+    }).join('');
+    table = `<div class="overflow-x-auto"><table class="w-full"><thead>${head}</thead><tbody>${body}</tbody></table></div>
+      <div class="px-3 py-2 text-[10px] text-faint leading-snug">Targets are the predicted splits for each swimmer's ${f.basis === 'recent' ? 'most recent' : 'best'} ${f.distance} ${f.stroke} ${f.pool}.${estimated ? ' The 25 m marks are estimated from the SCM 50 shape — the 50 s and the total sit exactly on the pacing table.' : ''}</div>`;
+  }
+
+  return `
+    <div class="statusbar"></div>
+    <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="home" aria-label="Back to the main page">‹</button>
+      <div class="flex-1 min-w-0">
+        <div class="text-lg font-semibold">Training Pace</div>
+        <div class="text-xs text-muted truncate">Split targets for every swimmer in one event</div>
+      </div>
+    </div>
+    <div class="scrollable bg-slate-50">
+      <div class="px-5 py-4 bg-white border-b border-slate-100">
+        ${group('Stroke', strokes.map((s) => [s, s]), 'stroke')}
+        ${group('Pool', pools.map((p) => [p, p]), 'pool')}
+        ${group('Distance', dists.map((d) => [d, d + ' m']), 'distance')}
+        ${group('Pace from', [['best', 'Best time'], ['recent', 'Most recent']], 'basis')}
+        <button class="w-full bg-cyan-600 text-white font-semibold rounded-xl py-3.5 text-sm hover:bg-cyan-700 active:scale-[0.99] transition shadow-lg shadow-cyan-600/20" data-action="tp-show">Show Training Table</button>
+      </div>
+      ${rows ? `<div class="m-3 bg-white rounded-2xl border border-slate-200 overflow-hidden">${table}</div>` : ''}
+    </div>`;
+}
+
 // ----- Screen: Race entry -----
 function renderRaceEntry() {
   const f = state.form;
@@ -4530,6 +4686,13 @@ document.addEventListener('click', (e) => {
     if (pw) { state.progWindow = pw.getAttribute('data-progwindow'); render(); return; }
     const rg = e.target.closest('[data-rgroup]');
     if (rg) { state.rgOpen = state.rgOpen || {}; const k = rg.getAttribute('data-rgroup'); state.rgOpen[k] = !state.rgOpen[k]; render(); return; }
+    // Training Pace pickers — the table below refreshes with the choice once it's been shown.
+    const tp = e.target.closest('[data-tp]');
+    if (tp) {
+      const k = tp.getAttribute('data-tp'), v = tp.getAttribute('data-tpv');
+      state.tpForm[k] = (k === 'distance') ? parseInt(v, 10) : v;
+      render(); return;
+    }
     const sv = e.target.closest('[data-saved]');
     if (sv) {
       const entry = state.saved.find(x => x.id === sv.getAttribute('data-saved'));
@@ -4901,6 +5064,8 @@ function handleAction(action, el) {
     // The race is finished with: go home. Edit is the only way back into the entry form, so
     // the two controls in that header no longer lead to the same screen.
     case 'home': navigate('roster'); break;
+    case 'training-pace': state.tpShow = false; navigate('training-pace'); break;
+    case 'tp-show': state.tpShow = true; render(); break;
     case 'squad': navigate('squad-targets'); break;
     case 'settings': showToast('Settings — not in v1 mock'); break;
     case 'add-swimmer': showToast('Add swimmer — not in v1 mock'); break;
