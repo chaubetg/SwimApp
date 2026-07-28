@@ -1440,6 +1440,7 @@ const screenLabels = {
   'race-analysis': { num: 4, label: 'Race analysis' },
   'squad-targets': { num: 5, label: 'Squad targets' },
   'training-pace': { num: null, label: 'Training Pace' },
+  'other-tools': { num: null, label: 'Other tools' },
   'swimmer-detail': { num: null, label: 'Swimmer detail' },
 };
 
@@ -1499,6 +1500,7 @@ function render() {
     case 'progress-group': html = renderProgressGroup(); break;
     case 'best-times': html = renderBestTimes(); break;
     case 'training-pace': html = renderTrainingPace(); break;
+    case 'other-tools': html = renderOtherTools(); break;
     default: html = '<div class="p-8 text-slate-500">Unknown view</div>';
   }
   host.innerHTML = html;
@@ -1922,46 +1924,19 @@ function renderRoster() {
       <button class="bg-gradient-to-br from-cyan-500 to-cyan-700 rounded-2xl px-4 py-4 text-center hover:from-cyan-600 hover:to-cyan-800 active:scale-[0.99] transition shadow-lg shadow-cyan-600/25" data-action="new-race">
         <div class="font-bold text-white text-[15px]">Record Races</div>
       </button>
-      <button class="bg-white border border-slate-200 rounded-2xl px-4 py-4 text-center hover:border-cyan-300 hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm" data-action="quick-calc">
-        <div class="font-bold text-slate-800 text-[15px]">Split Predictor</div>
+      <button class="bg-gradient-to-br from-cyan-500 to-cyan-700 rounded-2xl px-4 py-4 text-center hover:from-cyan-600 hover:to-cyan-800 active:scale-[0.99] transition shadow-lg shadow-cyan-600/25" data-action="training-pace">
+        <div class="font-bold text-white text-[15px]">Training Pace</div>
       </button>
     </div>
     <div class="px-5 pb-2">
-      <button class="w-full bg-white border border-slate-200 rounded-2xl px-4 py-4 text-center hover:border-cyan-300 hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm" data-action="training-pace">
-        <div class="font-bold text-slate-800 text-[15px]">Training Pace</div>
-        <div class="text-[11px] text-muted mt-0.5 leading-snug">Split targets for the whole squad, one event at a time</div>
+      <button class="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3.5 text-left hover:border-cyan-300 hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm flex items-center justify-between gap-3" data-action="other-tools">
+        <div>
+          <div class="font-bold text-slate-800 text-[15px]">Other tools</div>
+          <div class="text-[11px] text-muted mt-0.5 leading-snug">Split Predictor, course converter, adjacent events</div>
+        </div>
+        <span class="text-slate-300 text-2xl leading-none flex-shrink-0">›</span>
       </button>
     </div>
-    ${PUBLIC_BUILD ? '' : `<div class="px-5 pb-2 space-y-2">
-      <button class="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3.5 text-left hover:border-cyan-300 hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm flex items-center justify-between gap-3" data-action="converter">
-        <div>
-          <div class="font-bold text-slate-800 text-[15px]">Course converter</div>
-          <div class="text-[11px] text-muted mt-0.5 leading-snug">Convert a time between SCM &amp; LCM</div>
-        </div>
-        <span class="text-cyan-600 text-xl leading-none flex-shrink-0">⇄</span>
-      </button>
-      <button class="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3.5 text-left hover:border-cyan-300 hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm flex items-center justify-between gap-3" data-action="adjacent">
-        <div>
-          <div class="font-bold text-slate-800 text-[15px]">Adjacent events</div>
-          <div class="text-[11px] text-muted mt-0.5 leading-snug">Predict the event up &amp; down from your main</div>
-        </div>
-        <span class="text-cyan-600 text-xl leading-none flex-shrink-0">↕</span>
-      </button>
-      <button class="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3.5 text-left hover:border-cyan-300 hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm flex items-center justify-between gap-3" data-action="fifty-splits">
-        <div>
-          <div class="font-bold text-slate-800 text-[15px]">50 m LCM splits</div>
-          <div class="text-[11px] text-muted mt-0.5 leading-snug">Sub-splits, checkpoints &amp; stroke rate</div>
-        </div>
-        <span class="text-cyan-600 text-lg leading-none flex-shrink-0">½</span>
-      </button>
-      <button class="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3.5 text-left hover:border-cyan-300 hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm flex items-center justify-between gap-3" data-action="efficiency">
-        <div>
-          <div class="font-bold text-slate-800 text-[15px]">Efficiency test</div>
-          <div class="text-[11px] text-muted mt-0.5 leading-snug">Stroke Index from a 15 m pure swim</div>
-        </div>
-        <span class="text-cyan-600 text-lg leading-none flex-shrink-0">⊿</span>
-      </button>
-    </div>`}
     <div class="px-5 pb-1">
       <div class="bg-slate-100 rounded-xl px-3.5 py-3 flex items-center gap-2">
         <span class="text-muted">⌕</span>
@@ -4082,6 +4057,38 @@ function timeBoxes(key, seconds, distance) {
     </div>`;
 }
 
+// ----- Screen: Other tools -----
+// Everything that isn't Record Races or Training Pace. The converter and adjacent events used
+// to be private-only; they are in both builds now. The last two stay private.
+function renderOtherTools() {
+  const tool = (action, title, sub, glyph) => `
+    <button class="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3.5 text-left hover:border-cyan-300 hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm flex items-center justify-between gap-3" data-action="${action}">
+      <div>
+        <div class="font-bold text-slate-800 text-[15px]">${title}</div>
+        <div class="text-[11px] text-muted mt-0.5 leading-snug">${sub}</div>
+      </div>
+      <span class="text-cyan-600 text-xl leading-none flex-shrink-0">${glyph}</span>
+    </button>`;
+  return `
+    <div class="statusbar"></div>
+    <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="home" aria-label="Back to the main page">‹</button>
+      <div class="flex-1 min-w-0">
+        <div class="text-lg font-semibold">Other tools</div>
+      </div>
+    </div>
+    <div class="scrollable bg-slate-50">
+      <div class="px-5 py-4 space-y-2">
+        ${tool('quick-calc', 'Split Predictor', 'Split targets for a time you type', '⏱')}
+        ${tool('converter', 'Course converter', 'Convert a time between SCM &amp; LCM', '⇄')}
+        ${tool('adjacent', 'Adjacent events', 'Predict the event up &amp; down from your main', '↕')}
+        ${PUBLIC_BUILD ? '' : `
+        ${tool('fifty-splits', '50 m LCM splits', 'Sub-splits, checkpoints &amp; stroke rate', '½')}
+        ${tool('efficiency', 'Efficiency test', 'Stroke Index from a 15 m pure swim', '◇')}`}
+      </div>
+    </div>`;
+}
+
 // ===== Training Pace =====
 // Which distances the model can predict for this pool, across every stroke. 50 m LCM has no
 // entry in `ratios` — it comes from the separate fiftyRatios table via predict()'s fallback.
@@ -4175,6 +4182,84 @@ function tpCells(segs, stroke, pool, distance, splits) {
   }));
 }
 
+// ===== Training Pace: PDF download =====
+// Loaded on demand, never at start-up: ~380 KB that most sessions never need. Resolves
+// immediately once they're in memory, and the service worker caches them for offline use
+// after the first successful download.
+const TP_PDF_LIBS = [
+  'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js',
+];
+function tpPdfReady() {
+  return !!(window.jspdf && window.jspdf.jsPDF && window.jspdf.jsPDF.API && window.jspdf.jsPDF.API.autoTable);
+}
+function tpLoadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src; s.onload = resolve; s.onerror = () => reject(new Error(src));
+    document.head.appendChild(s);
+  });
+}
+function tpEnsurePdfLibs() {
+  if (tpPdfReady()) return Promise.resolve();
+  return TP_PDF_LIBS.reduce((p, src) => p.then(() => tpLoadScript(src)), Promise.resolve());
+}
+
+// Read the sheet that is ALREADY rendered rather than recomputing the numbers, so the PDF and
+// the screen can never drift apart. Returns null when there's nothing to download.
+function tpPdfModel() {
+  const host = document.getElementById('tp-print');
+  const table = host && host.querySelector('table');
+  if (!table) return null;
+  const title = (host.querySelector('[data-tp-title]') || {}).textContent || 'Training pace';
+  const sub = (host.querySelector('[data-tp-sub]') || {}).textContent || '';
+  const head = [[...table.querySelectorAll('thead th')].map((t) => t.textContent.trim())];
+  const body = [];
+  const rules = [];                       // body-row indexes that open a new stroke block
+  [...table.querySelectorAll('tbody tr')].forEach((tr) => {
+    const opensBlock = /border-t-2/.test(tr.getAttribute('class') || '');
+    const ths = [...tr.querySelectorAll('th')];
+    const tds = [...tr.querySelectorAll('td')];
+    const cells = ths.length
+      ? ths.map((t) => t.textContent.trim())                       // IM's own header row
+      : tds.map((t, i) => {
+          if (i === 0) { const d = t.querySelector('div'); return (d ? d.textContent : t.textContent).trim(); }
+          return t.textContent.replace(/\s+/g, ' ').trim();
+        });
+    if (!cells.length) return;
+    if (opensBlock) rules.push(body.length);
+    body.push(cells);
+  });
+  return { title: title.trim(), sub: sub.trim(), head, body, rules };
+}
+
+function tpBuildPdf() {
+  const m = tpPdfModel();
+  if (!m) { showToast('Nothing to download'); return; }
+  const doc = new window.jspdf.jsPDF({ unit: 'pt', format: 'letter' });
+  const W = doc.internal.pageSize.getWidth();
+  const M = 40;
+  doc.setFontSize(14); doc.setTextColor(15, 23, 42);
+  doc.text(m.title, M, 46);
+  if (m.sub) { doc.setFontSize(9); doc.setTextColor(100, 116, 139); doc.text(m.sub, M, 61); }
+  doc.autoTable({
+    head: m.head, body: m.body, startY: 74, margin: { left: M, right: M },
+    styles: { fontSize: 9, cellPadding: 4, textColor: [51, 65, 85], lineColor: [226, 232, 240], lineWidth: 0.5 },
+    headStyles: { fillColor: [241, 245, 249], textColor: [30, 41, 59], fontStyle: 'bold' },
+    columnStyles: { 0: { halign: 'left', fontStyle: 'bold' } },
+    didParseCell: (d) => { if (d.column.index > 0) d.cell.styles.halign = 'right'; },
+    // Redraw the block rule between strokes, from the same markers the screen uses.
+    didDrawCell: (d) => {
+      if (d.section === 'body' && d.column.index === 0 && m.rules.indexOf(d.row.index) > -1) {
+        doc.setDrawColor(100, 116, 139); doc.setLineWidth(1.2);
+        doc.line(M, d.cell.y, W - M, d.cell.y);
+      }
+    },
+  });
+  const name = ('Race Equation - ' + m.title).replace(/[^\w\s-]/g, '').replace(/\s+/g, ' ').trim();
+  doc.save(name + '.pdf');
+}
+
 // ----- Screen: Training Pace -----
 function renderTrainingPace() {
   const f = state.tpForm;
@@ -4255,8 +4340,8 @@ function renderTrainingPace() {
   const sheet = rows && rows.length ? `
     <div id="tp-print" class="bg-white">
       <div class="px-3 pt-3 pb-1">
-        <div class="text-[15px] font-bold text-slate-900">${f.distance} m ${f.pool} — training pace</div>
-        <div class="text-[11px] text-muted">Targets from each swimmer's ${basisLab} time${anyEstimate ? ' · *25 m marks estimated from the SCM 50 shape' : ''}</div>
+        <div data-tp-title class="text-[15px] font-bold text-slate-900">${f.distance} m ${f.pool} — training pace</div>
+        <div data-tp-sub class="text-[11px] text-muted">Targets from each swimmer's ${basisLab} time${anyEstimate ? ' · *25 m marks estimated from the SCM 50 shape' : ''}</div>
       </div>
       ${body}
     </div>` : body;
@@ -4268,7 +4353,7 @@ function renderTrainingPace() {
       <div class="flex-1 min-w-0">
         <div class="text-lg font-semibold">Training Pace</div>
       </div>
-      ${rows && rows.length ? '<button class="px-3.5 py-2 rounded-full bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 transition flex-shrink-0" data-action="tp-print">Print</button>' : ''}
+      ${rows && rows.length ? '<button class="px-3.5 py-2 rounded-full bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 transition flex-shrink-0" data-action="tp-download">Download</button>' : ''}
     </div>
     <div class="scrollable bg-slate-50">
       <div class="px-5 py-4 bg-white border-b border-slate-100 no-print">
@@ -5138,8 +5223,20 @@ function handleAction(action, el) {
     // the two controls in that header no longer lead to the same screen.
     case 'home': navigate('roster'); break;
     case 'training-pace': state.tpShow = false; navigate('training-pace'); break;
+    case 'other-tools': navigate('other-tools'); break;
     case 'tp-show': state.tpShow = true; render(); break;
-    case 'tp-print': window.print(); break;
+    case 'tp-download': {
+      if (!tpPdfReady()) showToast('Preparing the PDF…');
+      tpEnsurePdfLibs()
+        .then(() => tpBuildPdf())
+        .catch(() => {
+          // Offline before the libraries were ever cached: the print dialog's "Save as PDF"
+          // reaches the same place, and the @media print sheet is already styled for it.
+          showToast('Could not load the PDF tool — opening print instead');
+          window.print();
+        });
+      break;
+    }
     case 'squad': navigate('squad-targets'); break;
     case 'settings': showToast('Settings — not in v1 mock'); break;
     case 'add-swimmer': showToast('Add swimmer — not in v1 mock'); break;
