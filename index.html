@@ -2005,7 +2005,7 @@ function renderSavedSwimmer() {
   const planRow = (s) => `
     ${rowOpen(s.id)}
       <div class="flex-1 min-w-0">
-        <div class="font-semibold text-[15px]">Target <span class="mono text-slate-700">${formatTime(s.targetSeconds)}</span></div>
+        <div class="font-semibold text-[15px]">${s.isTarget ? '<span class="text-amber-500">★</span> ' : ''}Target <span class="mono text-slate-700">${formatTime(s.targetSeconds)}</span></div>
         <div class="text-xs text-muted mt-0.5">${s.pool} · ${sexL(s)}</div>
       </div>
       ${editing ? delBtn(s.id, 'pace plan') : arrow('Splits →')}
@@ -2119,7 +2119,7 @@ function renderSavedSwimmer() {
     ${compareBtn}`}
     <div class="scrollable px-3 pb-2 bg-slate-50">
       ${section('Record Races', raceRowsHtml, true)}
-      ${section('Split Predictor', predRows, true)}
+      ${section('Season targets', predRows, true)}
       ${section('Adjacent events', adjRows)}
       ${section('50 m LCM splits', fiftyRows)}
       ${section('Course conversions', convRows)}
@@ -3444,6 +3444,42 @@ function renderPredictedSplits() {
 
   const isIM = r.stroke === 'IM';
   const rows = buildDisplaySegments(r);
+  // ----- Season target: the star, and where the gap to it actually lives -----
+  const tgtName = ((state.swimmer && state.swimmer.name) || state.form.name || '').trim();
+  const tgtOn = state.form.isTarget !== false;
+  let tgtCard = '';
+  if (tgtName) {
+    const first = tgtName.split(' ')[0];
+    const gp = targetGap(resolveSid(state.form), r.stroke, r.sex, r.pool, r.distance, r.targetSeconds);
+    const sgn = (v) => (v > 0 ? '+' : '−') + Math.abs(v).toFixed(2);
+    const worst = gp && gp.rows.length ? gp.rows.reduce((m, x) => (x.gap < m.gap ? x : m), gp.rows[0]) : null;
+    const gapHtml = !gp ? `<div class="text-[11px] text-muted mt-3 pt-3 border-t border-slate-100">No recorded ${r.distance} ${r.stroke} ${r.pool} for ${first} yet — record one and this shows where the gap sits.</div>`
+      : `<div class="mt-3 pt-3 border-t border-slate-100">
+          <div class="text-[11px] text-muted mb-1.5">Best <span class="mono font-semibold text-slate-700">${formatTime(gp.bestTotal)}</span>${gp.date ? ' · ' + gp.date : ''} · <span class="font-semibold ${gp.gap < 0 ? 'text-cyan-700' : 'text-rose-600'}">${gp.gap < 0 ? Math.abs(gp.gap).toFixed(2) + 's to find' : sgn(gp.gap) + 's slower than their best'}</span></div>
+          ${gp.rows.length ? `<table class="w-full text-[12px]">
+            <tr class="text-[9px] uppercase tracking-wide text-faint"><th class="text-left font-semibold pb-0.5"></th><th class="text-right font-semibold">Best</th><th class="text-right font-semibold">Target</th><th class="text-right font-semibold">Gap</th></tr>
+            ${gp.rows.map((x) => `<tr>
+              <td class="text-slate-600 py-0.5">${x.label}${worst && x === worst && x.gap < 0 ? ' <span class="text-[9px] text-amber-600 font-semibold">most</span>' : ''}</td>
+              <td class="text-right mono text-slate-600">${formatTime(x.best)}</td>
+              <td class="text-right mono text-slate-800 font-semibold">${formatTime(x.target)}</td>
+              <td class="text-right mono font-semibold ${x.gap < 0 ? 'text-cyan-700' : 'text-rose-600'}">${sgn(x.gap)}</td>
+            </tr>`).join('')}
+          </table>` : `<div class="text-[11px] text-muted">This event records a total rather than matching splits, so only the overall gap is shown.</div>`}
+        </div>`;
+    tgtCard = `
+      <div class="bg-white rounded-2xl border ${tgtOn ? 'border-amber-200' : 'border-slate-200'} p-4">
+        <button class="w-full flex items-center gap-3 text-left" data-action="toggle-target">
+          <span class="text-2xl leading-none ${tgtOn ? 'text-amber-500' : 'text-slate-300'}">${tgtOn ? '★' : '☆'}</span>
+          <span class="flex-1 min-w-0">
+            <span class="block font-bold text-[14px] text-slate-800">${tgtOn ? `${first}'s season target` : 'Saved plan only'}</span>
+            <span class="block text-[11px] text-muted leading-snug">${tgtOn
+              ? `Saving makes this ${first}'s target for the ${r.distance} ${r.stroke} ${r.pool}`
+              : 'Tap the star to make this their season target'}</span>
+          </span>
+        </button>
+        ${tgtOn ? gapHtml : ''}
+      </div>`;
+  }
   const per50 = srPer50[r.stroke] && srPer50[r.stroke][r.distance] && srPer50[r.stroke][r.distance][r.sex]; // per-50 SR (100/200/IM)
   const isDistanceCollapsed = r.distance >= 400 && !isIM; // shown as First / Middle / Last
   let cumRun = 0, fastCum = 0, slowCum = 0;
@@ -3628,9 +3664,7 @@ function renderPredictedSplits() {
       </div>
       ${srCardHtml(r)}
       ${pb50Card}
-      ${state.swimmer ? `
-        <button class="w-full bg-cyan-600 text-white rounded-xl py-4 text-sm font-semibold hover:bg-cyan-700 transition" data-action="set-as-target">Set as ${state.swimmer.name.split(' ')[0]}'s race target</button>
-      ` : ''}
+      ${tgtCard}
     </div>
   `;
 }
@@ -4089,6 +4123,48 @@ function renderOtherTools() {
     </div>`;
 }
 
+// ===== Season targets =====
+// A target is a saved plan carrying isTarget. Plans predate this, so treat a missing kind as
+// 'plan' exactly as the rest of the app does.
+function isPlan(s) { return !s.kind || s.kind === 'plan'; }
+function targetFor(sid, stroke, pool, distance) {
+  return state.saved.find((s) => isPlan(s) && s.isTarget && s.sid === sid
+    && s.stroke === stroke && s.pool === pool && s.distance === distance) || null;
+}
+// Every swimmer holding a target at this pool + distance, whatever the stroke.
+function targetsAt(pool, distance) {
+  return state.saved.filter((s) => isPlan(s) && s.isTarget && s.sid && s.pool === pool && s.distance === distance);
+}
+
+// The gap between a target and the swimmer's best recorded race in the same event, split by
+// split. Returns null when they've never raced it.
+function targetGap(sid, stroke, sex, pool, distance, targetSeconds) {
+  if (!sid || !(targetSeconds > 0)) return null;
+  let best = null;
+  state.saved.forEach((s) => {
+    if (s.kind !== 'race' || s.sid !== sid) return;
+    if (s.stroke !== stroke || s.pool !== pool || s.distance !== distance) return;
+    const c = buildRaceComparison(s);
+    const t = c ? c.actualTotal : 0;
+    if (t > 0 && (!best || t < best.total)) best = { race: s, total: t };
+  });
+  if (!best) return null;
+  const p = predict(stroke, sex, pool, distance, targetSeconds);
+  const defs = raceRowDefs(stroke, distance, pool).filter((d) => d.kind === 'seg');
+  const rows = [];
+  // Only compare per segment when both sides describe the same segments. A 400+ race records
+  // first/last/total while predict() returns eight 50 s — no honest row-by-row comparison.
+  if (p && defs.length > 1 && defs.length === p.splits.length) {
+    const seg = distance / defs.length;
+    defs.forEach((d, i) => {
+      const b = best.race.times && best.race.times[d.key];
+      if (!(b > 0)) return;
+      rows.push({ label: `${TP_ORD[i] || (i + 1) + 'th'} ${seg}`, best: b, target: p.splits[i], gap: p.splits[i] - b });
+    });
+  }
+  return { bestTotal: best.total, date: best.race.date || '', gap: targetSeconds - best.total, rows };
+}
+
 // ===== Training Pace =====
 // Which distances the model can predict for this pool, across every stroke. 50 m LCM has no
 // entry in `ratios` — it comes from the separate fiftyRatios table via predict()'s fallback.
@@ -4122,20 +4198,36 @@ function trainingRows(pool, distance, basis) {
     const k = s.sid + '|' + s.stroke;
     (byKey[k] = byKey[k] || []).push({ race: s, t });
   });
+  // Pacing off targets: a swimmer may hold a target for an event they haven't raced yet — the
+  // common case early in a season — so seed those keys too.
+  if (basis === 'target') {
+    targetsAt(pool, distance).forEach((tg) => {
+      const k = tg.sid + '|' + tg.stroke;
+      if (!byKey[k]) byKey[k] = [];
+    });
+  }
   return Object.keys(byKey).map((k) => {
     const list = byKey[k];
-    const pick = basis === 'recent'
+    const sid = k.split('|')[0], stroke = k.split('|')[1];
+    const pick = list.length ? (basis === 'recent'
       ? list.slice().sort((a, b) => (a.race.date || '').localeCompare(b.race.date || ''))[list.length - 1]
-      : list.reduce((m, x) => (x.t < m.t ? x : m), list[0]);
-    const sid = k.split('|')[0], stroke = pick.race.stroke;
-    const sex = pick.race.sex || 'M';
-    const p = predict(stroke, sex, pool, distance, pick.t);
+      : list.reduce((m, x) => (x.t < m.t ? x : m), list[0])) : null;
+    const tg = basis === 'target' ? targetFor(sid, stroke, pool, distance) : null;
+    // No target for this event: fall back to their best time and FLAG it, so the sheet never
+    // silently mixes a target pace with a best-time pace.
+    const fellBack = basis === 'target' && !tg;
+    const total = tg ? tg.targetSeconds : (pick ? pick.t : 0);
+    if (!(total > 0)) return null;
+    const sex = (tg && tg.sex) || (pick && pick.race.sex) || 'M';
+    const p = predict(stroke, sex, pool, distance, total);
     return {
-      sid, stroke, sex, name: swimmerName(sid) || pick.race.name || '—',
-      total: pick.t, date: pick.race.date || '', segs: p ? buildDisplaySegments(p) : null,
+      sid, stroke, sex, fellBack,
+      name: swimmerName(sid) || (tg && tg.name) || (pick && pick.race.name) || '—',
+      total, date: tg ? '' : (pick ? pick.race.date || '' : ''),
+      segs: p ? buildDisplaySegments(p) : null,
       splits: (p && p.splits) || null,   // per-50 array, for the 400/800/1500 layouts
     };
-  }).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  }).filter(Boolean).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 }
 
 // Columns for one stroke at one event, in the order a coach calls the set: the 50 s first, then
@@ -4281,11 +4373,12 @@ function renderTrainingPace() {
     </div>`;
 
   const rows = state.tpShow ? trainingRows(f.pool, f.distance, f.basis) : null;
-  const basisLab = f.basis === 'recent' ? 'most recent' : 'best';
+  const basisLab = f.basis === 'recent' ? 'most recent' : (f.basis === 'target' ? 'season target' : 'best');
   const TP_ABBR = { Free: 'FR', Back: 'BK', Breast: 'BR', Fly: 'FLY', IM: 'IM' };
   const TP_BLOCK = 'border-t-2 border-slate-400';   // the rule between stroke blocks
   let body = '';
   let anyEstimate = false;
+  const fellBackCount = rows ? rows.filter((r) => r.fellBack).length : 0;
 
   if (rows && !rows.length) {
     body = `<div class="px-4 py-8 text-center text-sm text-muted">No recorded times for ${f.distance} m ${f.pool} yet.<br><span class="text-xs">Record a race at this distance and the swimmer appears here.</span></div>`;
@@ -4320,7 +4413,7 @@ function renderTrainingPace() {
           <div class="font-semibold text-[13px] whitespace-nowrap">${r.name}</div>
           ${r.date ? `<div class="text-[10px] text-faint leading-none mt-0.5">${r.date}</div>` : ''}
         </td>
-        <td class="text-right px-2 whitespace-nowrap"><span class="mono text-[13px] font-bold text-cyan-800">${formatTime(r.total)}</span> <span class="text-[10px] font-semibold text-slate-500">(${TP_ABBR[r.stroke] || r.stroke})</span></td>
+        <td class="text-right px-2 whitespace-nowrap"><span class="mono text-[13px] font-bold text-cyan-800">${formatTime(r.total)}</span> <span class="text-[10px] font-semibold text-slate-500">(${TP_ABBR[r.stroke] || r.stroke})</span>${r.fellBack ? '<span class="text-[10px] font-semibold text-amber-600">†</span>' : ''}</td>
         ${cells.map((c, i) => `<td class="text-right px-2 mono text-[13px] ${c && /(^|\s)(1st|2nd|First|Last|Middle) ?(50|100)$/.test(heads[i] || '') ? 'text-slate-900 font-semibold' : 'text-slate-600'}">${c ? formatTime(c.v) : ''}</td>`).join('')}
       </tr>`;
     };
@@ -4341,7 +4434,7 @@ function renderTrainingPace() {
     <div id="tp-print" class="bg-white">
       <div class="px-3 pt-3 pb-1">
         <div data-tp-title class="text-[15px] font-bold text-slate-900">${f.distance} m ${f.pool} — training pace</div>
-        <div data-tp-sub class="text-[11px] text-muted">Targets from each swimmer's ${basisLab} time${anyEstimate ? ' · *25 m marks estimated from the SCM 50 shape' : ''}</div>
+        <div data-tp-sub class="text-[11px] text-muted">Targets from each swimmer's ${basisLab} time${fellBackCount ? ` · †${fellBackCount} with no target for this event, showing their best time` : ''}${anyEstimate ? ' · *25 m marks estimated from the SCM 50 shape' : ''}</div>
       </div>
       ${body}
     </div>` : body;
@@ -4359,7 +4452,7 @@ function renderTrainingPace() {
       <div class="px-5 py-4 bg-white border-b border-slate-100 no-print">
         ${group('Pool', pools.map((p) => [p, p]), 'pool')}
         ${group('Distance', dists.map((d) => [d, d + ' m']), 'distance')}
-        ${group('Pace from', [['best', 'Best time'], ['recent', 'Most recent']], 'basis')}
+        ${group('Pace from', [['best', 'Best time'], ['recent', 'Most recent'], ['target', 'Target']], 'basis')}
         <button class="w-full bg-cyan-600 text-white font-semibold rounded-xl py-3.5 text-sm hover:bg-cyan-700 active:scale-[0.99] transition shadow-lg shadow-cyan-600/20" data-action="tp-show">Show Training Table</button>
       </div>
       ${rows ? `<div class="m-3 bg-white rounded-2xl border border-slate-200 overflow-hidden">${sheet}</div>` : ''}
@@ -5254,6 +5347,12 @@ function handleAction(action, el) {
         if (dup) {
           if (confirm(`${nm} already has a ${r.distance} ${r.stroke} ${r.pool} plan — target ${formatTime(dup.targetSeconds)}.\n\nOK = replace it with ${formatTime(r.targetSeconds)}\nCancel = keep both (saves a new entry)`)) {
             dup.sex = r.sex; dup.targetSeconds = r.targetSeconds;
+            if (state.form.isTarget !== false) {
+              state.saved.forEach((x) => {
+                if (isPlan(x) && x.sid === sid && x.stroke === r.stroke && x.pool === r.pool && x.distance === r.distance) x.isTarget = false;
+              });
+              dup.isTarget = true;
+            }
             persistSaved();
             state.planSaved = true;
             showToast(`Replaced ${nm} · ${r.distance} ${r.stroke} ${r.pool} plan`);
@@ -5262,7 +5361,16 @@ function handleAction(action, el) {
           }
         }
       }
-      const upd = upsertSaved({ id: 'sv' + Date.now().toString(36), sid, name: nm,
+      // Saving against a named swimmer sets their season target by default; the star on the
+      // splits screen turns that off when the coach only wants a saved prediction.
+      const wantTarget = state.form.isTarget !== false;
+      if (wantTarget) {
+        // Exactly one target per swimmer per event, or "Pace from: Target" is ambiguous.
+        state.saved.forEach((x) => {
+          if (isPlan(x) && x.sid === sid && x.stroke === r.stroke && x.pool === r.pool && x.distance === r.distance) x.isTarget = false;
+        });
+      }
+      const upd = upsertSaved({ id: 'sv' + Date.now().toString(36), sid, name: nm, kind: 'plan', isTarget: wantTarget,
         stroke: r.stroke, sex: r.sex, pool: r.pool, distance: r.distance, targetSeconds: r.targetSeconds });
       state.planSaved = true;
       showToast(`${upd ? 'Updated' : 'Saved'} ${nm} · ${r.distance} ${r.stroke}`);
@@ -5272,7 +5380,7 @@ function handleAction(action, el) {
     // Edit is the only route back to the Split Predictor form — the ‹ goes home, so the two
     // controls in that header never lead to the same screen (same rule as Record Races, 24i).
     case 'edit-plan': navigate('quick-calc'); break;
-    case 'set-as-target': showToast(`Saved to ${state.swimmer.name}'s next race`); break;
+    case 'toggle-target': state.form.isTarget = !(state.form.isTarget !== false); render(); break;
     case 'plan-from-pb':
       state.form = {
         stroke: state.swimmer.bestEvent.stroke,
