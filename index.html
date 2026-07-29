@@ -2600,6 +2600,19 @@ const scyScmRatios = {
 // SCY distances that have a ratio, per stroke. 500 and 1650 map to 400 m / 1500 m.
 const scyDistances = { Free: [50, 100, 200, 500, 1650], Back: [100, 200], Breast: [100, 200], Fly: [100, 200], IM: [200, 400] };
 const scyToMetric = { 500: 400, 1650: 1500 };
+// The reverse, for converting INTO yards. Stroke-dependent: 400 m Free is the 500 yd and
+// 1500 m is the 1650, but 400 m IM is simply the 400 yd IM. Anything absent from the NCAA
+// championship programme (800 m Free, 50 m Back/Breast/Fly) is deliberately missing so the
+// card refuses instead of borrowing an unrelated ratio.
+const metricToScy = {
+  Free:   { 50: 50, 100: 100, 200: 200, 400: 500, 1500: 1650 },
+  Back:   { 100: 100, 200: 200 },
+  Breast: { 100: 100, 200: 200 },
+  Fly:    { 100: 100, 200: 200 },
+  IM:     { 200: 200, 400: 400 },
+};
+// SCY<->SCM is an equal-distance table, so it only speaks 50/100/200.
+const scyScmDistances = [50, 100, 200];
 
 // ----- Screen: Course converter (SCY / SCM / LCM) -----
 // Result block only — recomputed live on time input without a full re-render.
@@ -2637,33 +2650,53 @@ function convEmpty(msg) {
   </div>`;
 }
 
+// Resolve one directed conversion into everything the card needs, or a reason it can't be done.
+// Returns { rec, mul, label } or { why }.
+function convPlan(from, to, stroke, sex, dist) {
+  const lcmScm = (convRatios[stroke] && convRatios[stroke][sex]) ? convRatios[stroke][sex][dist] : null;
+  const scyLcm = d => (scyLcmRatios[stroke] && scyLcmRatios[stroke][sex]) ? scyLcmRatios[stroke][sex][d] : null;
+
+  if (from === 'SCY') {
+    // 500 yd and 1650 yd land on 400 m / 1500 m — the distance changes too, so name the target.
+    const toM = scyToMetric[dist] || dist;
+    if (to === 'LCM') {
+      const rec = scyLcm(dist);
+      return rec ? { rec, mul: true, label: `LCM · ${toM} m ${stroke}` }
+                 : { why: `${dist} yd ${stroke} isn't an NCAA championship event, so there are no paired swims to build a ratio from.` };
+    }
+    if (scyToMetric[dist]) return { why: `No SCM conversion for the ${dist} yd — it maps to ${toM} m, and neither the SCY↔SCM nor the LCM↔SCM table covers that distance.` };
+    return { rec: scyScmRatios[sex], mul: true, label: `SCM · ${dist} m ${stroke}` };
+  }
+
+  if (to === 'SCY') {
+    if (from === 'LCM') {
+      const yd = (metricToScy[stroke] || {})[dist];
+      const rec = yd ? scyLcm(yd) : null;
+      return rec ? { rec, mul: false, label: `SCY · ${yd} yd ${stroke}` }
+                 : { why: `${dist} m ${stroke} has no NCAA championship equivalent in yards, so there's nothing to convert to.` };
+    }
+    // SCM -> SCY. The SCY↔SCM table is equal-distance only.
+    if (scyScmDistances.indexOf(dist) === -1) return { why: `SCY conversion only covers 50/100/200 — the SCY↔SCM ratios are built from equal-distance pairs.` };
+    return { rec: scyScmRatios[sex], mul: false, label: `SCY · ${dist} yd ${stroke}` };
+  }
+
+  // SCM <-> LCM, the app's original pair. convRatios is LCM/SCM, so SCM multiplies and LCM divides.
+  if (!lcmScm) return { why: `${dist} m ${stroke} isn't a standard SCM/LCM pair in the World Aquatics data. Try Free (50–1500), Fly/Back/Breast (50/100/200), or IM (200/400).` };
+  return { rec: lcmScm, mul: from === 'SCM', label: `${to} · ${dist} m ${stroke}` };
+}
+
 function convResultHtml() {
   const c = state.convForm;
   const secs = Math.max(0, c.seconds || 0);
   const sexLbl = c.sex === 'M' ? 'Men' : 'Women';
-
-  if (c.from === 'SCY') {
-    const rec = (scyLcmRatios[c.stroke] && scyLcmRatios[c.stroke][c.sex]) ? scyLcmRatios[c.stroke][c.sex][c.distance] : null;
-    if (!rec) return convEmpty(`${c.distance} yd ${c.stroke} isn't an NCAA championship event, so there are no paired swims to build a ratio from.`);
-    if (!secs) return `<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-6 text-center text-sm text-muted">Enter a SCY time above to see the predicted LCM and SCM times.</div>`;
-    // 500 yd and 1650 yd land on 400 m and 1500 m — the distance changes too, so say so.
-    const toM = scyToMetric[c.distance] || c.distance;
-    const cards = [convCard('SCY', 'LCM', `LCM · ${toM} m ${c.stroke} ${sexLbl}`, secs, rec, true)];
-    if (scyToMetric[c.distance]) {
-      // No SCY<->SCM ratio for 500/1650: the direct table is equal-distance only and there is
-      // no paired LCM<->SCM data at 400/1500 either. Say so rather than reuse a sprint ratio.
-      cards.push(convEmpty(`No SCM conversion for the ${c.distance} yd — it maps to ${toM} m, and neither the SCY↔SCM nor the LCM↔SCM table covers that distance.`));
-    } else {
-      cards.push(convCard('SCY', 'SCM', `SCM · ${c.distance} m ${c.stroke} ${sexLbl}`, secs, scyScmRatios[c.sex], true));
-    }
-    return cards.join('<div class="h-3"></div>');
+  const others = ['SCY', 'SCM', 'LCM'].filter(x => x !== c.from);
+  if (!secs) {
+    return `<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-6 text-center text-sm text-muted">Enter a ${c.from} time above to see the predicted ${others[0]} and ${others[1]} times.</div>`;
   }
-
-  const toCourse = c.from === 'LCM' ? 'SCM' : 'LCM';
-  const rec = (convRatios[c.stroke] && convRatios[c.stroke][c.sex]) ? convRatios[c.stroke][c.sex][c.distance] : null;
-  if (!rec) return convEmpty(`${c.distance} m ${c.stroke} isn't a standard SCM/LCM pair in the World Aquatics data. Try Free (50–1500), Fly/Back/Breast (50/100/200), or IM (200/400).`);
-  if (!secs) return `<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-6 text-center text-sm text-muted">Enter a ${c.from} time above to see the predicted ${toCourse} time.</div>`;
-  return convCard(c.from, toCourse, `${toCourse} · ${c.distance} m ${c.stroke} ${sexLbl}`, secs, rec, c.from === 'SCM');
+  return others.map(to => {
+    const p = convPlan(c.from, to, c.stroke, c.sex, c.distance);
+    return p.why ? convEmpty(p.why) : convCard(c.from, to, `${p.label} ${sexLbl}`, secs, p.rec, p.mul);
+  }).join('<div class="h-3"></div>');
 }
 
 function renderConverter() {
@@ -2682,7 +2715,7 @@ function renderConverter() {
       <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0">
         <div class="text-lg font-semibold">Course converter</div>
-        <div class="text-xs text-muted truncate">${c.from === 'SCY' ? 'SCY → LCM &amp; SCM · 347 NCAA-paired athletes' : 'SCM ↔ LCM · World Aquatics top-200 ratios'}</div>
+        <div class="text-xs text-muted truncate">SCY ↔ SCM ↔ LCM · paired-athlete ratios</div>
       </div>
     </div>
     <div class="scrollable px-5 py-4 space-y-6">
