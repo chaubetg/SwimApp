@@ -2555,49 +2555,123 @@ function renderSwimmerDetail() {
   `;
 }
 
-// ----- Screen: Course converter (SCM ↔ LCM) -----
+// ===== SCY conversions (built Jul 2026) =====
+// ratio = metric_time / SCY_time, so SCY -> metric multiplies.
+//
+// Source: 347 same-season athlete pairs, NCAA D1 championships (SCY) x the fastest LCM meet of
+// that same season (Olympic Trials / US Nationals / World Champs). Never paired across seasons:
+// a collegiate athlete's twelve-month improvement would otherwise be absorbed as a course
+// effect. Leave-one-out median error 0.79 s (1.03%); the naive distance-only x1.0936 misses by
+// 5.66 s. See Race_data/README.md.
+//
+// CALIBRATED ON VARSITY-AND-UP SWIMMERS. Validated against the public converters on real
+// athletes with known times: they run ~1.1% fast at this level and under-predicted 11 of 13
+// men's 50 Free pairs. Below national level these ratios are unvalidated and likely too slow --
+// within this sample slower swimmers already convert better (men's 50 Free r = -0.60).
+const scyLcmRatios = {
+  Free: {
+    M: { 50: { mean: 1.16576, q25: 1.1577, q75: 1.17945, n: 13 }, 100: { mean: 1.17147, q25: 1.1621, q75: 1.182, n: 15 }, 200: { mean: 1.16697, q25: 1.1601, q75: 1.175, n: 15 }, 500: { mean: 0.91557, q25: 0.9103, q75: 0.92302, n: 12 }, 1650: { mean: 1.03928, q25: 1.03098, q75: 1.05275, n: 18 } },
+    F: { 50: { mean: 1.16192, q25: 1.1456, q75: 1.17568, n: 22 }, 100: { mean: 1.15622, q25: 1.1439, q75: 1.1708, n: 25 }, 200: { mean: 1.15604, q25: 1.1417, q75: 1.1639, n: 15 }, 500: { mean: 0.90974, q25: 0.90655, q75: 0.91733, n: 14 }, 1650: { mean: 1.03657, q25: 1.02983, q75: 1.0448, n: 36 } },
+  },
+  Back: {
+    M: { 100: { mean: 1.21747, q25: 1.20717, q75: 1.22955, n: 12 }, 200: { mean: 1.18829, q25: 1.16903, q75: 1.21365, n: 16 } },
+    F: { 100: { mean: 1.18648, q25: 1.17235, q75: 1.21135, n: 21 }, 200: { mean: 1.17589, q25: 1.16708, q75: 1.18798, n: 18 } },
+  },
+  Breast: {
+    M: { 100: { mean: 1.18236, q25: 1.169, q75: 1.1955, n: 17 }, 200: { mean: 1.18598, q25: 1.16815, q75: 1.19415, n: 16 } },
+    F: { 100: { mean: 1.1693, q25: 1.15853, q75: 1.17823, n: 16 }, 200: { mean: 1.16773, q25: 1.15623, q75: 1.1847, n: 12 } },
+  },
+  Fly: {
+    M: { 100: { mean: 1.16307, q25: 1.15218, q75: 1.17657, n: 10 }, 200: { mean: 1.1822, q25: 1.1687, q75: 1.2012, n: 11 } },
+    F: { 100: { mean: 1.16387, q25: 1.1502, q75: 1.17788, n: 20 }, 200: { mean: 1.15206, q25: 1.13922, q75: 1.16862, n: 20 } },
+  },
+  IM: {
+    M: { 200: { mean: 1.1869, q25: 1.17997, q75: 1.20267, n: 12 }, 400: { mean: 1.16977, q25: 1.16172, q75: 1.18175, n: 10 } },
+    F: { 200: { mean: 1.16759, q25: 1.1593, q75: 1.17593, n: 16 }, 400: { mean: 1.16116, q25: 1.1525, q75: 1.1782, n: 15 } },
+  },
+};
+// SCY -> SCM. GLOBAL BY SEX ONLY, deliberately: per-event granularity was tested on the 95
+// NCAA x World Cup pairs and did NOT beat the global ratio, so a per-event table here would be
+// false precision. 95 pairs vs 347 on the LCM side -- treat SCM as the cruder of the two.
+const scyScmRatios = {
+  M: { mean: 1.1443, q25: 1.1265, q75: 1.1623, n: 55 },
+  F: { mean: 1.1391, q25: 1.1257, q75: 1.1573, n: 40 },
+};
+// SCY distances that have a ratio, per stroke. 500 and 1650 map to 400 m / 1500 m.
+const scyDistances = { Free: [50, 100, 200, 500, 1650], Back: [100, 200], Breast: [100, 200], Fly: [100, 200], IM: [200, 400] };
+const scyToMetric = { 500: 400, 1650: 1500 };
+
+// ----- Screen: Course converter (SCY / SCM / LCM) -----
 // Result block only — recomputed live on time input without a full re-render.
-function convResultHtml() {
-  const c = state.convForm;
-  const toCourse = c.from === 'LCM' ? 'SCM' : 'LCM';
-  const secs = Math.max(0, c.seconds || 0);
-  const rec = (convRatios[c.stroke] && convRatios[c.stroke][c.sex]) ? convRatios[c.stroke][c.sex][c.distance] : null;
-  if (!rec) {
-    return `<div class="bg-white border border-slate-200 rounded-2xl p-6 text-center">
-      <div class="text-slate-700 font-semibold text-sm mb-1">No conversion for this event</div>
-      <div class="text-slate-500 text-sm leading-relaxed">${c.distance} m ${c.stroke} isn't a standard SCM/LCM pair in the World Aquatics data. Try Free (50–1500), Fly/Back/Breast (50/100/200), or IM (200/400).</div>
-    </div>`;
-  }
-  if (!secs) {
-    return `<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-6 text-center text-sm text-muted">Enter a ${c.from} time above to see the predicted ${toCourse} time.</div>`;
-  }
-  let mean, fast, slow, fastLabel, slowLabel;
-  if (c.from === 'SCM') {           // SCM → LCM: multiply by ratio
-    mean = secs * rec.mean; fast = secs * rec.q25; slow = secs * rec.q75;
-    fastLabel = 'favours LCM'; slowLabel = 'favours SCM';
-  } else {                          // LCM → SCM: divide by ratio
-    mean = secs / rec.mean; fast = secs / rec.q75; slow = secs / rec.q25;
-    fastLabel = 'favours SCM'; slowLabel = 'favours LCM';
-  }
+// One conversion card. `mul` = true when the target time is `from x ratio`.
+//
+// Which IQR end is the FAST one flips with the direction, and that is the whole subtlety:
+//   multiplying -> a LOW ratio yields a fast target time, so q25 is the fast end
+//   dividing    -> a HIGH ratio yields a fast target time, so q75 is the fast end
+// Either way the fast end means the swimmer favours the course being converted TO. This is the
+// rule the SCM<->LCM converter already used; it is now shared so SCY cannot drift from it.
+function convCard(fromCourse, toCourse, toLabel, secs, rec, mul) {
+  const mean = mul ? secs * rec.mean : secs / rec.mean;
+  const fast = mul ? secs * rec.q25 : secs / rec.q75;
+  const slow = mul ? secs * rec.q75 : secs / rec.q25;
   const cap = 'text-[9px] uppercase tracking-wide text-faint';
   return `
     <div class="bg-white border border-slate-200 rounded-2xl p-5">
-      <div class="label-cap text-muted mb-1">Predicted ${toCourse} · ${c.distance} m ${c.stroke} ${c.sex === 'M' ? 'Men' : 'Women'}</div>
+      <div class="label-cap text-muted mb-1">Predicted ${toLabel}</div>
       <div class="hero-time text-4xl leading-tight text-center my-2">${formatTime(mean)}</div>
       <div class="relative">
         <div class="range-track"><div class="range-fill" style="left:12%; right:12%;"></div><div class="range-tick" style="left:50%;"></div></div>
         <div class="flex justify-between items-baseline text-[11px] text-muted mt-1.5">
-          <span><span class="mono">${formatTime(fast)}</span> <span class="${cap}">${fastLabel}</span></span>
-          <span><span class="${cap}">${slowLabel}</span> <span class="mono">${formatTime(slow)}</span></span>
+          <span><span class="mono">${formatTime(fast)}</span> <span class="${cap}">favours ${toCourse}</span></span>
+          <span><span class="${cap}">favours ${fromCourse}</span> <span class="mono">${formatTime(slow)}</span></span>
         </div>
       </div>
+      <div class="text-[10px] text-faint text-center mt-2">n=${rec.n} paired athletes</div>
     </div>`;
+}
+
+function convEmpty(msg) {
+  return `<div class="bg-white border border-slate-200 rounded-2xl p-6 text-center">
+    <div class="text-slate-700 font-semibold text-sm mb-1">No conversion for this event</div>
+    <div class="text-slate-500 text-sm leading-relaxed">${msg}</div>
+  </div>`;
+}
+
+function convResultHtml() {
+  const c = state.convForm;
+  const secs = Math.max(0, c.seconds || 0);
+  const sexLbl = c.sex === 'M' ? 'Men' : 'Women';
+
+  if (c.from === 'SCY') {
+    const rec = (scyLcmRatios[c.stroke] && scyLcmRatios[c.stroke][c.sex]) ? scyLcmRatios[c.stroke][c.sex][c.distance] : null;
+    if (!rec) return convEmpty(`${c.distance} yd ${c.stroke} isn't an NCAA championship event, so there are no paired swims to build a ratio from.`);
+    if (!secs) return `<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-6 text-center text-sm text-muted">Enter a SCY time above to see the predicted LCM and SCM times.</div>`;
+    // 500 yd and 1650 yd land on 400 m and 1500 m — the distance changes too, so say so.
+    const toM = scyToMetric[c.distance] || c.distance;
+    const cards = [convCard('SCY', 'LCM', `LCM · ${toM} m ${c.stroke} ${sexLbl}`, secs, rec, true)];
+    if (scyToMetric[c.distance]) {
+      // No SCY<->SCM ratio for 500/1650: the direct table is equal-distance only and there is
+      // no paired LCM<->SCM data at 400/1500 either. Say so rather than reuse a sprint ratio.
+      cards.push(convEmpty(`No SCM conversion for the ${c.distance} yd — it maps to ${toM} m, and neither the SCY↔SCM nor the LCM↔SCM table covers that distance.`));
+    } else {
+      cards.push(convCard('SCY', 'SCM', `SCM · ${c.distance} m ${c.stroke} ${sexLbl}`, secs, scyScmRatios[c.sex], true));
+    }
+    return cards.join('<div class="h-3"></div>');
+  }
+
+  const toCourse = c.from === 'LCM' ? 'SCM' : 'LCM';
+  const rec = (convRatios[c.stroke] && convRatios[c.stroke][c.sex]) ? convRatios[c.stroke][c.sex][c.distance] : null;
+  if (!rec) return convEmpty(`${c.distance} m ${c.stroke} isn't a standard SCM/LCM pair in the World Aquatics data. Try Free (50–1500), Fly/Back/Breast (50/100/200), or IM (200/400).`);
+  if (!secs) return `<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-6 text-center text-sm text-muted">Enter a ${c.from} time above to see the predicted ${toCourse} time.</div>`;
+  return convCard(c.from, toCourse, `${toCourse} · ${c.distance} m ${c.stroke} ${sexLbl}`, secs, rec, c.from === 'SCM');
 }
 
 function renderConverter() {
   const c = state.convForm;
   const strokes = ['Free', 'Back', 'Breast', 'Fly', 'IM'];
-  const distances = [50, 100, 200, 400, 800, 1500];
+  // Yards events are the NCAA championship programme, not the metric list — a 500 and a 1650
+  // exist in yards and a 400/800/1500 does not.
+  const distances = c.from === 'SCY' ? (scyDistances[c.stroke] || []) : [50, 100, 200, 400, 800, 1500];
   const secs = Math.max(0, c.seconds || 0);
   const cmin = Math.floor(secs / 60);
   const csec = Math.floor(secs % 60);
@@ -2608,7 +2682,7 @@ function renderConverter() {
       <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0">
         <div class="text-lg font-semibold">Course converter</div>
-        <div class="text-xs text-muted truncate">SCM ↔ LCM · World Aquatics top-200 ratios</div>
+        <div class="text-xs text-muted truncate">${c.from === 'SCY' ? 'SCY → LCM &amp; SCM · 347 NCAA-paired athletes' : 'SCM ↔ LCM · World Aquatics top-200 ratios'}</div>
       </div>
     </div>
     <div class="scrollable px-5 py-4 space-y-6">
@@ -2627,10 +2701,11 @@ function renderConverter() {
           </div>
         </div>
         <div class="flex-[1.18] min-w-0">
-          <div class="label-cap mb-2">Direction</div>
+          <div class="label-cap mb-2">Convert from</div>
           <div class="seg-group">
-            <div class="seg ${c.from === 'LCM' ? 'active' : ''}" data-convfrom="LCM" style="padding:10px 4px;font-size:12.5px;white-space:nowrap;">LCM→SCM</div>
-            <div class="seg ${c.from === 'SCM' ? 'active' : ''}" data-convfrom="SCM" style="padding:10px 4px;font-size:12.5px;white-space:nowrap;">SCM→LCM</div>
+            <div class="seg ${c.from === 'SCY' ? 'active' : ''}" data-convfrom="SCY" style="padding:10px 4px;font-size:12.5px;white-space:nowrap;">SCY</div>
+            <div class="seg ${c.from === 'SCM' ? 'active' : ''}" data-convfrom="SCM" style="padding:10px 4px;font-size:12.5px;white-space:nowrap;">SCM</div>
+            <div class="seg ${c.from === 'LCM' ? 'active' : ''}" data-convfrom="LCM" style="padding:10px 4px;font-size:12.5px;white-space:nowrap;">LCM</div>
           </div>
         </div>
       </div>
@@ -2641,7 +2716,7 @@ function renderConverter() {
         </div>
       </div>
       <div>
-        <div class="label-cap mb-2">${c.from} time to convert</div>
+        <div class="label-cap mb-2">${c.from} time to convert${c.from === 'SCY' ? ' (yards)' : ''}</div>
         <div class="bg-gradient-to-br from-cyan-50 to-white border-2 border-cyan-200 rounded-2xl px-4 py-5 focus-within:border-cyan-500 transition">
           <div class="flex items-end justify-center gap-1">
             <div class="text-center">
@@ -4114,7 +4189,7 @@ function renderOtherTools() {
     <div class="scrollable bg-slate-50">
       <div class="px-5 py-4 space-y-2">
         ${tool('quick-calc', 'Split Predictor', 'Split targets for a time you type', '⏱')}
-        ${tool('converter', 'Course converter', 'Convert a time between SCM &amp; LCM', '⇄')}
+        ${tool('converter', 'Course converter', 'Convert a time between SCY, SCM &amp; LCM', '⇄')}
         ${tool('adjacent', 'Adjacent events', 'Predict the event up &amp; down from your main', '↕')}
         ${PUBLIC_BUILD ? '' : `
         ${tool('fifty-splits', '50 m LCM splits', 'Sub-splits, checkpoints &amp; stroke rate', '½')}
@@ -5005,13 +5080,36 @@ document.addEventListener('click', (e) => {
     }
     // Course-converter selectors (separate state so they don't touch the predictor form).
     const cstroke = e.target.closest('[data-cstroke]');
-    if (cstroke) { state.convForm.stroke = cstroke.getAttribute('data-cstroke'); render(); return; }
+    if (cstroke) {
+      state.convForm.stroke = cstroke.getAttribute('data-cstroke');
+      if (state.convForm.from === 'SCY') {
+        const valid = scyDistances[state.convForm.stroke] || [];
+        if (valid.length && valid.indexOf(state.convForm.distance) === -1) {
+          state.convForm.distance = valid.reduce((a, b) =>
+            Math.abs(b - state.convForm.distance) < Math.abs(a - state.convForm.distance) ? b : a);
+        }
+      }
+      render(); return;
+    }
     const csex = e.target.closest('[data-csex]');
     if (csex) { state.convForm.sex = csex.getAttribute('data-csex'); render(); return; }
     const cdist = e.target.closest('[data-cdist]');
     if (cdist) { state.convForm.distance = parseInt(cdist.getAttribute('data-cdist'), 10); render(); return; }
     const cfrom = e.target.closest('[data-convfrom]');
-    if (cfrom) { state.convForm.from = cfrom.getAttribute('data-convfrom'); render(); return; }
+    if (cfrom) {
+      state.convForm.from = cfrom.getAttribute('data-convfrom');
+      // The distance lists differ by course (yards has 500/1650, metric has 400/800/1500), so a
+      // course switch can strand the picker on a distance that no longer exists. Snap to the
+      // closest available one instead of silently rendering an empty result.
+      const valid = state.convForm.from === 'SCY'
+        ? (scyDistances[state.convForm.stroke] || [])
+        : [50, 100, 200, 400, 800, 1500];
+      if (valid.length && valid.indexOf(state.convForm.distance) === -1) {
+        state.convForm.distance = valid.reduce((a, b) =>
+          Math.abs(b - state.convForm.distance) < Math.abs(a - state.convForm.distance) ? b : a);
+      }
+      render(); return;
+    }
     const eop = e.target.closest('[data-effopen]');
     if (eop) { state.effOpen = state.effOpen || {}; const k = eop.getAttribute('data-effopen'); state.effOpen[k] = !state.effOpen[k]; render(); return; }
     const emode = e.target.closest('[data-effmode]');
