@@ -2307,7 +2307,7 @@ function progMetrics(s) {
       Object.keys(extra).forEach((k) => { const v = s.sr[k]; if (v > 0) out.push({ key: 'sr:' + k, label: extra[k], value: +v, t: 'count' }); });
     }
   } else if (s.kind === 'fifty') {
-    const M = { s1: '1st 25', s2: '2nd 25', mm25: 'min–max 25', uwt: 'Underwater', sw15: 'Swim (push)', uw: 'Top speed UW', sw: 'Top speed SW', se: 'Speed endurance', turn: 'Turn' };
+    const M = { s1: '1st 25', s2: '2nd 25', mm25: 'min–max 25', uwt: 'Underwater', sw15: 'Swim (push)', uw: 'Top speed UW', sw: 'Top speed SW', se: 'Speed endurance', turn: 'Turn', pull15: 'Pull 15 m', kick15: 'Kick 15 m' };
     const cpLab = (k) => M[k] || (/^cp\d+$/.test(k) ? k.replace('cp', '') + ' m' : k);
     out.push({ key: 'time', label: '50 time', value: s.seconds, t: 'time', primary: true });
     const b = s.best || {}, srM = s.sr || {}, scM = s.sc || {};
@@ -2366,6 +2366,56 @@ function progGroups(sid) {
   return arr;
 }
 function hasProgress(sid) { return progGroups(sid).some((g) => g.entries.length >= 2); }
+
+// --- Sprint-readiness (fatigue) flag for the 50 m tool ----------------------
+// v1 (Gael, 2026-07-31): within one ISO week, two 50 m tests >= FATIGUE_PCT apart
+// (slower vs the week's fastest) = a fatigue sign; consecutive flagged testing-weeks
+// escalate. Blunt on purpose; tune per-swimmer (≈2x CV) later. Operates on the 50 m
+// TIME (maximal sprint), the reproducible readiness sentinel — not the sub-splits.
+const FATIGUE_PCT = 3;
+function isoWeekKey(dateStr) {
+  const d = new Date(dateStr + 'T12:00:00'); if (isNaN(d)) return null;
+  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const day = t.getUTCDay() || 7; t.setUTCDate(t.getUTCDate() + 4 - day);
+  const yStart = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+  const wk = Math.ceil((((t - yStart) / 86400000) + 1) / 7);
+  return t.getUTCFullYear() + '-W' + String(wk).padStart(2, '0');
+}
+function fiftyFatigue(sid) {
+  const es = entriesOf(sid).filter((s) => s.kind === 'fifty' && s.seconds > 0 && s.date);
+  if (es.length < 2) return null;
+  const byWk = {};
+  es.forEach((s) => { const k = isoWeekKey(s.date); if (k) (byWk[k] = byWk[k] || []).push(s); });
+  const testable = Object.keys(byWk).sort().filter((k) => byWk[k].length >= 2);
+  if (!testable.length) return null;
+  const flagged = {};
+  testable.forEach((k) => {
+    const ts = byWk[k].map((s) => s.seconds);
+    const fast = Math.min.apply(null, ts), slow = Math.max.apply(null, ts);
+    const pct = (slow - fast) / fast * 100;
+    if (pct >= FATIGUE_PCT) flagged[k] = { pct, fast, slow };
+  });
+  // current streak = consecutive trailing testing-weeks that are all flagged
+  let streak = 0;
+  for (let i = testable.length - 1; i >= 0; i--) { if (flagged[testable[i]]) streak++; else break; }
+  if (streak === 0) return null; // recovered / no current flag
+  const latest = testable[testable.length - 1];
+  return { streak, latestPct: flagged[latest].pct };
+}
+function fatigueNote(sid, mode) {
+  const f = fiftyFatigue(sid); if (!f) return '';
+  const strong = f.streak >= 2;
+  if (mode === 'chip') {
+    const cls = strong ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-800';
+    return `<div class="mt-1.5"><span class="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full ${cls}">${strong ? `\u26a0 fatigue \u00b7 ${f.streak} wks` : 'fatigue sign'}</span></div>`;
+  }
+  const cls = strong ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-amber-50 border-amber-200 text-amber-800';
+  const head = strong ? `Repeated fatigue signal \u2014 ${f.streak} testing weeks in a row` : 'Possible fatigue';
+  const body = strong
+    ? `Two 50 m tests in a week ran \u2265${FATIGUE_PCT}% apart across ${f.streak} consecutive testing weeks (latest ${f.latestPct.toFixed(1)}%). Persistent \u2014 review this swimmer's load, not just one set.`
+    : `Two 50 m tests in a week ran ${f.latestPct.toFixed(1)}% apart (\u2265${FATIGUE_PCT}%). Could mean too tired to sprint \u2014 consider modifying the set, and watch whether it repeats.`;
+  return `<div class="rounded-2xl border px-4 py-3 ${cls}"><div class="text-sm font-bold">${strong ? '\u26a0 ' : ''}${head}</div><div class="text-[12px] mt-0.5 leading-snug">${body}</div></div>`;
+}
 
 // Dependency-free line chart over [{v,x,lab}]; lower v sits lower (faster/better). Green dot = best.
 function progChartSvg(pts, hb, goal) {
@@ -2428,6 +2478,7 @@ function renderProgress() {
         <div class="font-semibold text-[15px]">${g.sig}</div>${deltaHtml}
       </div>
       <div class="text-[11px] text-muted mt-0.5">${PROG_KINDS[g.kind]} · ${n} ${n === 1 ? 'entry' : 'entries'}${n >= 2 ? ' · tap to open' : ' · need 2+ to trend'}</div>
+      ${g.kind === 'fifty' ? fatigueNote(sid, 'chip') : ''}
     </div>`;
   }).join('');
   return `
@@ -2497,6 +2548,7 @@ function renderProgressGroup() {
       </div>
     </div>
     <div class="scrollable px-5 py-3 space-y-3 bg-slate-50">
+      ${g.kind === 'fifty' ? fatigueNote(sid, 'banner') : ''}
       ${winToggle}
       <div class="bg-white border border-slate-200 rounded-2xl p-4">
         <div class="flex items-baseline justify-between mb-0.5"><div class="font-semibold text-[15px]">${selM.label || ''}</div><div class="text-[11px] text-faint">${selHb ? 'higher = better' : 'tap a row'}</div></div>
@@ -3062,6 +3114,30 @@ function fiftyResultHtml() {
   const srR = fiftySrRange[f.stroke] && fiftySrRange[f.stroke][f.sex];
   const d1 = v => (v == null ? '—' : v.toFixed(1));
   const best = f.best || (f.best = {});
+  // Best (auto) + today-vs-recent readiness colour, from this swimmer's saved history.
+  const sidH = f.sid || (function () {
+    const nm = (f.name || '').trim();
+    const ss = Array.from(new Set(state.saved.filter((s) => (s.name || '') === nm).map((s) => s.sid)));
+    return ss.length === 1 ? ss[0] : null;
+  })();
+  const excludeId = state.reviewId || null;
+  const histVals = (key) => entriesOf(sidH)
+    .filter((s) => s.kind === 'fifty' && s.id !== excludeId && s.best && s.best[key] > 0 && s.date)
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
+    .map((s) => s.best[key]);
+  const histBest = (key) => { const h = histVals(key); return h.length ? Math.min.apply(null, h) : null; };
+  const readiness = (key) => {                         // lower = better (time metrics)
+    const today = best[key];
+    if (!(today > 0)) return null;
+    const h = histVals(key);
+    const bst = h.length ? Math.min.apply(null, h) : null;
+    if (bst != null && today <= bst + 1e-9) return { kind: 'best' };
+    if (!h.length) return null;
+    const recent = h.slice(-3);
+    const avg = recent.reduce((a, b) => a + b, 0) / recent.length;
+    const pct = (today - avg) / avg * 100;
+    return { kind: pct >= 3 ? 'red' : pct >= 2 ? 'yellow' : 'normal', pct };
+  };
   if (!state.fiftyOpen) state.fiftyOpen = {};
   const fsr = f.sr || (f.sr = {}), fsc = f.sc || (f.sc = {});
   const swDist = 15;
@@ -3100,27 +3176,32 @@ function fiftyResultHtml() {
     { key: 'se', label: 'Speed endurance', sub: '2nd 15 m of 2×25 m FAST @20s', pred: speedEnd, sw: 'win' },
     { key: 'turn', label: 'Turn', sub: '5 m in + 15 m out', pred: turn, sw: 'win' },
   ];
-  // Rank the filled rows by Δ% for the colour coding (worst gap = red, best = bright green).
-  const scored = rows.filter(r => r.pred != null && best[r.key] > 0)
-    .map(r => ({ key: r.key, pct: (best[r.key] - r.pred) / r.pred * 100 }))
-    .sort((a, b) => a.pct - b.pct);
-  const colorFor = {}; const n = scored.length;
-  if (n >= 1) { colorFor[scored[n - 1].key] = 'bg-rose-500 text-white'; colorFor[scored[0].key] = 'bg-emerald-500 text-white'; }
-  if (n >= 4) { colorFor[scored[n - 2].key] = 'bg-rose-100 text-rose-700'; colorFor[scored[1].key] = 'bg-emerald-100 text-emerald-800'; }
-  const GT = 'display:grid;grid-template-columns:1fr 3.6rem 3.2rem 2.9rem;gap:6px;align-items:center;';
+  const GT = 'display:grid;grid-template-columns:1fr 2.9rem 2.9rem 3.7rem;gap:6px;align-items:center;';
   const rowHtml = r => {
-    const pctVal = (r.pred != null && best[r.key] > 0) ? (best[r.key] - r.pred) / r.pred * 100 : null;
-    const pctStr = pctVal == null ? '—' : `${pctVal >= 0 ? '+' : ''}${pctVal.toFixed(1)}%`;
-    const cls = colorFor[r.key] || 'bg-slate-50 text-slate-400';
-    const range = (r.lo != null && r.hi != null) ? `<div class="text-[9px] text-faint mono leading-tight">${d1(r.lo)}–${d1(r.hi)}</div>` : '';
     const open = state.fiftyOpen[r.key];
+    const range = (r.lo != null && r.hi != null) ? `<div class="text-[9px] text-faint mono leading-tight">${d1(r.lo)}\u2013${d1(r.hi)}</div>` : '';
+    const hb = histBest(r.key);
+    const rd = readiness(r.key);
+    let inCls = 'bg-slate-100 border border-transparent';
+    let tag = '';
+    if (rd) {
+      if (rd.kind === 'best') { inCls = 'bg-emerald-50 border border-emerald-300 text-emerald-800'; tag = `<div class="text-[9px] font-bold text-emerald-600 text-center leading-tight">best</div>`; }
+      else if (rd.kind === 'red') { inCls = 'bg-rose-50 border border-rose-300 text-rose-800'; tag = `<div class="text-[9px] font-bold text-rose-600 text-center leading-tight">+${rd.pct.toFixed(1)}%</div>`; }
+      else if (rd.kind === 'yellow') { inCls = 'bg-amber-50 border border-amber-300 text-amber-800'; tag = `<div class="text-[9px] font-bold text-amber-600 text-center leading-tight">+${rd.pct.toFixed(1)}%</div>`; }
+      else { tag = `<div class="text-[9px] text-faint text-center leading-tight">${rd.pct >= 0 ? '+' : ''}${rd.pct.toFixed(1)}%</div>`; }
+    }
+    const dP = (r.pred != null && best[r.key] > 0) ? (best[r.key] - r.pred) / r.pred * 100 : null;
+    const dB = (hb != null && best[r.key] > 0) ? (best[r.key] - hb) / hb * 100 : null;
+    const sg = (v) => `${v >= 0 ? '+' : ''}${v.toFixed(0)}%`;
+    const cmp = (dP != null || dB != null) ? `<div class="text-[8px] text-faint text-center leading-tight">${dP != null ? `P ${sg(dP)}` : ''}${dP != null && dB != null ? ' \u00b7 ' : ''}${dB != null ? `B ${sg(dB)}` : ''}</div>` : '';
     return `<div style="${GT}" class="px-3 py-2 border-b border-slate-100 last:border-0">
-      <div class="clickable" data-fifty-expand="${r.key}"><div class="text-sm font-semibold text-slate-800 leading-tight">${r.label} <span class="text-faint text-[10px]">${open ? '▾' : '▸'}</span></div>${r.sub ? `<div class="text-[10px] text-faint leading-tight">${r.sub}</div>` : ''}</div>
+      <div class="clickable" data-fifty-expand="${r.key}"><div class="text-sm font-semibold text-slate-800 leading-tight">${r.label} <span class="text-faint text-[10px]">${open ? '\u25be' : '\u25b8'}</span></div>${r.sub ? `<div class="text-[10px] text-faint leading-tight">${r.sub}</div>` : ''}</div>
       <div class="text-right"><div class="mono text-sm font-semibold text-slate-700">${d1(r.pred)}</div>${range}</div>
-      <input data-best="${r.key}" inputmode="decimal" value="${best[r.key] != null ? best[r.key] : ''}" placeholder="best" class="w-full bg-slate-100 rounded-lg px-1.5 py-1.5 text-sm text-right outline-none focus:ring-2 focus:ring-cyan-300" />
-      <div class="text-center text-[11px] font-bold rounded-lg py-1.5 ${cls}">${pctStr}</div>
+      <div class="text-center mono text-sm ${hb != null ? 'text-slate-600' : 'text-faint'}">${hb != null ? d1(hb) : '\u2014'}</div>
+      <div><input data-best="${r.key}" inputmode="decimal" value="${best[r.key] != null ? best[r.key] : ''}" placeholder="time" class="w-full rounded-lg px-1.5 py-1.5 text-sm text-right outline-none focus:ring-2 focus:ring-cyan-300 ${inCls}" />${tag}${cmp}</div>
     </div>${expandBlock(r.key, false)}`;
   };
+
   // Underwater vs surface-swim over the same distance (the swimmer's own two times).
   const uwActual = best.uwt > 0 ? best.uwt : null;
   const swActual = best.sw15 > 0 ? best.sw15 : null;
@@ -3133,9 +3214,9 @@ function fiftyResultHtml() {
       uwCompare = `<div class="rounded-2xl px-4 py-3 text-center text-sm bg-slate-50 text-slate-600">Underwater ${uwDist} m <span class="mono font-semibold">${uwActual.toFixed(1)}</span> · Swim ${swDist} m <span class="mono font-semibold">${swActual.toFixed(1)}</span> <span class="text-faint">— different distances</span></div>`;
     }
   } else if (uwActual != null || swActual != null) {
-    uwCompare = `<div class="text-center text-[11px] text-muted">Enter both Underwater and Swim (Best column) to compare.</div>`;
+    uwCompare = `<div class="text-center text-[11px] text-muted">Enter both Underwater and Swim (Today column) to compare.</div>`;
   }
-  const header = `<div style="${GT}" class="px-3 pt-3 pb-1"><span class="label-cap text-muted">Split</span><span class="label-cap text-muted text-right">Pred</span><span class="label-cap text-muted text-center">Best</span><span class="label-cap text-muted text-center">Δ%</span></div>`;
+  const header = `<div style="${GT}" class="px-3 pt-3 pb-1"><span class="label-cap text-muted">Split</span><span class="label-cap text-muted text-right">Pred</span><span class="label-cap text-muted text-center">Best</span><span class="label-cap text-muted text-center">Today</span></div>`;
   return `
     <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden">
       ${header}
@@ -3162,7 +3243,7 @@ function fiftyResultHtml() {
       ${cpHeader}
       ${cpRows}
     </div>
-    <div class="text-center text-[10px] text-faint leading-snug">Δ% = your best vs the mean predicted (＋ = slower). Red = biggest gap to work on · green = strongest. UW expected = SW · 1st/2nd-25 range ≈ middle 50%.</div>
+    <div class="text-center text-[10px] text-faint leading-snug">Today is coloured vs recent form (avg of last 3 tests): <b class="text-emerald-600">green</b> = best ever \u00b7 &lt;2% normal \u00b7 <b class="text-amber-600">2\u20133% amber</b> \u00b7 <b class="text-rose-600">\u22653% red</b> (possible fatigue). Best = fastest logged. P = vs predicted, B = vs best.</div>
   `;
 }
 
