@@ -3147,6 +3147,17 @@ function fiftyResultHtml() {
     <div class="text-center text-[10px] text-amber-700 leading-snug px-2">*Underwater is timed off a race turn (into the 2nd 50 of a 100), <b>not a fresh maximal effort</b> — so it can underestimate a fresh underwater kick, while the swim is at top speed.</div>
     <div class="text-center text-[11px] text-muted">Stroke rate: 1st 25 <span class="mono font-semibold text-slate-700">${Math.round(rr.sr1)}</span>${srR ? ` <span class="text-faint">(${srR.sr1lo}–${srR.sr1hi})</span>` : ''} · 2nd 25 <span class="mono font-semibold text-slate-700">${Math.round(rr.sr2)}</span>${srR ? ` <span class="text-faint">(${srR.sr2lo}–${srR.sr2hi})</span>` : ''} cyc/min</div>
     <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+      <div class="px-3 pt-3 pb-1 flex items-baseline justify-between gap-2"><span class="label-cap text-muted">Pull / Kick 15 m</span><span class="text-[10px] text-faint">records only — no target yet</span></div>
+      <div style="display:grid;grid-template-columns:1fr 4.2rem;gap:6px;align-items:center;" class="px-3 py-2 border-b border-slate-100">
+        <div><div class="text-sm font-semibold text-slate-800 leading-tight">Pull 15 m</div><div class="text-[10px] text-faint leading-tight">push · arms only</div></div>
+        <input data-fifty-cp="pull15" inputmode="decimal" value="${best.pull15 != null ? best.pull15 : ''}" placeholder="time" class="w-full bg-slate-100 rounded-lg px-1.5 py-1.5 text-sm text-right outline-none focus:ring-2 focus:ring-cyan-300" />
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 4.2rem;gap:6px;align-items:center;" class="px-3 py-2">
+        <div><div class="text-sm font-semibold text-slate-800 leading-tight">Kick 15 m</div><div class="text-[10px] text-faint leading-tight">push · kick only</div></div>
+        <input data-fifty-cp="kick15" inputmode="decimal" value="${best.kick15 != null ? best.kick15 : ''}" placeholder="time" class="w-full bg-slate-100 rounded-lg px-1.5 py-1.5 text-sm text-right outline-none focus:ring-2 focus:ring-cyan-300" />
+      </div>
+    </div>
+    <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden">
       <div class="label-cap text-muted px-3 pt-3 pb-1">Cumulative checkpoints (from start)</div>
       ${cpHeader}
       ${cpRows}
