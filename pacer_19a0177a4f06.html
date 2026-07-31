@@ -3,16 +3,16 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Race Equation — v3 (private preview)</title>
+  <title>Swim Book — v3 (private preview)</title>
   <link rel="manifest" href="manifest-v3.webmanifest">
   <meta name="theme-color" content="#0891b2">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="Race Equation">
+  <meta name="apple-mobile-web-app-title" content="Swim Book">
   <link rel="apple-touch-icon" href="icon-192.png">
   <!--
-    Race Equation — swim race split predictor.
+    Swim Book — swim race split predictor.
     © 2026 Gaël Chaubet. All rights reserved.
     This source, its design, and the pacing dataset embedded within are the
     property of Gaël Chaubet. Do not copy, redistribute, or reuse without permission.
@@ -196,7 +196,7 @@
 
 <div class="stage">
   <div class="wordmark">
-    <div class="wm-title">Race Equation</div>
+    <div class="wm-title">Swim Book</div>
     <div class="wm-sub">v3 preview</div>
   </div>
   <div class="phone" id="phone">
@@ -1384,6 +1384,109 @@ function exportBackupJson() {
 }
 
 // --- Import a backup JSON: merge by id (adds new, keeps existing) ---
+// ---- Hy-Tek "Individual Top Times" CSV import (total-only race records) --------
+function parseHytekTime(s) {
+  s = String(s || '').trim().replace(/^x/i, '').trim();   // strip Hy-Tek exhibition/converted flag
+  const m = s.match(/^(?:(\d+):)?(\d{1,2}(?:\.\d+)?)$/);
+  if (!m) return null;
+  const sec = (m[1] ? parseInt(m[1], 10) * 60 : 0) + parseFloat(m[2]);
+  return sec > 0 ? sec : null;
+}
+function parseCsvLine(l) {
+  const out = []; let cur = '', q = false;
+  for (let i = 0; i < l.length; i++) { const c = l[i];
+    if (c === '"') { if (q && l[i + 1] === '"') { cur += '"'; i++; } else q = !q; }
+    else if (c === ',' && !q) { out.push(cur); cur = ''; }
+    else cur += c; }
+  out.push(cur); return out;
+}
+const HYTEK_COURSE = { Y: 'SCY', L: 'LCM', S: 'SCM' };
+const HYTEK_ROUND = { F: 'Final', P: 'Prelim', S: 'Semifinal', T: 'Time Trial' };
+function parseHytekTopTimes(text) {
+  const nameRe = /^(.*?)\s+\((\d+)\)\s+([MWF])/;   // "Name  (age)  M/W" (Yr tag optional)
+  const rows = String(text).split(/\r?\n/).filter((l) => l.trim());
+  const cands = [], scy = []; let malformed = 0;
+  rows.forEach((line) => {
+    const r = parseCsvLine(line);
+    const mm = nameRe.exec(r[12] || '');
+    const sec = parseHytekTime(r[15]);
+    const pool = HYTEK_COURSE[(r[16] || '').trim()];
+    const dist = parseInt(r[22], 10), stroke = (r[23] || '').trim();
+    if (!mm || !sec || !dist || !stroke || !pool) { malformed++; return; }
+    const c = { name: mm[1].trim(), sex: mm[3] === 'W' ? 'F' : mm[3], seconds: sec,
+      pool, distance: dist, stroke, round: HYTEK_ROUND[(r[19] || '').trim()] || 'Final',
+      date: (r[25] || '').trim(), competition: (r[26] || '').trim() };
+    (pool === 'SCY' ? scy : cands).push(c);
+  });
+  return { cands, scy, malformed };
+}
+function triggerImportCsv() {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.csv,text/csv,text/plain'; inp.style.display = 'none';
+  inp.addEventListener('change', () => {
+    const file = inp.files && inp.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { prepareImportPreview(reader.result); navigate('import-preview'); };
+    reader.readAsText(file);
+  });
+  document.body.appendChild(inp); inp.click();
+  setTimeout(() => inp.remove(), 1000);
+}
+// Split parsed candidates into importable (the app can display) vs no-pacing-table.
+function prepareImportPreview(text) {
+  const parsed = parseHytekTopTimes(text);
+  const importable = [], unsupported = [];
+  parsed.cands.forEach((c) => { (predict(c.stroke, c.sex, c.pool, c.distance, 100) ? importable : unsupported).push(c); });
+  state.importPreview = { importable, unsupported, scy: parsed.scy, malformed: parsed.malformed,
+    nSwimmers: new Set(importable.map((c) => c.name)).size };
+  return state.importPreview;
+}
+function doImportTimes() {
+  const P = state.importPreview;
+  if (!P || !P.importable.length) { showToast('Nothing to import'); return; }
+  const nameToSid = {};
+  state.saved.forEach((s) => { if (s.name && !(s.name in nameToSid)) nameToSid[s.name] = s.sid; });
+  const sig = (e) => `${e.sid}|${e.date}|${e.distance}|${e.stroke}|${e.pool}|${e.round}|${(e.targetSeconds || 0).toFixed(2)}`;
+  const seen = new Set(state.saved.filter((s) => s.kind === 'race').map(sig));
+  let added = 0, dup = 0, i = 0;
+  P.importable.forEach((c) => {
+    let sid = nameToSid[c.name]; if (!sid) { sid = newSid(); nameToSid[c.name] = sid; }
+    const e = { id: 'rc' + Date.now().toString(36) + (i++).toString(36) + Math.random().toString(36).slice(2, 5),
+      kind: 'race', name: c.name, sid, stroke: c.stroke, sex: c.sex, pool: c.pool, distance: c.distance,
+      targetSeconds: c.seconds, times: { target: c.seconds, total: c.seconds }, sr: {},
+      competition: c.competition, round: c.round, date: c.date, notes: 'Imported (Hy-Tek Top Times)' };
+    if (seen.has(sig(e))) { dup++; return; }
+    seen.add(sig(e)); state.saved.push(e); added++;
+  });
+  persistSaved();
+  state.importPreview = null;
+  showToast(`Imported ${added} swim${added === 1 ? '' : 's'}${dup ? ` · ${dup} already there` : ''}`);
+  navigate('roster');
+}
+function renderImportPreview() {
+  const P = state.importPreview;
+  if (!P) return renderRoster();
+  const skipLine = (n, label) => n ? `<div class="flex justify-between text-sm"><span class="text-muted">${label}</span><span class="mono text-slate-600">${n}</span></div>` : '';
+  return `
+    <div class="statusbar"></div>
+    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <div class="flex-1 min-w-0"><div class="text-lg font-semibold">Import race times</div><div class="text-xs text-muted">Hy-Tek Top Times · total times only</div></div>
+    </div>
+    <div class="scrollable px-5 py-4 space-y-4 bg-slate-50">
+      <div class="bg-white border border-slate-200 rounded-2xl p-4">
+        <div class="text-center mb-3"><div class="hero-time text-3xl leading-none">${P.importable.length}</div><div class="text-xs text-muted mt-1">swims ready · ${P.nSwimmers} swimmer${P.nSwimmers === 1 ? '' : 's'}</div></div>
+        ${(P.scy.length || P.unsupported.length || P.malformed) ? `<div class="space-y-1 border-t border-slate-100 pt-2">
+          ${skipLine(P.scy.length, 'Yards swims (not supported yet)')}
+          ${skipLine(P.unsupported.length, 'Events with no pacing table')}
+          ${skipLine(P.malformed, 'Unreadable rows')}
+        </div>` : ''}
+      </div>
+      <div class="text-[11px] text-muted leading-snug px-1">Each becomes a Record Races entry with the total time (no splits) — feeding Best Times and Training Pace. Swimmers match your roster by name; new names are added. Re-importing the same file won't duplicate.</div>
+      ${P.importable.length ? `<button class="w-full bg-cyan-600 text-white font-semibold rounded-xl py-4 text-base hover:bg-cyan-700 active:scale-[0.98] transition shadow-lg shadow-cyan-600/20" data-action="import-times-confirm">Import ${P.importable.length} swims</button>` : '<div class="text-center text-sm text-muted py-2">Nothing importable in this file.</div>'}
+      <button class="w-full text-sm text-muted py-2" data-action="back">Cancel</button>
+    </div>`;
+}
 function triggerImport() {
   const inp = document.createElement('input');
   inp.type = 'file'; inp.accept = '.json,application/json'; inp.style.display = 'none';
@@ -1402,7 +1505,7 @@ function importBackupData(text) {
   let data;
   try { data = JSON.parse(String(text).replace(/^﻿/, '')); } catch (e) { showToast('Could not read that file'); return; }
   const arr = Array.isArray(data) ? data : (data && Array.isArray(data.saved) ? data.saved : null);
-  if (!arr) { showToast('Not a Race Equation backup file'); return; }
+  if (!arr) { showToast('Not a Swim Book backup file'); return; }
   const existing = new Set(state.saved.map(s => s.id));
   let added = 0;
   arr.forEach(e => {
@@ -1518,6 +1621,7 @@ function render() {
     case 'progress': html = renderProgress(); break;
     case 'progress-group': html = renderProgressGroup(); break;
     case 'best-times': html = renderBestTimes(); break;
+    case 'import-preview': html = renderImportPreview(); break;
     case 'training-pace': html = renderTrainingPace(); break;
     case 'other-tools': html = renderOtherTools(); break;
     default: html = '<div class="p-8 text-slate-500">Unknown view</div>';
@@ -1937,7 +2041,7 @@ function renderRoster() {
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-2 pb-4">
-      <div class="text-[28px] font-bold tracking-tight leading-none text-center">Race Equation</div>
+      <div class="text-[28px] font-bold tracking-tight leading-none text-center">Swim Book</div>
     </div>
     <div class="px-5 pb-2 grid grid-cols-2 gap-2">
       <button class="bg-gradient-to-br from-cyan-500 to-cyan-700 rounded-2xl px-4 py-4 text-center hover:from-cyan-600 hover:to-cyan-800 active:scale-[0.99] transition shadow-lg shadow-cyan-600/25" data-action="new-race">
@@ -1973,6 +2077,8 @@ function renderRoster() {
       <button class="font-semibold hover:text-cyan-700 transition" data-action="backup-json">Backup</button>
       <span class="text-slate-200">·</span>
       <button class="font-semibold hover:text-cyan-700 transition" data-action="import-json">Import</button>
+      <span class="text-slate-200">·</span>
+      <button class="font-semibold hover:text-cyan-700 transition" data-action="import-times-csv">Import times</button>
     </div>` : ''}
     <div class="scrollable px-3 pb-4">
       ${hasSaved ? `<div>${savedRows}</div>` : emptyState}
@@ -3103,6 +3209,63 @@ function renderEfficiency() {
   `;
 }
 
+// --- 50 m tool: history-derived Best (PB) + live readiness of today's 50 --------
+// Prior saved 50 m tests for this swimmer (excludes the entry being edited).
+function fiftyHistory(form) {
+  const sid = form && form.sid;
+  const nm = (form && form.name || '').trim();
+  return state.saved
+    .filter((s) => s.kind === 'fifty' && s.id !== state.reviewId &&
+      (sid ? s.sid === sid : (nm && (s.name || '').trim() === nm)))
+    .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+}
+// Auto PB per metric key from history (min = fastest; these are times).
+function fiftyBestMap(hist) {
+  const m = {};
+  hist.forEach((s) => { const b = s.best || {}; Object.keys(b).forEach((k) => {
+    const v = +b[k]; if (v > 0 && (m[k] == null || v < m[k])) m[k] = v; }); });
+  return m;
+}
+const READY_RED = 3, READY_YEL = 2;
+function fiftyReadiness(form, todayT) {
+  if (!(todayT > 0)) return null;
+  const times = fiftyHistory(form).map((s) => +s.seconds).filter((v) => v > 0);
+  if (!times.length) return null;
+  const bestPrev = Math.min.apply(null, times);
+  const avg = (n) => { const a = times.slice(-n); return a.reduce((x, y) => x + y, 0) / a.length; };
+  const vLast = (todayT / times[times.length - 1] - 1) * 100;
+  const vAvg2 = times.length >= 2 ? (todayT / avg(2) - 1) * 100 : null;
+  const vAvg3 = times.length >= 3 ? (todayT / avg(3) - 1) * 100 : null;
+  const pref = vAvg3 != null ? { pct: vAvg3, lab: 'avg last 3' }
+            : vAvg2 != null ? { pct: vAvg2, lab: 'avg last 2' }
+            : { pct: vLast, lab: 'last test' };
+  const isBest = todayT <= bestPrev;
+  const tone = isBest ? 'green' : pref.pct >= READY_RED ? 'red' : pref.pct >= READY_YEL ? 'yellow' : 'normal';
+  return { vLast, vAvg2, vAvg3, pref, isBest, tone, bestPrev };
+}
+function fiftyReadinessCard(form, todayT) {
+  const r = fiftyReadiness(form, todayT); if (!r) return '';
+  const tones = {
+    green: 'bg-emerald-50 border-emerald-200 text-emerald-800',
+    yellow: 'bg-amber-50 border-amber-200 text-amber-800',
+    red: 'bg-rose-50 border-rose-200 text-rose-800',
+    normal: 'bg-slate-50 border-slate-200 text-slate-700',
+  };
+  const dot = r.tone === 'normal' ? '' : '<span class="inline-block w-2 h-2 rounded-full align-middle mr-1" style="background:currentColor"></span>';
+  const pct = (v) => v == null ? '\u2014' : `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
+  const verdict = r.isBest ? 'new best' : `${pct(r.pref.pct)} vs ${r.pref.lab}`;
+  const parts = [];
+  if (r.vLast != null) parts.push(`vs last ${pct(r.vLast)}`);
+  if (r.vAvg2 != null) parts.push(`vs avg-2 ${pct(r.vAvg2)}`);
+  if (r.vAvg3 != null) parts.push(`vs avg-3 ${pct(r.vAvg3)}`);
+  return `<div class="rounded-2xl border px-4 py-3 ${tones[r.tone]}">
+    <div class="flex items-baseline justify-between gap-2">
+      <span class="text-sm font-bold">${dot}Readiness</span>
+      <span class="text-sm font-bold mono">${verdict}</span>
+    </div>
+    <div class="text-[11px] mt-0.5 opacity-80">${parts.join(' \u00b7 ')}${r.isBest ? '' : ` \u00b7 best ${r.bestPrev.toFixed(2)}`}</div>
+  </div>`;
+}
 function fiftyResultHtml() {
   const f = state.fiftyForm;
   const T = Math.max(0, f.seconds || 0);
@@ -3114,30 +3277,8 @@ function fiftyResultHtml() {
   const srR = fiftySrRange[f.stroke] && fiftySrRange[f.stroke][f.sex];
   const d1 = v => (v == null ? '—' : v.toFixed(1));
   const best = f.best || (f.best = {});
-  // Best (auto) + today-vs-recent readiness colour, from this swimmer's saved history.
-  const sidH = f.sid || (function () {
-    const nm = (f.name || '').trim();
-    const ss = Array.from(new Set(state.saved.filter((s) => (s.name || '') === nm).map((s) => s.sid)));
-    return ss.length === 1 ? ss[0] : null;
-  })();
-  const excludeId = state.reviewId || null;
-  const histVals = (key) => entriesOf(sidH)
-    .filter((s) => s.kind === 'fifty' && s.id !== excludeId && s.best && s.best[key] > 0 && s.date)
-    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
-    .map((s) => s.best[key]);
-  const histBest = (key) => { const h = histVals(key); return h.length ? Math.min.apply(null, h) : null; };
-  const readiness = (key) => {                         // lower = better (time metrics)
-    const today = best[key];
-    if (!(today > 0)) return null;
-    const h = histVals(key);
-    const bst = h.length ? Math.min.apply(null, h) : null;
-    if (bst != null && today <= bst + 1e-9) return { kind: 'best' };
-    if (!h.length) return null;
-    const recent = h.slice(-3);
-    const avg = recent.reduce((a, b) => a + b, 0) / recent.length;
-    const pct = (today - avg) / avg * 100;
-    return { kind: pct >= 3 ? 'red' : pct >= 2 ? 'yellow' : 'normal', pct };
-  };
+  const _pb = fiftyBestMap(fiftyHistory(f));   // auto Best (PB) per metric from history
+  const readyCard = fiftyReadinessCard(f, T);  // live readiness of today's 50 m
   if (!state.fiftyOpen) state.fiftyOpen = {};
   const fsr = f.sr || (f.sr = {}), fsc = f.sc || (f.sc = {});
   const swDist = 15;
@@ -3176,32 +3317,21 @@ function fiftyResultHtml() {
     { key: 'se', label: 'Speed endurance', sub: '2nd 15 m of 2×25 m FAST @20s', pred: speedEnd, sw: 'win' },
     { key: 'turn', label: 'Turn', sub: '5 m in + 15 m out', pred: turn, sw: 'win' },
   ];
-  const GT = 'display:grid;grid-template-columns:1fr 2.9rem 2.9rem 3.7rem;gap:6px;align-items:center;';
+  // Split | Pred | Best (auto PB from history) | Today (input). No per-row colour —
+  // the readiness card up top carries the fatigue signal (Gael 2026-07-31).
+  const pbTxt = (k) => (_pb[k] != null ? _pb[k].toFixed(1) : '\u2014');
+  const GT = 'display:grid;grid-template-columns:1fr 3.3rem 3.3rem 3.4rem;gap:6px;align-items:center;';
   const rowHtml = r => {
+    const range = (r.lo != null && r.hi != null) ? `<div class="text-[9px] text-faint mono leading-tight">${d1(r.lo)}–${d1(r.hi)}</div>` : '';
     const open = state.fiftyOpen[r.key];
-    const range = (r.lo != null && r.hi != null) ? `<div class="text-[9px] text-faint mono leading-tight">${d1(r.lo)}\u2013${d1(r.hi)}</div>` : '';
-    const hb = histBest(r.key);
-    const rd = readiness(r.key);
-    let inCls = 'bg-slate-100 border border-transparent';
-    let tag = '';
-    if (rd) {
-      if (rd.kind === 'best') { inCls = 'bg-emerald-50 border border-emerald-300 text-emerald-800'; tag = `<div class="text-[9px] font-bold text-emerald-600 text-center leading-tight">best</div>`; }
-      else if (rd.kind === 'red') { inCls = 'bg-rose-50 border border-rose-300 text-rose-800'; tag = `<div class="text-[9px] font-bold text-rose-600 text-center leading-tight">+${rd.pct.toFixed(1)}%</div>`; }
-      else if (rd.kind === 'yellow') { inCls = 'bg-amber-50 border border-amber-300 text-amber-800'; tag = `<div class="text-[9px] font-bold text-amber-600 text-center leading-tight">+${rd.pct.toFixed(1)}%</div>`; }
-      else { tag = `<div class="text-[9px] text-faint text-center leading-tight">${rd.pct >= 0 ? '+' : ''}${rd.pct.toFixed(1)}%</div>`; }
-    }
-    const dP = (r.pred != null && best[r.key] > 0) ? (best[r.key] - r.pred) / r.pred * 100 : null;
-    const dB = (hb != null && best[r.key] > 0) ? (best[r.key] - hb) / hb * 100 : null;
-    const sg = (v) => `${v >= 0 ? '+' : ''}${v.toFixed(0)}%`;
-    const cmp = (dP != null || dB != null) ? `<div class="text-[8px] text-faint text-center leading-tight">${dP != null ? `P ${sg(dP)}` : ''}${dP != null && dB != null ? ' \u00b7 ' : ''}${dB != null ? `B ${sg(dB)}` : ''}</div>` : '';
+    const isPB = best[r.key] > 0 && _pb[r.key] != null && best[r.key] <= _pb[r.key];
     return `<div style="${GT}" class="px-3 py-2 border-b border-slate-100 last:border-0">
-      <div class="clickable" data-fifty-expand="${r.key}"><div class="text-sm font-semibold text-slate-800 leading-tight">${r.label} <span class="text-faint text-[10px]">${open ? '\u25be' : '\u25b8'}</span></div>${r.sub ? `<div class="text-[10px] text-faint leading-tight">${r.sub}</div>` : ''}</div>
+      <div class="clickable" data-fifty-expand="${r.key}"><div class="text-sm font-semibold text-slate-800 leading-tight">${r.label} <span class="text-faint text-[10px]">${open ? '▾' : '▸'}</span></div>${r.sub ? `<div class="text-[10px] text-faint leading-tight">${r.sub}</div>` : ''}</div>
       <div class="text-right"><div class="mono text-sm font-semibold text-slate-700">${d1(r.pred)}</div>${range}</div>
-      <div class="text-center mono text-sm ${hb != null ? 'text-slate-600' : 'text-faint'}">${hb != null ? d1(hb) : '\u2014'}</div>
-      <div><input data-best="${r.key}" inputmode="decimal" value="${best[r.key] != null ? best[r.key] : ''}" placeholder="time" class="w-full rounded-lg px-1.5 py-1.5 text-sm text-right outline-none focus:ring-2 focus:ring-cyan-300 ${inCls}" />${tag}${cmp}</div>
+      <div class="text-center mono text-sm ${isPB ? 'text-emerald-700 font-bold' : 'text-slate-500'}">${pbTxt(r.key)}</div>
+      <input data-best="${r.key}" inputmode="decimal" value="${best[r.key] != null ? best[r.key] : ''}" placeholder="today" class="w-full bg-slate-100 rounded-lg px-1.5 py-1.5 text-sm text-right outline-none focus:ring-2 focus:ring-cyan-300" />
     </div>${expandBlock(r.key, false)}`;
   };
-
   // Underwater vs surface-swim over the same distance (the swimmer's own two times).
   const uwActual = best.uwt > 0 ? best.uwt : null;
   const swActual = best.sw15 > 0 ? best.sw15 : null;
@@ -3218,6 +3348,7 @@ function fiftyResultHtml() {
   }
   const header = `<div style="${GT}" class="px-3 pt-3 pb-1"><span class="label-cap text-muted">Split</span><span class="label-cap text-muted text-right">Pred</span><span class="label-cap text-muted text-center">Best</span><span class="label-cap text-muted text-center">Today</span></div>`;
   return `
+    ${readyCard}
     <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden">
       ${header}
       ${rows.filter(r => !r.sw).map(rowHtml).join('')}
@@ -3243,7 +3374,7 @@ function fiftyResultHtml() {
       ${cpHeader}
       ${cpRows}
     </div>
-    <div class="text-center text-[10px] text-faint leading-snug">Today is coloured vs recent form (avg of last 3 tests): <b class="text-emerald-600">green</b> = best ever \u00b7 &lt;2% normal \u00b7 <b class="text-amber-600">2\u20133% amber</b> \u00b7 <b class="text-rose-600">\u22653% red</b> (possible fatigue). Best = fastest logged. P = vs predicted, B = vs best.</div>
+    <div class="text-center text-[10px] text-faint leading-snug">Pred = elite target · Best = this swimmer's PB from saved tests (green when today ties/beats it) · Today = what you're recording. Readiness (top) colors today's 50 vs recent history. 1st/2nd-25 range ≈ middle 50%.</div>
   `;
 }
 
@@ -4567,7 +4698,7 @@ function tpBuildPdf() {
       }
     },
   });
-  const name = ('Race Equation - ' + m.title).replace(/[^\w\s-]/g, '').replace(/\s+/g, ' ').trim();
+  const name = ('Swim Book - ' + m.title).replace(/[^\w\s-]/g, '').replace(/\s+/g, ' ').trim();
   doc.save(name + '.pdf');
 }
 
@@ -5449,6 +5580,8 @@ function handleAction(action, el) {
     case 'export-csv': exportAnalysisCsv(); break;
     case 'backup-json': exportBackupJson(); break;
     case 'import-json': triggerImport(); break;
+    case 'import-times-csv': triggerImportCsv(); break;
+    case 'import-times-confirm': doImportTimes(); break;
     case 'converter': navigate('converter'); break;
     case 'efficiency': navigate('efficiency'); break;
     case 'fifty-splits': navigate('fifty'); break;

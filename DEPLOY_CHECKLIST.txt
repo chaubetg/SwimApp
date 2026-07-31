@@ -29,13 +29,13 @@ WHAT "DEPLOYED" MEANS
 
 4. CONFIRM WHAT IS LIVE (don't trust a normal browser tab)
    Open https://chaubetg.github.io/SwimApp/ in a PRIVATE / INCOGNITO window.
-   The browser tab should read:  "Race Equation — Swim Split Predictor"
-   If it still reads "Race Equation — v3 (private preview)", the new index.html is NOT live,
+   The browser tab should read:  "Swim Book — Swim Split Predictor"
+   If it still reads "Swim Book — v3 (private preview)", the new index.html is NOT live,
    regardless of what the repo looks like.
    Then: Training Pace should show only three pickers — Pool, Distance, Pace from.
 
 5. STILL SEEING THE OLD APP ON YOUR PHONE
-   That is the service worker, not the deploy. sw.js cache is now "race-equation-v4"; an
+   That is the service worker, not the deploy. sw.js cache is now "swim-book-v4"; an
    installed home-screen app drops the old copy only when that name changes. If it persists:
    delete the home-screen icon, open the site in Safari, re-add it.
 
