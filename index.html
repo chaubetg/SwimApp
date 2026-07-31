@@ -1181,6 +1181,25 @@ const fiftyIqr = {
   Breast: { M: { f1lo: 0.444089, f1hi: 0.453017, f2lo: 0.546983, f2hi: 0.555911 }, F: { f1lo: 0.452332, f1hi: 0.45923, f2lo: 0.54077, f2hi: 0.547668 } },
 };
 
+// Per-25 stroke-rate min-max (cyc/min) for the 50 m tool's SR line — per-swimmer
+// 1st/2nd-25 rates, Paris 2024 + Fukuoka 2023 finalists (50m_sprint_data.csv).
+const fiftySrRange = {
+  Free: { M: { sr1lo: 60, sr1hi: 69, sr2lo: 58, sr2hi: 64 }, F: { sr1lo: 56, sr1hi: 67, sr2lo: 52, sr2hi: 62 } },
+  Fly: { M: { sr1lo: 59, sr1hi: 72, sr2lo: 62, sr2hi: 69 }, F: { sr1lo: 61, sr1hi: 71, sr2lo: 59, sr2hi: 69 } },
+  Back: { M: { sr1lo: 52, sr1hi: 66, sr2lo: 51, sr2hi: 65 }, F: { sr1lo: 52, sr1hi: 64, sr2lo: 51, sr2hi: 60 } },
+  Breast: { M: { sr1lo: 62, sr1hi: 74, sr2lo: 61, sr2hi: 73 }, F: { sr1lo: 62, sr1hi: 69, sr2lo: 61, sr2hi: 70 } },
+};
+
+// Underwater kick target: UW time = k_uw x 50 m PB. 15 m for Free/Fly/Back, 10 m for
+// Breast (one long pullout). Freestyle borrows fly's underwater model (own ~9 m breakout
+// too biased to extrapolate to 15 m). Anchored to the 50 PB - underwater is a power quality.
+const uwKuw = {
+  Free: { M: 0.345, F: 0.349, dist: 15 },
+  Fly: { M: 0.324, F: 0.332, dist: 15 },
+  Back: { M: 0.278, F: 0.275, dist: 15 },
+  Breast: { M: 0.212, F: 0.206, dist: 10 },
+};
+
 // Adjacent-distance ratios (World Aquatics dual top-200 cohorts). Key: sex|stroke|pool|dShort|dLong.
 // up = predict the LONGER time from the shorter (×mean); down = predict the SHORTER from the longer.
 const adjRatios = {
@@ -3632,11 +3651,11 @@ function renderPredictedSplits() {
         <div class="border-b border-slate-200 pb-1 mb-2">
           <span class="text-[13px] font-bold text-slate-700 tracking-wide">${row.label}</span>
         </div>
-        <div class="text-center ${isLastRow ? '' : 'mb-1.5'}">
+        <div class="text-center mb-1.5">
           <div class="leading-tight"><span class="hero-time text-2xl">${formatTime(row.time)}</span>${cumInline}</div>
           ${(() => { const sp = per50 && (row.srIdx != null ? per50[row.srIdx] : per50[i]); return sp ? `<div class="text-[10px] text-faint">SR ~${Math.round(sp.avg)} (${Math.round(sp.lo)}–${Math.round(sp.hi)}) cyc/min</div>` : ''; })()}
         </div>
-        ${isLastRow ? '' : `<div class="relative">
+        ${`<div class="relative">
           <div class="range-track">
             <div class="range-fill" style="left: ${padding.toFixed(1)}%; right: ${padding.toFixed(1)}%;"></div>
             <div class="range-tick" style="left: 50%;"></div>

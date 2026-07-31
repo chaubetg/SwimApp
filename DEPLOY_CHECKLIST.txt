@@ -1,0 +1,47 @@
+DEPLOYING TO github.com/chaubetg/SwimApp  —  troubleshooting order
+
+WHAT "DEPLOYED" MEANS
+  The repo root must contain these files, at the ROOT, not inside a folder:
+    .nojekyll  index.html  pacer_19a0177a4f06.html  README.md
+    manifest.webmanifest  manifest-v3.webmanifest  sw.js
+    icon-192.png  icon-512.png
+
+1. CHECK IT ACTUALLY UPLOADED (most common cause)
+   Open github.com/chaubetg/SwimApp and look at the file list.
+   - Do you see a folder called "SwimApp_deploy"? Then the files went in as a SUBFOLDER.
+     Drag-and-drop on GitHub keeps folder structure. Open the folder you want files FROM
+     and select the FILES (Cmd+A inside the folder), not the folder itself.
+   - Does index.html show today's date next to it? If it says "2 days ago", it didn't upload.
+
+2. CHECK THE PAGES BUILD
+   github.com/chaubetg/SwimApp  ->  Actions tab.
+   - A red X = the build failed; click it to read the error.
+   - No run at all = Pages isn't watching this branch. Settings -> Pages -> Build and
+     deployment: Source "Deploy from a branch", Branch "main", folder "/ (root)".
+   - GitHub also emails you when a Pages build fails. Check that inbox.
+
+3. .nojekyll
+   Now included. GitHub Pages runs the files through Jekyll by default, which ignores some
+   files and can fail the build. This empty file switches that off.
+   It is a HIDDEN file — macOS Finder won't show it unless you press Cmd+Shift+. (period).
+   If you can't drag it, create it on GitHub: Add file -> Create new file -> name it
+   exactly  .nojekyll  -> leave it empty -> Commit.
+
+4. CONFIRM WHAT IS LIVE (don't trust a normal browser tab)
+   Open https://chaubetg.github.io/SwimApp/ in a PRIVATE / INCOGNITO window.
+   The browser tab should read:  "Race Equation — Swim Split Predictor"
+   If it still reads "Race Equation — v3 (private preview)", the new index.html is NOT live,
+   regardless of what the repo looks like.
+   Then: Training Pace should show only three pickers — Pool, Distance, Pace from.
+
+5. STILL SEEING THE OLD APP ON YOUR PHONE
+   That is the service worker, not the deploy. sw.js cache is now "race-equation-v4"; an
+   installed home-screen app drops the old copy only when that name changes. If it persists:
+   delete the home-screen icon, open the site in Safari, re-add it.
+
+6. GIT VIA THE COMMAND LINE, IF YOU USE IT
+     cd <your local clone>
+     git status          # are the changes actually staged/committed?
+     git add -A && git commit -m "Training Pace v2, public title, README"
+     git push
+     git log origin/main -1   # does the remote have your commit?

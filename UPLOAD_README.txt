@@ -1,18 +1,29 @@
-UPLOAD THESE TO THE SwimApp REPO **ROOT** (not as a subfolder).
+UPLOAD EVERY FILE HERE TO THE SwimApp REPO **ROOT** (not as a subfolder).
 
-On GitHub: SwimApp repo -> Add file -> Upload files -> drag the 7 files
-below (NOT this whole folder, and NOT the folder itself) -> Commit.
+  README.md                -> shown on the GitHub repo page (public-facing)
+  index.html               -> chaubetg.github.io/SwimApp/   PUBLIC build
+  pacer_19a0177a4f06.html  -> private FULL build (all tools)
+  manifest.webmanifest     (Race Equation)
+  manifest-v3.webmanifest  (Race Equation — Full)
+  sw.js                    (service worker — SEE THE WARNING BELOW)
+  icon-192.png / icon-512.png
 
-Files (all go at the repo root, alongside each other):
-  index.html                 <- V1 (public split predictor)  -> chaubetg.github.io/SwimApp/
-  pacer_19a0177a4f06.html    <- V3 (private full build)
-  manifest.webmanifest       <- V1 PWA identity ("Pacer")
-  manifest-v3.webmanifest    <- V3 PWA identity ("Pacer+")
-  sw.js                      <- shared service worker (must be at root)
-  icon-192.png               <- app icon
-  icon-512.png               <- app icon
+The two builds are ONE codebase and differ by exactly three lines: the PUBLIC_BUILD flag,
+which manifest they load, and the <title>. Same site storage, so a swimmer saved in one
+appears in the other.
 
-Do NOT put these inside a folder in the repo — index.html and sw.js
-must be at the root or the site + offline/install will break.
+  PUBLIC build  = Record Races + Split Predictor + Training Pace
+  PRIVATE build = all of the above plus Course converter, Adjacent events, 50 m splits,
+                  Efficiency tests and Squad targets
 
-(This UPLOAD_README.txt is just a note for you — no need to upload it.)
+*** IF A CHANGE DOESN'T SHOW UP AFTER UPLOADING, IT IS ALMOST ALWAYS THE CACHE. ***
+sw.js serves the cached copy if the network takes longer than 2.5 s, and an installed
+home-screen app can keep the old build for days. Two fixes:
+  1. Bump `const CACHE = 'race-equation-vN'` in sw.js on every upload (the activate handler
+     deletes every cache whose name differs, which is what forces the refresh).
+  2. To check immediately: open in a private/incognito tab, which ignores the cache.
+Current cache name: race-equation-v6
+
+Regenerating the bundle after edits: run sync_deploy.py. It copies the private build, flips
+those three lines to produce index.html, and refuses to run if the two files differ anywhere
+else — so the two URLs can't silently drift apart.
