@@ -1263,7 +1263,7 @@ const state = {
   effForm: { stroke: 'Free', sex: 'M', dist: '50', course: 'LCM', t: 0, acts: {}, cps: {} }, // Stroke Index: goal + logged actuals
   fiftyForm: { stroke: 'Free', sex: 'M', seconds: 0, name: '', best: {}, sr: {}, sc: {}, date: '' }, // 50m LCM split calculator
   fiftyOpen: {}, // 50m tool: which metric rows are expanded for SR/SC input
-  tpForm: { pool: 'SCM', distance: 50, basis: 'best' }, // Training Pace picker (all strokes at once)
+  tpForm: { pool: 'SCM', distance: 50, basis: 'best', stroke: 'Free', q: '' }, // Training Pace picker
   tpShow: false,  // the table appears once "Show Training Table" is pressed
   adjForm: { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 100, seconds: 0, name: '' }, // adjacent-events predictor
   form: {
@@ -1275,6 +1275,8 @@ const state = {
   saved: loadSaved(), // persisted split predictions, searchable by name
   search: '', // roster search query
   savedSid: null, // selected swimmer id on the saved-events menu
+  swimmerView: null, // null | 'races' | 'plans' | 'ranked' — swimmer sub-view
+  swimmerStroke: null, // selected stroke inside a swimmer sub-view
   reviewId: null, // id of a saved entry opened for review/edit (Save becomes Update)
   // --- Race analysis ---
   raceForm: { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 200, name: '',
@@ -1421,6 +1423,7 @@ function parseHytekTopTimes(text) {
   return { cands, scy, malformed };
 }
 function triggerImportCsv() {
+  showToast('File must be in Hy-Tek CSV format');
   const inp = document.createElement('input');
   inp.type = 'file'; inp.accept = '.csv,text/csv,text/plain'; inp.style.display = 'none';
   inp.addEventListener('change', () => {
@@ -1432,12 +1435,33 @@ function triggerImportCsv() {
   document.body.appendChild(inp); inp.click();
   setTimeout(() => inp.remove(), 1000);
 }
-// Split parsed candidates into importable (the app can display) vs no-pacing-table.
+// The swum total of a saved race: its actual time, NOT the (goal) targetSeconds.
+function raceActualTotal(e) {
+  const t = (e && e.times) || {};
+  if (t.total > 0) return t.total;
+  const c = buildRaceComparison(e);
+  return (c && c.actualTotal > 0) ? c.actualTotal : ((e && e.targetSeconds) || 0);
+}
+// Match key for de-duping: same swimmer + event + date + total (0.01 s). No round —
+// a swim already recorded (manually, with notes/SR, or a prior import) shouldn't re-import.
+function raceMatchSig(sid, date, dist, stroke, pool, total) {
+  return sid + '|' + (date || '') + '|' + dist + '|' + stroke + '|' + pool + '|' + (total || 0).toFixed(2);
+}
+// Split candidates into importable / already-recorded / no-pacing-table.
 function prepareImportPreview(text) {
   const parsed = parseHytekTopTimes(text);
-  const importable = [], unsupported = [];
-  parsed.cands.forEach((c) => { (predict(c.stroke, c.sex, c.pool, c.distance, 100) ? importable : unsupported).push(c); });
-  state.importPreview = { importable, unsupported, scy: parsed.scy, malformed: parsed.malformed,
+  const nameToSid = {};
+  state.saved.forEach((s) => { if (s.name && !(s.name in nameToSid)) nameToSid[s.name] = s.sid; });
+  const existing = new Set(state.saved.filter((s) => s.kind === 'race')
+    .map((s) => raceMatchSig(s.sid, s.date, s.distance, s.stroke, s.pool, raceActualTotal(s))));
+  const importable = [], unsupported = [], duplicates = [];
+  parsed.cands.forEach((c) => {
+    if (!predict(c.stroke, c.sex, c.pool, c.distance, 100)) { unsupported.push(c); return; }
+    const sid = nameToSid[c.name];
+    if (sid && existing.has(raceMatchSig(sid, c.date, c.distance, c.stroke, c.pool, c.seconds))) { duplicates.push(c); return; }
+    importable.push(c);
+  });
+  state.importPreview = { importable, unsupported, duplicates, scy: parsed.scy, malformed: parsed.malformed,
     nSwimmers: new Set(importable.map((c) => c.name)).size };
   return state.importPreview;
 }
@@ -1446,21 +1470,22 @@ function doImportTimes() {
   if (!P || !P.importable.length) { showToast('Nothing to import'); return; }
   const nameToSid = {};
   state.saved.forEach((s) => { if (s.name && !(s.name in nameToSid)) nameToSid[s.name] = s.sid; });
-  const sig = (e) => `${e.sid}|${e.date}|${e.distance}|${e.stroke}|${e.pool}|${e.round}|${(e.targetSeconds || 0).toFixed(2)}`;
-  const seen = new Set(state.saved.filter((s) => s.kind === 'race').map(sig));
+  const seen = new Set(state.saved.filter((s) => s.kind === 'race')
+    .map((s) => raceMatchSig(s.sid, s.date, s.distance, s.stroke, s.pool, raceActualTotal(s))));
   let added = 0, dup = 0, i = 0;
   P.importable.forEach((c) => {
     let sid = nameToSid[c.name]; if (!sid) { sid = newSid(); nameToSid[c.name] = sid; }
+    const s = raceMatchSig(sid, c.date, c.distance, c.stroke, c.pool, c.seconds);
+    if (seen.has(s)) { dup++; return; }
     const e = { id: 'rc' + Date.now().toString(36) + (i++).toString(36) + Math.random().toString(36).slice(2, 5),
       kind: 'race', name: c.name, sid, stroke: c.stroke, sex: c.sex, pool: c.pool, distance: c.distance,
       targetSeconds: c.seconds, times: { target: c.seconds, total: c.seconds }, sr: {},
       competition: c.competition, round: c.round, date: c.date, notes: 'Imported (Hy-Tek Top Times)' };
-    if (seen.has(sig(e))) { dup++; return; }
-    seen.add(sig(e)); state.saved.push(e); added++;
+    seen.add(s); state.saved.push(e); added++;
   });
   persistSaved();
   state.importPreview = null;
-  showToast(`Imported ${added} swim${added === 1 ? '' : 's'}${dup ? ` · ${dup} already there` : ''}`);
+  showToast(`Imported ${added} swim${added === 1 ? '' : 's'}${dup ? ` · ${dup} already recorded` : ''}`);
   navigate('roster');
 }
 function renderImportPreview() {
@@ -1476,7 +1501,8 @@ function renderImportPreview() {
     <div class="scrollable px-5 py-4 space-y-4 bg-slate-50">
       <div class="bg-white border border-slate-200 rounded-2xl p-4">
         <div class="text-center mb-3"><div class="hero-time text-3xl leading-none">${P.importable.length}</div><div class="text-xs text-muted mt-1">swims ready · ${P.nSwimmers} swimmer${P.nSwimmers === 1 ? '' : 's'}</div></div>
-        ${(P.scy.length || P.unsupported.length || P.malformed) ? `<div class="space-y-1 border-t border-slate-100 pt-2">
+        ${(P.duplicates && P.duplicates.length || P.scy.length || P.unsupported.length || P.malformed) ? `<div class="space-y-1 border-t border-slate-100 pt-2">
+          ${skipLine(P.duplicates ? P.duplicates.length : 0, 'Already recorded (kept your version)')}
           ${skipLine(P.scy.length, 'Yards swims (not supported yet)')}
           ${skipLine(P.unsupported.length, 'Events with no pacing table')}
           ${skipLine(P.malformed, 'Unreadable rows')}
@@ -2000,6 +2026,13 @@ function render() {
       });
     });
   }
+  const tpq = host.querySelector('[data-tp-search]');
+  if (tpq) {
+    tpq.addEventListener('input', () => {
+      state.tpForm.q = tpq.value; const q = tpq.value.trim();
+      host.querySelectorAll('.tp-row').forEach((row) => { row.style.display = nameMatches(row.getAttribute('data-name') || '', q) ? '' : 'none'; });
+    });
+  }
 }
 
 // ----- Screen 1: Roster -----
@@ -2135,35 +2168,41 @@ function renderSavedSwimmer() {
       </div>
       ${editing ? delBtn(s.id, 'pace plan') : arrow('Splits →')}
     </div>`;
-  const predRows = groupByEvent(plans).map(([k, list]) => {
+  const predGroupsHtml = (arr, forceOpen) => groupByEvent(arr).map(([k, list]) => {
     const [dist, stk, pool] = k.split('|');
     const gk = 'p:' + k;
-    const open = editing || !!state.rgOpen[gk];
+    const open = forceOpen || editing || !!state.rgOpen[gk];
     const latest = list[list.length - 1];
     const sub = list.length + ' plan' + (list.length === 1 ? '' : 's') + ' · latest <span class="mono font-semibold text-slate-700">' + formatTime(latest.targetSeconds) + '</span>';
     return groupHead(gk, dist, stk, pool, sub, open) + (open ? `<div style="padding-left:14px;">${list.slice().reverse().map(planRow).join('')}</div>` : '');
   }).join('');
+  const predRows = predGroupsHtml(plans);
 
+  const racePts = (s) => { const c = buildRaceComparison(s); const t = c ? c.actualTotal : 0; return t > 0 ? waPoints(t, s.stroke, s.distance, s.pool, s.sex) : null; };
   const raceRow = (s) => {
     const c = buildRaceComparison(s);
     const tot = c ? c.actualTotal : 0;
+    const pts = racePts(s);
     return `
     ${rowOpen(s.id)}
       <div class="flex-1 min-w-0">
         <div class="font-semibold text-[15px] mono">${formatTime(tot)}</div>
-        <div class="text-xs text-muted mt-0.5">${meetLabel(s) ? meetLabel(s) + ' · ' : ''}${s.date || ''}</div>
+        <div class="text-xs text-muted mt-0.5">${meetLabel(s) ? meetLabel(s) + ' · ' : ''}${s.date || ''}${pts != null ? ` · <span class="text-faint">${pts} pts</span>` : ''}</div>
       </div>
       ${editing ? delBtn(s.id, 'race') : `<span class="text-slate-300 text-2xl">›</span>`}
     </div>`;
   };
-  const raceRowsHtml = groupByEvent(races).map(([k, list]) => {
+  const raceGroupsHtml = (arr, forceOpen) => groupByEvent(arr).map(([k, list]) => {
     const [dist, stk, pool] = k.split('|');
     const gk = 'r:' + k;
-    const open = editing || !!state.rgOpen[gk];
+    const open = forceOpen || editing || !!state.rgOpen[gk];
     const best = list.reduce((m, s) => { const c = buildRaceComparison(s); return c && c.actualTotal > 0 && (m == null || c.actualTotal < m) ? c.actualTotal : m; }, null);
     const sub = list.length + ' race' + (list.length === 1 ? '' : 's') + (best != null ? ' · best <span class="mono font-semibold text-slate-700">' + formatTime(best) + '</span>' : '');
     return groupHead(gk, dist, stk, pool, sub, open) + (open ? `<div style="padding-left:14px;">${list.slice().reverse().map(raceRow).join('')}</div>` : '');
   }).join('');
+  const raceRowsHtml = raceGroupsHtml(races);
+  const strokesIn = (arr) => [...new Set(arr.map((s) => s.stroke))].sort((a, b) => (strokeOrd[a] ?? 9) - (strokeOrd[b] ?? 9));
+  const strokeTabs = (arr, sel) => { const ss = strokesIn(arr); return ss.length ? `<div class="px-3 pt-3 pb-1 flex flex-wrap gap-1.5 bg-slate-50">${ss.map((st) => `<button class="px-3 py-1.5 rounded-full text-xs font-semibold border transition ${sel === st ? 'bg-cyan-600 text-white border-cyan-600' : 'bg-white text-slate-700 border-slate-200'}" data-sw-stroke="${st}">${st}</button>`).join('')}</div>` : ''; };
 
   const adjRows = adj.slice().reverse().map(s => `
     ${rowOpen(s.id)}
@@ -2216,6 +2255,28 @@ function renderSavedSwimmer() {
     effs.length ? `${effs.length} efficiency` : '',
   ].filter(Boolean).join(' · ') || 'no saved items';
 
+  const swHeader = (title) => `
+    <div class="statusbar"></div>
+    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="sw-view-back">‹</button>
+      <div class="flex-1 min-w-0"><div class="text-lg font-semibold truncate">${name}</div><div class="text-xs text-muted truncate">${title}</div></div>
+    </div>`;
+  if (!editing && state.swimmerView === 'races') {
+    const ss = strokesIn(races); let sel = state.swimmerStroke; if (ss.indexOf(sel) < 0) sel = ss[0];
+    const rows = sel ? raceGroupsHtml(races.filter((s) => s.stroke === sel), true) : '';
+    return `${swHeader('Past races')}${strokeTabs(races, sel)}<div class="scrollable px-3 pb-2 bg-slate-50">${rows || '<div class="p-8 text-center text-sm text-muted">No races.</div>'}</div>`;
+  }
+  if (!editing && state.swimmerView === 'plans') {
+    const ss = strokesIn(plans); let sel = state.swimmerStroke; if (ss.indexOf(sel) < 0) sel = ss[0];
+    const rows = sel ? predGroupsHtml(plans.filter((s) => s.stroke === sel), true) : '';
+    return `${swHeader('Split Predictor plans')}${strokeTabs(plans, sel)}<div class="scrollable px-3 pb-2 bg-slate-50">${rows || '<div class="p-8 text-center text-sm text-muted">No saved plans.</div>'}</div>`;
+  }
+  if (!editing && state.swimmerView === 'ranked') {
+    const list = bestTimesFor(sid, { mode: 'all' }).map(({ r, t }) => ({ r, t, pts: waPoints(t, r.stroke, r.distance, r.pool, r.sex) })).filter((x) => x.pts != null).sort((a, b) => b.pts - a.pts);
+    const rows = list.map((x, i) => `<div class="px-3 py-3 flex items-center gap-3 border-b border-slate-100"><div class="w-6 text-center text-sm font-bold text-slate-400">${i + 1}</div><div class="flex-1 min-w-0"><div class="font-semibold text-[15px]">${x.r.distance} ${x.r.stroke} <span class="text-xs font-normal text-muted">${x.r.pool}</span></div><div class="text-xs text-muted mt-0.5 mono">${formatTime(x.t)}</div></div><div class="text-right"><div class="mono font-bold text-[17px] text-cyan-800">${x.pts}</div><div class="text-[10px] text-faint">pts</div></div></div>`).join('');
+    return `${swHeader('Events by AQUA points')}<div class="scrollable px-3 pb-2 bg-slate-50">${rows || '<div class="p-8 text-center text-sm text-muted">No races with a World Aquatics base time yet.</div>'}</div>`;
+  }
+
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3">
@@ -2233,6 +2294,11 @@ function renderSavedSwimmer() {
     </div>` : `
     ${hasProgress(sid) ? `<div class="px-5 pb-2"><button class="w-full bg-white border border-cyan-300 text-cyan-800 rounded-xl py-2.5 text-sm font-semibold hover:bg-cyan-50 active:scale-[0.99] transition" data-action="progress">📈 Progress over time</button></div>` : ''}
     ${races.length ? `<div class="px-5 pb-2"><button class="w-full bg-white border border-amber-300 text-amber-800 rounded-xl py-2.5 text-sm font-semibold hover:bg-amber-50 active:scale-[0.99] transition" data-action="best-times">🏆 Best times</button></div>` : ''}
+    ${(races.length || plans.length) ? `<div class="px-5 pb-2 grid grid-cols-2 gap-2">
+      ${races.length ? `<button class="bg-white border border-cyan-300 text-cyan-800 rounded-xl py-2.5 text-sm font-semibold hover:bg-cyan-50 active:scale-[0.99] transition" data-action="sw-view-races">View past races</button>` : ''}
+      ${plans.length ? `<button class="bg-white border border-cyan-300 text-cyan-800 rounded-xl py-2.5 text-sm font-semibold hover:bg-cyan-50 active:scale-[0.99] transition" data-action="sw-view-plans">View Split Predictor</button>` : ''}
+    </div>` : ''}
+    ${races.length ? `<div class="px-5 pb-2"><button class="w-full bg-white border border-slate-200 text-slate-700 rounded-xl py-2.5 text-sm font-semibold hover:bg-slate-50 active:scale-[0.99] transition" data-action="sw-view-ranked">🏅 Ranked by AQUA points</button></div>` : ''}
     <div class="px-5 pb-2 flex flex-wrap gap-2">
       <button class="bg-cyan-600 text-white rounded-xl px-3 py-2 text-xs font-semibold hover:bg-cyan-700 active:scale-[0.99] transition" data-action="add-race">+ Record Race</button>
       <button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-event">+ Split Predictor</button>
@@ -2243,8 +2309,8 @@ function renderSavedSwimmer() {
     </div>
     ${compareBtn}`}
     <div class="scrollable px-3 pb-2 bg-slate-50">
-      ${section('Record Races', raceRowsHtml, true)}
-      ${section('Season targets', predRows, true)}
+      ${editing ? section('Record Races', raceRowsHtml, true) : ''}
+      ${editing ? section('Season targets', predRows, true) : ''}
       ${section('Adjacent events', adjRows)}
       ${section('50 m LCM splits', fiftyRows)}
       ${section('Course conversions', convRows)}
@@ -4609,9 +4675,20 @@ function tpCells(segs, stroke, pool, distance, splits) {
   if (pool === 'SCM' && distance === 100 && segs.length === 4 && stroke !== 'IM') {
     return [
       { h: '1st 50', v: segs[0].time + segs[1].time },
+      { h: 'Mid 50', v: segs[1].time + segs[2].time },   // 25->75, excludes the dive
       { h: '2nd 50', v: segs[2].time + segs[3].time },
       { h: '1st 25', v: segs[0].time }, { h: '2nd 25', v: segs[1].time },
       { h: '3rd 25', v: segs[2].time }, { h: '4th 25', v: segs[3].time },
+    ];
+  }
+  // 100 IM (SCM): the three rolling 50 combos coaches call, then the four 25 legs.
+  if (pool === 'SCM' && distance === 100 && stroke === 'IM' && segs.length === 4) {
+    return [
+      { h: 'Fly-Bk', v: segs[0].time + segs[1].time },
+      { h: 'Bk-Br', v: segs[1].time + segs[2].time },    // middle 50, excludes the dive
+      { h: 'Br-Fr', v: segs[2].time + segs[3].time },
+      { h: 'Fly', v: segs[0].time }, { h: 'Back', v: segs[1].time },
+      { h: 'Breast', v: segs[2].time }, { h: 'Free', v: segs[3].time },
     ];
   }
   // Uniform segments get "1st 50 / 2nd 50" style headings; collapsed 400+ rows and IM legs keep
@@ -4723,18 +4800,26 @@ function renderTrainingPace() {
     </div>`;
 
   const rows = state.tpShow ? trainingRows(f.pool, f.distance, f.basis) : null;
+  // Stroke tabs: only the strokes with an event at this pool+distance.
+  const availStrokes = rows ? TP_STROKES.filter((st) => predict(st, 'M', f.pool, f.distance, 100) || predict(st, 'F', f.pool, f.distance, 100)) : [];
+  if (availStrokes.length && availStrokes.indexOf(f.stroke) < 0) f.stroke = availStrokes[0];
+  const oneStroke = availStrokes.length <= 1;
+  const tpQ = (f.q || '').trim();
+  const shownRows = rows ? rows.filter((r) => (oneStroke || r.stroke === f.stroke) && nameMatches(r.name, tpQ)) : null;
   const basisLab = f.basis === 'recent' ? 'most recent' : (f.basis === 'target' ? 'season target' : 'best');
   const TP_ABBR = { Free: 'FR', Back: 'BK', Breast: 'BR', Fly: 'FLY', IM: 'IM' };
   const TP_BLOCK = 'border-t-2 border-slate-400';   // the rule between stroke blocks
   let body = '';
   let anyEstimate = false;
-  const fellBackCount = rows ? rows.filter((r) => r.fellBack).length : 0;
+  const fellBackCount = shownRows ? shownRows.filter((r) => r.fellBack).length : 0;
 
   if (rows && !rows.length) {
     body = `<div class="px-4 py-8 text-center text-sm text-muted">No recorded times for ${f.distance} m ${f.pool} yet.<br><span class="text-xs">Record a race at this distance and the swimmer appears here.</span></div>`;
+  } else if (rows && shownRows && !shownRows.length) {
+    body = `<div class="px-4 py-8 text-center text-sm text-muted">${tpQ ? 'No swimmer matches \u201c' + tpQ + '\u201d.' : 'No ' + f.stroke + ' times for ' + f.distance + ' m ' + f.pool + ' yet.'}</div>`;
   } else if (rows) {
     const byStroke = {};
-    rows.forEach((r) => { (byStroke[r.stroke] = byStroke[r.stroke] || []).push(r); });
+    shownRows.forEach((r) => { (byStroke[r.stroke] = byStroke[r.stroke] || []).push(r); });
     // The four form strokes share a column shape at every event, so they share one header.
     // IM's splits are its stroke legs (a 400 IM is 4 legs, not First/Middle/Last), so if its
     // shape differs it gets its own header row inside the same table.
@@ -4747,7 +4832,7 @@ function renderTrainingPace() {
     const mainHeads = present.length ? shapeOf(present[0]) : (byStroke.IM ? shapeOf('IM') : []);
     const imHeads = byStroke.IM ? shapeOf('IM') : [];
     const nCol = Math.max(mainHeads.length, imHeads.length);
-    anyEstimate = f.pool === 'SCM' && f.distance === 100 && mainHeads.length === 6;
+    anyEstimate = f.pool === 'SCM' && f.distance === 100 && present.length > 0;
     const pad = (arr) => arr.concat(Array(Math.max(0, nCol - arr.length)).fill(null));
 
     const headRow = (heads, cls) => `<tr class="text-[10px] uppercase tracking-wide text-faint ${cls}">
@@ -4758,13 +4843,13 @@ function renderTrainingPace() {
 
     const rowHtml = (r, heads, opensBlock) => {
       const cells = pad(tpCells(r.segs, r.stroke, f.pool, f.distance, r.splits));
-      return `<tr class="${opensBlock ? TP_BLOCK : 'border-t border-slate-100'}">
+      return `<tr class="tp-row ${opensBlock ? TP_BLOCK : 'border-t border-slate-100'}" data-name="${r.name}">
         <td class="py-2 pl-3">
           <div class="font-semibold text-[13px] whitespace-nowrap">${r.name}</div>
           ${r.date ? `<div class="text-[10px] text-faint leading-none mt-0.5">${r.date}</div>` : ''}
         </td>
         <td class="text-right px-2 whitespace-nowrap"><span class="mono text-[13px] font-bold text-cyan-800">${formatTime(r.total)}</span> <span class="text-[10px] font-semibold text-slate-500">(${TP_ABBR[r.stroke] || r.stroke})</span>${r.fellBack ? '<span class="text-[10px] font-semibold text-amber-600">†</span>' : ''}</td>
-        ${cells.map((c, i) => `<td class="text-right px-2 mono text-[13px] ${c && /(^|\s)(1st|2nd|First|Last|Middle) ?(50|100)$/.test(heads[i] || '') ? 'text-slate-900 font-semibold' : 'text-slate-600'}">${c ? formatTime(c.v) : ''}</td>`).join('')}
+        ${cells.map((c, i) => `<td class="text-right px-2 mono text-[13px] ${c && /((1st|2nd|3rd|4th|First|Last|Middle|Mid) ?(50|100)|Fly-Bk|Bk-Br|Br-Fr)$/.test(heads[i] || '') ? 'text-slate-900 font-semibold' : 'text-slate-600'}">${c ? formatTime(c.v) : ''}</td>`).join('')}
       </tr>`;
     };
 
@@ -4780,6 +4865,10 @@ function renderTrainingPace() {
     body = `<div class="overflow-x-auto"><table class="w-full tp-table"><thead>${headRow(mainHeads, 'border-b-2 border-slate-400')}</thead><tbody>${trs}</tbody></table></div>`;
   }
 
+  const strokeChips = (rows && rows.length && !oneStroke)
+    ? availStrokes.map((st) => `<button class="${chip(f.stroke === st)}" data-tp-stroke="${st}">${st}</button>`).join(' ') : '';
+  const tpSearch = (rows && rows.length)
+    ? `<input type="text" data-tp-search value="${f.q || ''}" placeholder="Search swimmer" class="w-full mt-2 bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-cyan-300 placeholder:text-muted" />` : '';
   const sheet = rows && rows.length ? `
     <div id="tp-print" class="bg-white">
       <div class="px-3 pt-3 pb-1">
@@ -4805,6 +4894,7 @@ function renderTrainingPace() {
         ${group('Pace from', [['best', 'Best time'], ['recent', 'Most recent'], ['target', 'Target']], 'basis')}
         <button class="w-full bg-cyan-600 text-white font-semibold rounded-xl py-3.5 text-sm hover:bg-cyan-700 active:scale-[0.99] transition shadow-lg shadow-cyan-600/20" data-action="tp-show">Show Training Table</button>
       </div>
+      ${rows && rows.length ? `<div class="mx-3 mt-3 no-print">${strokeChips ? `<div class="flex flex-wrap gap-1.5">${strokeChips}</div>` : ''}${tpSearch}</div>` : ''}
       ${rows ? `<div class="m-3 bg-white rounded-2xl border border-slate-200 overflow-hidden">${sheet}</div>` : ''}
     </div>`;
 }
@@ -5267,6 +5357,7 @@ document.addEventListener('click', (e) => {
     const svn = e.target.closest('[data-savedsid]');
     if (svn) {
       state.savedSid = svn.getAttribute('data-savedsid');
+      state.swimmerView = null; state.swimmerStroke = null;
       navigate('saved-swimmer');
       return;
     }
@@ -5294,6 +5385,10 @@ document.addEventListener('click', (e) => {
       state.tpForm[k] = (k === 'distance') ? parseInt(v, 10) : v;
       render(); return;
     }
+    const tps = e.target.closest('[data-tp-stroke]');
+    if (tps) { state.tpForm.stroke = tps.getAttribute('data-tp-stroke'); render(); return; }
+    const sws = e.target.closest('[data-sw-stroke]');
+    if (sws) { state.swimmerStroke = sws.getAttribute('data-sw-stroke'); render(); return; }
     const sv = e.target.closest('[data-saved]');
     if (sv) {
       const entry = state.saved.find(x => x.id === sv.getAttribute('data-saved'));
@@ -5588,6 +5683,10 @@ function handleAction(action, el) {
     case 'adjacent': navigate('adjacent'); break;
     case 'trends': navigate('trends'); break;
     case 'progress': navigate('progress'); break;
+    case 'sw-view-races': state.swimmerView = 'races'; state.swimmerStroke = null; render(); break;
+    case 'sw-view-plans': state.swimmerView = 'plans'; state.swimmerStroke = null; render(); break;
+    case 'sw-view-ranked': state.swimmerView = 'ranked'; render(); break;
+    case 'sw-view-back': state.swimmerView = null; render(); break;
     case 'best-times': state.btFilter = { mode: 'all', year: null }; state.btYearOpen = false; navigate('best-times'); break;
     case 'save-conv': {
       const c = state.convForm;
