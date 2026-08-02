@@ -1583,7 +1583,7 @@ function deleteSwimmer(sid) {
 
 const screenLabels = {
   roster: { num: 1, label: 'Roster' },
-  'quick-calc': { num: 2, label: 'Split Predictor' },
+  'quick-calc': { num: 2, label: 'Set target time' },
   'predicted-splits': { num: 3, label: 'Predicted splits' },
   'race-analysis': { num: 4, label: 'Race analysis' },
   'squad-targets': { num: 5, label: 'Squad targets' },
@@ -1597,7 +1597,7 @@ function renderJumper() {
   if (!host) return; // jumper rail removed in the clean coach build
   const items = [
     ['roster', 'Roster'],
-    ['quick-calc', 'Split Predictor'],
+    ['quick-calc', 'Set target time'],
     ['predicted-splits', 'Predicted splits'],
     ['race-analysis', 'Race analysis'],
     ['squad-targets', 'Squad targets'],
@@ -2077,18 +2077,24 @@ function renderRoster() {
       <div class="text-[28px] font-bold tracking-tight leading-none text-center">Swim Book</div>
     </div>
     <div class="px-5 pb-2 grid grid-cols-2 gap-2">
+      <button class="bg-gradient-to-br from-cyan-500 to-cyan-700 rounded-2xl px-4 py-4 text-center hover:from-cyan-600 hover:to-cyan-800 active:scale-[0.99] transition shadow-lg shadow-cyan-600/25" data-action="training-pace">
+        <div class="font-bold text-white text-[15px]">Training Pace</div>
+      </button>
       <button class="bg-gradient-to-br from-cyan-500 to-cyan-700 rounded-2xl px-4 py-4 text-center hover:from-cyan-600 hover:to-cyan-800 active:scale-[0.99] transition shadow-lg shadow-cyan-600/25" data-action="new-race">
         <div class="font-bold text-white text-[15px]">Record Races</div>
       </button>
-      <button class="bg-gradient-to-br from-cyan-500 to-cyan-700 rounded-2xl px-4 py-4 text-center hover:from-cyan-600 hover:to-cyan-800 active:scale-[0.99] transition shadow-lg shadow-cyan-600/25" data-action="training-pace">
-        <div class="font-bold text-white text-[15px]">Training Pace</div>
+    </div>
+    <div class="px-5 pb-2">
+      <button class="w-full bg-white border border-cyan-300 rounded-2xl px-4 py-3.5 text-left hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm flex items-center justify-between gap-3" data-action="import-times-csv">
+        <div><div class="font-bold text-slate-800 text-[15px]">Import times</div><div class="text-[11px] text-muted mt-0.5 leading-snug">Load a meet CSV \u2014 updates best times</div></div>
+        <span class="text-cyan-600 text-xl leading-none flex-shrink-0">\u2925</span>
       </button>
     </div>
     <div class="px-5 pb-2">
       <button class="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3.5 text-left hover:border-cyan-300 hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm flex items-center justify-between gap-3" data-action="other-tools">
         <div>
           <div class="font-bold text-slate-800 text-[15px]">Other tools</div>
-          <div class="text-[11px] text-muted mt-0.5 leading-snug">Split Predictor, course converter, adjacent events</div>
+          <div class="text-[11px] text-muted mt-0.5 leading-snug">Set target time, course converter, adjacent events</div>
         </div>
         <span class="text-slate-300 text-2xl leading-none flex-shrink-0">›</span>
       </button>
@@ -2110,8 +2116,6 @@ function renderRoster() {
       <button class="font-semibold hover:text-cyan-700 transition" data-action="backup-json">Backup</button>
       <span class="text-slate-200">·</span>
       <button class="font-semibold hover:text-cyan-700 transition" data-action="import-json">Import</button>
-      <span class="text-slate-200">·</span>
-      <button class="font-semibold hover:text-cyan-700 transition" data-action="import-times-csv">Import times</button>
     </div>` : ''}
     <div class="scrollable px-3 pb-4">
       ${hasSaved ? `<div>${savedRows}</div>` : emptyState}
@@ -2263,13 +2267,13 @@ function renderSavedSwimmer() {
     </div>`;
   if (!editing && state.swimmerView === 'races') {
     const ss = strokesIn(races); let sel = state.swimmerStroke; if (ss.indexOf(sel) < 0) sel = ss[0];
-    const rows = sel ? raceGroupsHtml(races.filter((s) => s.stroke === sel), true) : '';
+    const rows = sel ? raceGroupsHtml(races.filter((s) => s.stroke === sel)) : '';
     return `${swHeader('Past races')}${strokeTabs(races, sel)}<div class="scrollable px-3 pb-2 bg-slate-50">${rows || '<div class="p-8 text-center text-sm text-muted">No races.</div>'}</div>`;
   }
   if (!editing && state.swimmerView === 'plans') {
     const ss = strokesIn(plans); let sel = state.swimmerStroke; if (ss.indexOf(sel) < 0) sel = ss[0];
     const rows = sel ? predGroupsHtml(plans.filter((s) => s.stroke === sel), true) : '';
-    return `${swHeader('Split Predictor plans')}${strokeTabs(plans, sel)}<div class="scrollable px-3 pb-2 bg-slate-50">${rows || '<div class="p-8 text-center text-sm text-muted">No saved plans.</div>'}</div>`;
+    return `${swHeader('Set target time plans')}${strokeTabs(plans, sel)}<div class="scrollable px-3 pb-2 bg-slate-50">${rows || '<div class="p-8 text-center text-sm text-muted">No saved plans.</div>'}</div>`;
   }
   if (!editing && state.swimmerView === 'ranked') {
     const list = bestTimesFor(sid, { mode: 'all' }).map(({ r, t }) => ({ r, t, pts: waPoints(t, r.stroke, r.distance, r.pool, r.sex) })).filter((x) => x.pts != null).sort((a, b) => b.pts - a.pts);
@@ -2296,12 +2300,12 @@ function renderSavedSwimmer() {
     ${races.length ? `<div class="px-5 pb-2"><button class="w-full bg-white border border-amber-300 text-amber-800 rounded-xl py-2.5 text-sm font-semibold hover:bg-amber-50 active:scale-[0.99] transition" data-action="best-times">🏆 Best times</button></div>` : ''}
     ${(races.length || plans.length) ? `<div class="px-5 pb-2 grid grid-cols-2 gap-2">
       ${races.length ? `<button class="bg-white border border-cyan-300 text-cyan-800 rounded-xl py-2.5 text-sm font-semibold hover:bg-cyan-50 active:scale-[0.99] transition" data-action="sw-view-races">View past races</button>` : ''}
-      ${plans.length ? `<button class="bg-white border border-cyan-300 text-cyan-800 rounded-xl py-2.5 text-sm font-semibold hover:bg-cyan-50 active:scale-[0.99] transition" data-action="sw-view-plans">View Split Predictor</button>` : ''}
+      ${plans.length ? `<button class="bg-white border border-cyan-300 text-cyan-800 rounded-xl py-2.5 text-sm font-semibold hover:bg-cyan-50 active:scale-[0.99] transition" data-action="sw-view-plans">View Set target time</button>` : ''}
     </div>` : ''}
     ${races.length ? `<div class="px-5 pb-2"><button class="w-full bg-white border border-slate-200 text-slate-700 rounded-xl py-2.5 text-sm font-semibold hover:bg-slate-50 active:scale-[0.99] transition" data-action="sw-view-ranked">🏅 Ranked by AQUA points</button></div>` : ''}
     <div class="px-5 pb-2 flex flex-wrap gap-2">
       <button class="bg-cyan-600 text-white rounded-xl px-3 py-2 text-xs font-semibold hover:bg-cyan-700 active:scale-[0.99] transition" data-action="add-race">+ Record Race</button>
-      <button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-event">+ Split Predictor</button>
+      <button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-event">+ Set target time</button>
       ${PUBLIC_BUILD ? '' : `<button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-adjacent">+ Adjacent</button>
       <button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-fifty">+ 50 m</button>
       <button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-convert">+ Conversion</button>
@@ -3615,7 +3619,7 @@ function renderQuickCalc() {
     <div class="px-5 pt-3 pb-3 flex items-center gap-3">
       <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0">
-        <div class="text-lg font-semibold">Split Predictor</div>
+        <div class="text-lg font-semibold">Set target time</div>
         ${ctxLine ? `<div class="text-xs text-muted truncate">${ctxLine}</div>` : ''}
       </div>
     </div>
@@ -3848,7 +3852,7 @@ function renderPredictedSplits() {
       <div class="statusbar"></div>
       <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
         <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
-        <div class="text-lg font-semibold">Split Predictor</div>
+        <div class="text-lg font-semibold">Set target time</div>
       </div>
       <div class="p-8 text-center">
         <div class="text-slate-700 font-semibold text-sm mb-1">No data for this combination</div>
@@ -4030,7 +4034,7 @@ function renderPredictedSplits() {
     <div class="px-5 pt-3 pb-2 flex items-center gap-3 bg-white">
       <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="home" aria-label="Done — back to the main page">‹</button>
       <div class="flex-1 min-w-0">
-        <div class="text-base font-semibold truncate">${state.swimmer ? state.swimmer.name : (state.form.name || 'Split Predictor')}</div>
+        <div class="text-base font-semibold truncate">${state.swimmer ? state.swimmer.name : (state.form.name || 'Set target time')}</div>
         <div class="text-xs text-muted truncate">${r.distance} ${r.stroke} · ${r.pool} · ${r.sex === 'M' ? 'Men' : 'Women'}</div>
       </div>
       <div class="flex items-center gap-1.5 flex-shrink-0">
@@ -4529,7 +4533,7 @@ function renderOtherTools() {
     </div>
     <div class="scrollable bg-slate-50">
       <div class="px-5 py-4 space-y-2">
-        ${tool('quick-calc', 'Split Predictor', 'Split targets for a time you type', '⏱')}
+        ${tool('quick-calc', 'Set target time', 'Split targets for a target time', '⏱')}
         ${tool('converter', 'Course converter', 'Convert a time between SCY, SCM &amp; LCM', '⇄')}
         ${tool('adjacent', 'Adjacent events', 'Predict the event up &amp; down from your main', '↕')}
         ${PUBLIC_BUILD ? '' : `
@@ -5101,23 +5105,40 @@ function renderRaceAnalysis() {
   const cmpBest = cmpPool.reduce((m, x) => (!m || x.c.actualTotal < m.c.actualTotal) ? x : m, null);
   const cmpLast = cmpPool.slice().sort((a, b) =>
     String(b.s.date || '').localeCompare(String(a.s.date || '')) || String(b.s.id).localeCompare(String(a.s.id)))[0] || null;
-  const cmpChoice = state.cmpMode === 'best' ? cmpBest : (state.cmpMode === 'last' ? cmpLast : null);
+  // Saved target (Set-target-time plan) for this exact event — prefer the starred one.
+  const cmpTargetList = state.saved.filter(s => (!s.kind || s.kind === 'plan') && race.sid && s.sid === race.sid
+    && s.distance === race.distance && s.stroke === race.stroke && s.pool === race.pool && s.targetSeconds > 0);
+  const cmpTarget = cmpTargetList.find(s => s.isTarget) || cmpTargetList[cmpTargetList.length - 1] || null;
+  // Predicted per-split times for a total (mirrors predAt) — the target's column is predicted.
+  const predForTotal = (seconds) => {
+    const pt2 = predict(race.stroke, race.sex, race.pool, race.distance, seconds);
+    if (!pt2) return null;
+    return defs.map(def => {
+      if (def.kind === 'total') return seconds;
+      if (def.kind === 'mid') return pt2.splits[1];
+      if (def.kind === 'hundo') return pt2.splits[2 * def.idx] + pt2.splits[2 * def.idx + 1];
+      const i = def.idxFromEnd != null ? pt2.splits.length - 1 - def.idxFromEnd : def.idx;
+      return pt2.splits[i];
+    });
+  };
   const cmpBtn = (mode, label, avail) => avail
     ? `<button class="flex-1 rounded-xl px-3 py-2.5 text-xs font-semibold transition ${state.cmpMode === mode ? 'bg-cyan-600 text-white shadow' : 'bg-white border border-slate-200 text-slate-700 hover:border-cyan-300 hover:bg-cyan-50/40'}" data-action="cmp-mode" data-mode="${mode}">${label}</button>`
     : '';
-  const cmpButtons = (cmpBest || cmpLast)
-    ? `<div class="flex gap-2">${cmpBtn('best', 'Compare to best time', cmpBest)}${cmpBtn('last', 'Compare to last race', cmpLast)}</div>`
+  const cmpButtons = (cmpBest || cmpLast || cmpTarget)
+    ? `<div class="flex gap-2 flex-wrap">${cmpBtn('best', 'Compare to best time', cmpBest)}${cmpBtn('last', 'Compare to last race', cmpLast)}${cmpBtn('target', 'Compare to target time', cmpTarget)}</div>`
     : '';
 
   let bestCard = '';
-  if (cmpChoice) {
-    const other = cmpChoice.s, oc = cmpChoice.c;
-    const otherT = oc.actualTotal;
+  let ref = null;
+  if (state.cmpMode === 'best' && cmpBest) ref = { otherT: cmpBest.c.actualTotal, otherRows: cmpBest.c.rows.map(r => ({ label: r.label, actual: r.actual })), entry: cmpBest.s, col: 'Best', head: 'vs their best' };
+  else if (state.cmpMode === 'last' && cmpLast) ref = { otherT: cmpLast.c.actualTotal, otherRows: cmpLast.c.rows.map(r => ({ label: r.label, actual: r.actual })), entry: cmpLast.s, col: 'Last', head: 'vs last race' };
+  else if (state.cmpMode === 'target' && cmpTarget) { const tp = predForTotal(cmpTarget.targetSeconds); ref = { otherT: cmpTarget.targetSeconds, otherRows: tp ? defs.map((def, i) => ({ label: def.label, actual: tp[i] })) : c.rows.map(r => ({ label: r.label, actual: null })), entry: cmpTarget, col: 'Target', head: 'vs target', predicted: true }; }
+  if (ref) {
+    const other = ref.entry, otherT = ref.otherT;
     const gap = c.actualTotal - otherT;
     const gc = gap > 0.005 ? 'text-rose-600' : 'text-emerald-700';
-    const isBestMode = state.cmpMode === 'best';
-    const beatsBest = isBestMode && c.actualTotal < otherT;
-    const rows = oc.rows.map((br, i) => {
+    const beats = state.cmpMode === 'best' && c.actualTotal < otherT;
+    const rows = ref.otherRows.map((br, i) => {
       const cur = c.rows[i];
       if (!cur) return '';
       const dd = (cur.actual != null && br.actual != null) ? cur.actual - br.actual : null;
@@ -5131,14 +5152,14 @@ function renderRaceAnalysis() {
     }).join('');
     bestCard = `<div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">
       <div class="px-3 pt-3 pb-1 flex items-baseline justify-between gap-2">
-        <span class="label-cap text-muted">${isBestMode ? 'vs their best' : 'vs last race'}</span>
-        <span class="text-[11px] text-muted">${formatTime(otherT)}${other.date ? ' · ' + other.date : ''}${meetLabel(other) ? ' · ' + meetLabel(other) : ''}</span>
+        <span class="label-cap text-muted">${ref.head}</span>
+        <span class="text-[11px] text-muted">${formatTime(otherT)}${ref.predicted ? ' · target' : (other.date ? ' · ' + other.date : '') + (meetLabel(other) ? ' · ' + meetLabel(other) : '')}</span>
       </div>
-      ${beatsBest ? `<div class="px-3 pb-2"><span class="text-xs font-semibold text-emerald-700">New best for this event — ${Math.abs(gap).toFixed(2)}s faster.</span></div>`
-                  : `<div class="px-3 pb-2"><span class="text-xs ${gc} font-semibold">${gap >= 0 ? '+' : ''}${gap.toFixed(2)}s vs ${isBestMode ? 'their best' : 'that race'}</span></div>`}
-      <div style="display:grid;grid-template-columns:minmax(0,1fr) 4rem 4rem 3rem;gap:4px;align-items:center;" class="px-3 pb-1"><span class="label-cap text-muted">Split</span><span class="label-cap text-muted" style="text-align:right;">${isBestMode ? 'Best' : 'Last'}</span><span class="label-cap text-muted" style="text-align:right;">This</span><span class="label-cap text-muted" style="text-align:right;">Δ</span></div>
+      ${beats ? `<div class="px-3 pb-2"><span class="text-xs font-semibold text-emerald-700">New best for this event — ${Math.abs(gap).toFixed(2)}s faster.</span></div>`
+              : `<div class="px-3 pb-2"><span class="text-xs ${gc} font-semibold">${gap >= 0 ? '+' : ''}${gap.toFixed(2)}s ${ref.head}${ref.predicted ? ' (predicted splits)' : ''}</span></div>`}
+      <div style="display:grid;grid-template-columns:minmax(0,1fr) 4rem 4rem 3rem;gap:4px;align-items:center;" class="px-3 pb-1"><span class="label-cap text-muted">Split</span><span class="label-cap text-muted" style="text-align:right;">${ref.col}</span><span class="label-cap text-muted" style="text-align:right;">This</span><span class="label-cap text-muted" style="text-align:right;">Δ</span></div>
       ${rows}
-      ${(other.notes || '').trim() ? `<div class="px-3 py-2.5 border-t border-slate-100"><div class="label-cap text-muted mb-1">${isBestMode ? 'Best-race notes' : 'Last-race notes'}</div><div class="text-xs text-slate-600 leading-relaxed" style="white-space:pre-wrap;">${(other.notes || '').replace(/</g, '&lt;')}</div></div>` : ''}
+      ${(other.notes || '').trim() ? `<div class="px-3 py-2.5 border-t border-slate-100"><div class="label-cap text-muted mb-1">${ref.col} notes</div><div class="text-xs text-slate-600 leading-relaxed" style="white-space:pre-wrap;">${(other.notes || '').replace(/</g, '&lt;')}</div></div>` : ''}
     </div>`;
   }
   return `
