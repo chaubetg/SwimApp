@@ -54,17 +54,27 @@
       to { opacity: 1; transform: translateY(0); }
     }
     .scrollable { overflow-y: auto; flex: 1; }
-    /* Training Pace print sheet: paper gets the table only, at full width, no app chrome. */
     @media print {
-      body * { visibility: hidden; }
-      #tp-print, #tp-print * { visibility: visible; }
-      #tp-print { position: absolute; left: 0; top: 0; width: 100%; padding: 0; }
-      #tp-print table { width: 100%; border-collapse: collapse; }
-      #tp-print th, #tp-print td { padding: 3px 6px; }
-      #tp-print tr { break-inside: avoid; page-break-inside: avoid; }
-      #tp-print thead { display: table-header-group; }   /* repeat the header on every page */
-      .no-print, .statusbar, #jumper { display: none !important; }
-      .scrollable { overflow: visible !important; }
+      @page { margin: 12mm; }
+      /* General page print (Download / Print on any times screen): drop app chrome,
+         flatten the phone frame, let the scroll area print at full length. */
+      .no-print, .statusbar, #jumper, .wordmark, #toast-host { display: none !important; }
+      [data-action="back"], [data-action="home"], [data-action="sw-view-back"],
+      [data-action="print-page"], [data-action="edit-race"], [data-action="edit-plan"],
+      [data-action="cmp-mode"] { display: none !important; }
+      .stage { display: block !important; padding: 0 !important; margin: 0 !important; }
+      .phone { width: 100% !important; height: auto !important; min-height: 0 !important;
+        border: 0 !important; border-radius: 0 !important; box-shadow: none !important; overflow: visible !important; }
+      .screen { height: auto !important; overflow: visible !important; animation: none !important; }
+      .scrollable { overflow: visible !important; max-height: none !important; height: auto !important; }
+      /* Training Pace dedicated sheet: only the table, when body.print-tp is set. */
+      body.print-tp * { visibility: hidden; }
+      body.print-tp #tp-print, body.print-tp #tp-print * { visibility: visible; }
+      body.print-tp #tp-print { position: absolute; left: 0; top: 0; width: 100%; padding: 0; }
+      body.print-tp #tp-print table { width: 100%; border-collapse: collapse; }
+      body.print-tp #tp-print th, body.print-tp #tp-print td { padding: 3px 6px; }
+      body.print-tp #tp-print tr { break-inside: avoid; page-break-inside: avoid; }
+      body.print-tp #tp-print thead { display: table-header-group; }
     }
     .scrollable::-webkit-scrollbar { display: none; }
     .statusbar { height: 44px; flex-shrink: 0; }
@@ -1044,6 +1054,9 @@ function migrateSids(arr) {
 }
 function entriesOf(sid) { return state.saved.filter(s => s.sid === sid); }
 function swimmerName(sid) { const e = entriesOf(sid); return e.length ? e[e.length - 1].name : ''; }
+// Team rides on the swimmer's entries so it survives backups; read the latest non-empty.
+function swimmerTeam(sid) { const e = entriesOf(sid); for (let i = e.length - 1; i >= 0; i--) { const t = (e[i].team || '').trim(); if (t) return t; } return ''; }
+function setSwimmerTeam(sid, team) { const t = (team || '').trim(); state.saved.forEach(s => { if (s.sid === sid) s.team = t; }); persistSaved(); }
 // Which swimmer a save belongs to: an explicit id (from a card or picked suggestion) wins; otherwise
 // attach to an existing swimmer if exactly one has this name; otherwise it's a brand-new swimmer.
 // (To keep two same-named swimmers separate, rename one — they then hold different ids.)
@@ -1312,6 +1325,12 @@ function back() {
   navigate(state.history.pop(), { skipHistory: true });
 }
 
+// Download / Print affordance for times screens. window.print() -> the browser
+// dialog's "Save as PDF" is the download; the @media print sheet styles the page.
+function printBtn() {
+  return `<button class="no-print w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-xl leading-none hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="print-page" aria-label="Download or print this page" title="Download / Print">\u2913</button>`;
+}
+
 function showToast(msg) {
   const host = document.getElementById('toast-host');
   const t = document.createElement('div');
@@ -1417,7 +1436,7 @@ function parseHytekTopTimes(text) {
     if (!mm || !sec || !dist || !stroke || !pool) { malformed++; return; }
     const c = { name: mm[1].trim(), sex: mm[3] === 'W' ? 'F' : mm[3], seconds: sec,
       pool, distance: dist, stroke, round: HYTEK_ROUND[(r[19] || '').trim()] || 'Final',
-      date: (r[25] || '').trim(), competition: (r[26] || '').trim() };
+      date: (r[25] || '').trim(), team: (r[13] || '').trim(), competition: (r[26] || '').trim() };
     (pool === 'SCY' ? scy : cands).push(c);
   });
   return { cands, scy, malformed };
@@ -1480,7 +1499,7 @@ function doImportTimes() {
     const e = { id: 'rc' + Date.now().toString(36) + (i++).toString(36) + Math.random().toString(36).slice(2, 5),
       kind: 'race', name: c.name, sid, stroke: c.stroke, sex: c.sex, pool: c.pool, distance: c.distance,
       targetSeconds: c.seconds, times: { target: c.seconds, total: c.seconds }, sr: {},
-      competition: c.competition, round: c.round, date: c.date, notes: 'Imported (Hy-Tek Top Times)' };
+      competition: c.competition, round: c.round, date: c.date, team: c.team || '', notes: 'Imported (Hy-Tek Top Times)' };
     seen.add(s); state.saved.push(e); added++;
   });
   persistSaved();
@@ -1488,6 +1507,85 @@ function doImportTimes() {
   showToast(`Imported ${added} swim${added === 1 ? '' : 's'}${dup ? ` · ${dup} already recorded` : ''}`);
   navigate('roster');
 }
+// --- Import chooser + per-source guides -------------------------------------
+// Fake-name examples of a Hy-Tek Team Manager "Individual Top Times" CSV export —
+// shown so a coach can eyeball their file against the expected shape. Real files
+// repeat the report metadata on every row; the swim data sits at fixed columns
+// (name+sex, time, course L/S/Y, round, distance, stroke, date, meet).
+const IMPORT_SEASON_SAMPLE = [
+  '"Licensed To: Your University","HY-TEK\'s TEAM MANAGER 8.0   2026-04-06  Page 1",,,"Individual Top Times","Times since: 06-Sep-25",,"Number of Top Times: 2","Time","P/F/S",,"Event","Jane Doe  (18)  F   (Yr: 1)","YT",,"   28.14","L",,,"F",,,"50","Free",,"2026-03-15","Spring Invitational"',
+  '"Licensed To: Your University","HY-TEK\'s TEAM MANAGER 8.0   2026-04-06  Page 1",,,"Individual Top Times","Times since: 06-Sep-25",,"Number of Top Times: 2","Time","P/F/S",,"Event","John Roe  (20)  M   (Yr: 3)","YT",,"   54.96","S",,,"F",,,"100","Free",,"2026-02-07","Winter Championships"',
+];
+const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+function renderImportMenu() {
+  const card = (action, title, sub, badge) => `
+    <button class="w-full bg-white border border-slate-200 rounded-2xl px-4 py-4 text-left hover:border-cyan-300 hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm flex items-center justify-between gap-3" data-action="${action}">
+      <div class="min-w-0">
+        <div class="font-bold text-slate-800 text-[15px] flex items-center gap-2">${title}${badge ? `<span class="text-[10px] font-semibold uppercase tracking-wide text-amber-700 bg-amber-100 rounded-full px-2 py-0.5">${badge}</span>` : ''}</div>
+        <div class="text-[12px] text-muted mt-0.5 leading-snug">${sub}</div>
+      </div>
+      <span class="text-cyan-600 text-xl leading-none flex-shrink-0">›</span>
+    </button>`;
+  return `
+    <div class="statusbar"></div>
+    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <div class="flex-1 min-w-0"><div class="text-lg font-semibold">Import times</div><div class="text-xs text-muted">Where are the times coming from?</div></div>
+    </div>
+    <div class="scrollable px-5 py-4 space-y-3 bg-slate-50">
+      ${card('import-menu-season', 'Import from a season', 'A whole season of top times from Hy-Tek Team Manager — total times only. Feeds Best Times and Training Pace.')}
+      ${card('import-menu-meet', 'Import from a swim meet', 'A single meet’s results, with splits where available.', 'Soon')}
+    </div>`;
+}
+
+function renderImportSeason() {
+  const sample = IMPORT_SEASON_SAMPLE.map((l) => esc(l)).join('\n\n');
+  const field = (k, v) => `<div class="flex justify-between gap-3 py-1.5 border-b border-slate-100 last:border-0"><span class="text-[12px] text-muted">${k}</span><span class="text-[12px] font-semibold text-slate-700 text-right">${v}</span></div>`;
+  return `
+    <div class="statusbar"></div>
+    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <div class="flex-1 min-w-0"><div class="text-lg font-semibold">Import from a season</div><div class="text-xs text-muted">Hy-Tek Team Manager · total times only</div></div>
+    </div>
+    <div class="scrollable px-5 py-4 space-y-4 bg-slate-50">
+      <div class="bg-white border border-slate-200 rounded-2xl p-4">
+        <div class="label-cap text-muted mb-1">Where it comes from</div>
+        ${field('Software', 'HY-TEK’s Team Manager 8.0')}
+        ${field('Report', 'Individual Top Times')}
+        ${field('File type', 'CSV (.csv)')}
+      </div>
+      <div class="bg-white border border-slate-200 rounded-2xl p-4">
+        <div class="label-cap text-muted mb-2">What the file looks like</div>
+        <div class="text-[11px] text-muted leading-snug mb-2">Header row + one swim per line (example uses made-up names). Each line carries the swimmer, time, course (L LCM / S SCM / Y yards), distance, stroke, date and meet.</div>
+        <pre class="mono text-[10px] leading-relaxed text-slate-700 bg-slate-50 border border-slate-100 rounded-xl p-2.5" style="overflow-x:auto;white-space:pre;">${sample}</pre>
+        <div class="text-[11px] text-muted leading-snug mt-2">We read: <span class="font-semibold text-slate-600">Name (age) sex · time · course · round · distance · stroke · date · meet</span>. Yards swims are skipped for now.</div>
+      </div>
+      <div class="bg-white border border-dashed border-slate-300 rounded-2xl p-4">
+        <div class="label-cap text-muted mb-1">How to export it</div>
+        <div class="text-[12px] text-slate-500 leading-snug">Step-by-step export instructions coming soon.</div>
+      </div>
+      <button class="w-full bg-cyan-600 text-white font-semibold rounded-xl py-4 text-base hover:bg-cyan-700 active:scale-[0.98] transition shadow-lg shadow-cyan-600/20" data-action="import-season-pick">Choose CSV file</button>
+      <button class="w-full text-sm text-muted py-2" data-action="back">Cancel</button>
+    </div>`;
+}
+
+function renderImportMeet() {
+  return `
+    <div class="statusbar"></div>
+    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <div class="flex-1 min-w-0"><div class="text-lg font-semibold">Import from a swim meet</div><div class="text-xs text-muted">Coming soon</div></div>
+    </div>
+    <div class="scrollable px-5 py-4 space-y-4 bg-slate-50">
+      <div class="bg-white border border-slate-200 rounded-2xl p-4">
+        <div class="text-[13px] text-slate-600 leading-relaxed">This will import the results of a single meet — including per-lap splits where the results file has them — so a race comes in with its full shape, not just the total time.</div>
+        <div class="text-[12px] text-muted leading-snug mt-3">We’ll add the file format and steps here once we’ve mapped out the meet-results export.</div>
+      </div>
+      <button class="w-full text-sm text-muted py-2" data-action="back">Back</button>
+    </div>`;
+}
+
 function renderImportPreview() {
   const P = state.importPreview;
   if (!P) return renderRoster();
@@ -1647,6 +1745,9 @@ function render() {
     case 'progress': html = renderProgress(); break;
     case 'progress-group': html = renderProgressGroup(); break;
     case 'best-times': html = renderBestTimes(); break;
+    case 'import-menu': html = renderImportMenu(); break;
+    case 'import-season': html = renderImportSeason(); break;
+    case 'import-meet': html = renderImportMeet(); break;
     case 'import-preview': html = renderImportPreview(); break;
     case 'training-pace': html = renderTrainingPace(); break;
     case 'other-tools': html = renderOtherTools(); break;
@@ -2038,14 +2139,21 @@ function render() {
 // ----- Screen 1: Roster -----
 function renderRoster() {
   // One row per swimmer (by stable id, so same-name swimmers don't merge), alphabetical.
-  const seen = new Set(); const orderedSids = [];
-  state.saved.forEach(s => { if (s.sid && !seen.has(s.sid)) { seen.add(s.sid); orderedSids.push(s.sid); } });
+  const seen = new Set(); const allSids = [];
+  state.saved.forEach(s => { if (s.sid && !seen.has(s.sid)) { seen.add(s.sid); allSids.push(s.sid); } });
   // Names are stored first-name-first, so a plain locale compare IS "by first name".
-  orderedSids.sort((a, b) => (swimmerName(a) || '').localeCompare(swimmerName(b) || '', undefined, { sensitivity: 'base' }));
+  allSids.sort((a, b) => (swimmerName(a) || '').localeCompare(swimmerName(b) || '', undefined, { sensitivity: 'base' }));
+  // Team filter (team comes from a Hy-Tek import or is set on the swimmer page).
+  const teamList = [...new Set(allSids.map(swimmerTeam).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const anyNoTeam = allSids.some(sid => !swimmerTeam(sid));
+  let tf = state.teamFilter || 'all';
+  if (tf !== 'all' && tf !== '__none' && teamList.indexOf(tf) < 0) tf = 'all';
+  const orderedSids = allSids.filter(sid => tf === 'all' ? true : (tf === '__none' ? !swimmerTeam(sid) : swimmerTeam(sid) === tf));
   const editing = state.editing;
   const savedRows = orderedSids.map(sid => {
     const evs = state.saved.filter(s => s.sid === sid);
     const name = evs[evs.length - 1].name || '';
+    const team = swimmerTeam(sid);
     const nm = name.replace(/"/g, '&quot;');
     const navAttrs = editing ? '' : `data-savedsid="${sid}" data-name="${nm}"`;
     const trailing = editing
@@ -2056,7 +2164,7 @@ function renderRoster() {
       <div class="w-11 h-11 rounded-full bg-cyan-100 text-cyan-800 font-bold flex items-center justify-center text-sm flex-shrink-0">${initialsOf(name)}</div>
       <div class="flex-1 min-w-0">
         <div class="font-semibold text-base truncate">${name}</div>
-        <div class="text-xs text-muted mt-0.5">${evs.length} saved ${evs.length === 1 ? 'event' : 'events'}</div>
+        <div class="text-xs text-muted mt-0.5">${evs.length} saved ${evs.length === 1 ? 'event' : 'events'}${team ? ` · <span class="text-cyan-700 font-medium">${team.replace(/</g, '&lt;')}</span>` : ''}</div>
       </div>
       ${trailing}
     </div>`;
@@ -2105,6 +2213,11 @@ function renderRoster() {
         <input type="text" data-search value="${state.search || ''}" placeholder="Search saved swimmers" class="bg-transparent outline-none text-sm w-full placeholder:text-muted" />
       </div>
     </div>
+    ${teamList.length ? `<div class="px-5 pt-2 flex flex-wrap gap-1.5">
+      <span class="pill ${tf === 'all' ? 'active' : ''}" data-teamfilter="all" style="padding:6px 12px;font-size:12px;min-height:0;">All teams</span>
+      ${teamList.map(t => `<span class="pill ${tf === t ? 'active' : ''}" data-teamfilter="${t.replace(/"/g, '&quot;')}" style="padding:6px 12px;font-size:12px;min-height:0;">${t.replace(/</g, '&lt;')}</span>`).join('')}
+      ${anyNoTeam ? `<span class="pill ${tf === '__none' ? 'active' : ''}" data-teamfilter="__none" style="padding:6px 12px;font-size:12px;min-height:0;">No team</span>` : ''}
+    </div>` : ''}
     ${hasSaved ? `<div class="px-5 pt-3 pb-1 flex items-center justify-between">
       <span class="label-cap">Saved swimmers</span>
       <button class="text-xs font-semibold ${editing ? 'text-cyan-700' : 'text-slate-400'} hover:text-cyan-700 transition" data-action="toggle-edit">${editing ? 'Done' : 'Edit'}</button>
@@ -2264,6 +2377,7 @@ function renderSavedSwimmer() {
     <div class="px-5 pt-3 pb-3 flex items-center gap-3">
       <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="sw-view-back">‹</button>
       <div class="flex-1 min-w-0"><div class="text-lg font-semibold truncate">${name}</div><div class="text-xs text-muted truncate">${title}</div></div>
+      ${printBtn()}
     </div>`;
   if (!editing && state.swimmerView === 'races') {
     const ss = strokesIn(races); let sel = state.swimmerStroke; if (ss.indexOf(sel) < 0) sel = ss[0];
@@ -2287,13 +2401,14 @@ function renderSavedSwimmer() {
       <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0">
         <div class="text-lg font-semibold truncate">${name}</div>
-        <div class="text-xs text-muted truncate">${subtitle}</div>
+        <div class="text-xs text-muted truncate">${swimmerTeam(sid) ? `<span class="text-cyan-700 font-medium">${swimmerTeam(sid).replace(/</g, '&lt;')}</span> · ` : ''}${subtitle}</div>
       </div>
       <button class="text-sm font-semibold ${editing ? 'text-cyan-700' : 'text-slate-400'} hover:text-cyan-700 transition px-1" data-action="toggle-edit">${editing ? 'Done' : 'Edit'}</button>
     </div>
     ${editing ? `
     <div class="px-5 pb-2 space-y-2">
       <button class="w-full bg-white border border-slate-200 text-slate-700 rounded-xl py-3 text-sm font-semibold hover:bg-slate-50 active:scale-[0.99] transition" data-action="rename-swimmer">Rename swimmer</button>
+      <button class="w-full bg-white border border-slate-200 text-slate-700 rounded-xl py-3 text-sm font-semibold hover:bg-slate-50 active:scale-[0.99] transition" data-action="set-team">${swimmerTeam(sid) ? 'Change team (' + swimmerTeam(sid).replace(/</g, '&lt;') + ')' : 'Set team'}</button>
       <button class="w-full bg-rose-50 text-rose-700 border border-rose-200 rounded-xl py-3 text-sm font-semibold hover:bg-rose-100 active:scale-[0.99] transition flex items-center justify-center gap-2" data-del-swimmer="${sid}">${TRASH_SVG} Delete this swimmer</button>
     </div>` : `
     ${hasProgress(sid) ? `<div class="px-5 pb-2"><button class="w-full bg-white border border-cyan-300 text-cyan-800 rounded-xl py-2.5 text-sm font-semibold hover:bg-cyan-50 active:scale-[0.99] transition" data-action="progress">📈 Progress over time</button></div>` : ''}
@@ -2378,6 +2493,7 @@ function renderBestTimes() {
         <div class="text-lg font-semibold truncate">Best times</div>
         <div class="text-xs text-muted truncate">${name}</div>
       </div>
+      ${printBtn()}
     </div>
     <div class="px-5 pb-2 flex flex-wrap gap-2">
       ${chips.map(([k, l]) => `<span class="pill ${f.mode === k ? 'active' : ''}" data-btmode="${k}">${k === 'year' && f.mode === 'year' && f.year ? f.year : l}</span>`).join('')}
@@ -2665,6 +2781,7 @@ function renderProgress() {
         <div class="text-lg font-semibold truncate">${name}</div>
         <div class="text-xs text-muted">Progress over time</div>
       </div>
+      ${printBtn()}
     </div>
     <div class="scrollable px-5 py-3 space-y-2.5 bg-slate-50">
       ${cards || '<div class="text-center text-sm text-muted p-8">Save the same event, 50 m test, or efficiency test twice to see a trend.</div>'}
@@ -2722,6 +2839,7 @@ function renderProgressGroup() {
         <div class="text-lg font-semibold truncate">${g.sig}</div>
         <div class="text-xs text-muted truncate">${name} · ${win !== 'all' ? entries.length + ' of ' + allEntries.length : allEntries.length} entries</div>
       </div>
+      ${printBtn()}
     </div>
     <div class="scrollable px-5 py-3 space-y-3 bg-slate-50">
       ${g.kind === 'fifty' ? fatigueNote(sid, 'banner') : ''}
@@ -4032,12 +4150,12 @@ function renderPredictedSplits() {
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-2 flex items-center gap-3 bg-white">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="home" aria-label="Done — back to the main page">‹</button>
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back" aria-label="Back">‹</button>
       <div class="flex-1 min-w-0">
         <div class="text-base font-semibold truncate">${state.swimmer ? state.swimmer.name : (state.form.name || 'Set target time')}</div>
         <div class="text-xs text-muted truncate">${r.distance} ${r.stroke} · ${r.pool} · ${r.sex === 'M' ? 'Men' : 'Women'}</div>
       </div>
-      <div class="flex items-center gap-1.5 flex-shrink-0">
+      <div class="flex items-center gap-1.5 flex-shrink-0">${printBtn()}
         <button class="px-3 py-2 rounded-full bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 transition" data-action="edit-plan">Edit</button>
         ${state.planSaved
           ? '<button class="px-4 py-2.5 rounded-full bg-emerald-50 text-emerald-700 text-sm font-semibold" data-action="save">Saved ✓</button>'
@@ -4526,7 +4644,7 @@ function renderOtherTools() {
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="home" aria-label="Back to the main page">‹</button>
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back" aria-label="Back">‹</button>
       <div class="flex-1 min-w-0">
         <div class="text-lg font-semibold">Other tools</div>
       </div>
@@ -4885,7 +5003,7 @@ function renderTrainingPace() {
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white no-print">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="home" aria-label="Back to the main page">‹</button>
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back" aria-label="Back">‹</button>
       <div class="flex-1 min-w-0">
         <div class="text-lg font-semibold">Training Pace</div>
       </div>
@@ -5175,12 +5293,12 @@ function renderRaceAnalysis() {
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="home" aria-label="Done — back to the main page">‹</button>
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back" aria-label="Back">‹</button>
       <div class="flex-1 min-w-0">
         <div class="text-base font-semibold truncate">${race.name || 'Race'}</div>
         <div class="text-xs text-muted truncate">${race.distance} ${race.stroke} ${race.pool}${meetLabel(race) ? ' · ' + meetLabel(race) : ''}${race.date ? ' · ' + race.date : ''}</div>
       </div>
-      <div class="flex items-center gap-1.5 flex-shrink-0">
+      <div class="flex items-center gap-1.5 flex-shrink-0">${printBtn()}
         ${state.raceSaved === 'saved' ? '<span class="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-[11px] font-semibold">Saved ✓</span>'
           : state.raceSaved === 'noname' ? '<span class="px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 text-[11px] font-semibold">Not saved · no name</span>'
           : state.raceSaved === 'notime' ? '<span class="px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 text-[11px] font-semibold">Not saved · no time</span>' : ''}
@@ -5385,6 +5503,8 @@ document.addEventListener('click', (e) => {
       navigate('swimmer-detail', { swimmer: s });
       return;
     }
+    const tfEl = e.target.closest('[data-teamfilter]');
+    if (tfEl) { state.teamFilter = tfEl.getAttribute('data-teamfilter'); render(); return; }
     const svn = e.target.closest('[data-savedsid]');
     if (svn) {
       state.savedSid = svn.getAttribute('data-savedsid');
@@ -5706,7 +5826,10 @@ function handleAction(action, el) {
     case 'export-csv': exportAnalysisCsv(); break;
     case 'backup-json': exportBackupJson(); break;
     case 'import-json': triggerImport(); break;
-    case 'import-times-csv': triggerImportCsv(); break;
+    case 'import-times-csv': navigate('import-menu'); break;
+    case 'import-menu-season': navigate('import-season'); break;
+    case 'import-menu-meet': navigate('import-meet'); break;
+    case 'import-season-pick': triggerImportCsv(); break;
     case 'import-times-confirm': doImportTimes(); break;
     case 'converter': navigate('converter'); break;
     case 'efficiency': navigate('efficiency'); break;
@@ -5810,6 +5933,16 @@ function handleAction(action, el) {
       showToast(`Renamed to ${nn}`);
       break;
     }
+    case 'set-team': {
+      const sid = state.savedSid; if (!sid) break;
+      const cur = swimmerTeam(sid);
+      const t = prompt('Team name (leave blank to clear)', cur);
+      if (t === null) break;                 // cancelled
+      setSwimmerTeam(sid, t);
+      render();
+      showToast(t.trim() ? `Team set to ${t.trim()}` : 'Team cleared');
+      break;
+    }
     case 'cmp-mode': {
       const m = el?.getAttribute('data-mode');
       state.cmpMode = state.cmpMode === m ? null : m; // tap the active button again to close
@@ -5820,6 +5953,7 @@ function handleAction(action, el) {
     // The race is finished with: go home. Edit is the only way back into the entry form, so
     // the two controls in that header no longer lead to the same screen.
     case 'home': navigate('roster'); break;
+    case 'print-page': window.print(); break;
     case 'training-pace': state.tpShow = false; navigate('training-pace'); break;
     case 'other-tools': navigate('other-tools'); break;
     case 'tp-show': state.tpShow = true; render(); break;
@@ -5831,7 +5965,11 @@ function handleAction(action, el) {
           // Offline before the libraries were ever cached: the print dialog's "Save as PDF"
           // reaches the same place, and the @media print sheet is already styled for it.
           showToast('Could not load the PDF tool — opening print instead');
+          document.body.classList.add('print-tp');
+          const _endTp = () => { document.body.classList.remove('print-tp'); window.removeEventListener('afterprint', _endTp); };
+          window.addEventListener('afterprint', _endTp);
           window.print();
+          setTimeout(_endTp, 1500);
         });
       break;
     }
