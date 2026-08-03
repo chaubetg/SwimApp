@@ -5138,15 +5138,25 @@ function renderRaceAnalysis() {
     const gap = c.actualTotal - otherT;
     const gc = gap > 0.005 ? 'text-rose-600' : 'text-emerald-700';
     const beats = state.cmpMode === 'best' && c.actualTotal < otherT;
+    // Running cumulatives under each split (target mode only), same format as the
+    // ideal-splits table above: skipped on the first/last row and on total/mid rows.
+    const showCums = !!ref.predicted;
+    let cumR = 0, cumC = 0;
     const rows = ref.otherRows.map((br, i) => {
       const cur = c.rows[i];
       if (!cur) return '';
+      const def = defs[i];
+      const notAgg = !!def && def.kind !== 'total' && def.kind !== 'mid';
       const dd = (cur.actual != null && br.actual != null) ? cur.actual - br.actual : null;
       const ddc = dd == null ? 'text-slate-400' : (dd > 0.05 ? 'text-rose-600' : (dd < -0.05 ? 'text-emerald-700' : 'text-slate-500'));
+      if (br.actual != null && notAgg) cumR += br.actual;
+      if (cur.actual != null && notAgg) cumC += cur.actual;
+      const showCum = showCums && i > 0 && i < ref.otherRows.length - 1 && notAgg;
+      const cumTag = (v) => showCum ? `<div class="mono text-[10px] text-faint leading-none mt-0.5">(${formatTime(v)})</div>` : '';
       return `<div style="display:grid;grid-template-columns:minmax(0,1fr) 4rem 4rem 3rem;gap:4px;align-items:center;" class="px-3 py-2 border-b border-slate-100 last:border-0">
         <div class="text-sm font-semibold text-slate-700 leading-tight">${br.label}</div>
-        <div class="mono text-xs text-slate-500" style="text-align:right;">${br.actual != null ? formatTime(br.actual) : '—'}</div>
-        <div class="mono text-sm font-semibold text-slate-800" style="text-align:right;">${cur.actual != null ? formatTime(cur.actual) : '—'}</div>
+        <div class="mono text-xs text-slate-500 leading-tight" style="text-align:right;">${br.actual != null ? formatTime(br.actual) : '—'}${br.actual != null ? cumTag(cumR) : ''}</div>
+        <div class="mono text-sm font-semibold text-slate-800 leading-tight" style="text-align:right;">${cur.actual != null ? formatTime(cur.actual) : '—'}${cur.actual != null ? cumTag(cumC) : ''}</div>
         <div class="mono text-xs font-semibold ${ddc}" style="text-align:right;">${dd != null ? (dd >= 0 ? '+' : '') + dd.toFixed(2) : ''}</div>
       </div>`;
     }).join('');
