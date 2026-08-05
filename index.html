@@ -3819,6 +3819,15 @@ function renderQuickCalc() {
 // ----- Screen 3: Predicted splits -----
 // Build the rows actually displayed: per-50 (per-25 for the 50), or per-100
 // checkpoints for distance events when that view is selected.
+// Median within-lap first-25 share of a 100 SCM, from 1,201 clean races (World Cup 2025,
+// Westmont+Toronto+Carmel pooled): p1 = 1st-25 share of the DIVE 50, p3 = 3rd-25 share of
+// the PUSH 50. Lap shapes differ (dive front-loads), so each 50's 25s use its own share.
+const scm100Per25 = {
+  Free:   { M: { p1: 0.4741, p3: 0.5000, n: 243 }, F: { p1: 0.4764, p3: 0.5016, n: 137 } },
+  Back:   { M: { p1: 0.4829, p3: 0.5009, n: 142 }, F: { p1: 0.4862, p3: 0.5002, n: 140 } },
+  Breast: { M: { p1: 0.4558, p3: 0.4928, n: 151 }, F: { p1: 0.4595, p3: 0.4933, n: 138 } },
+  Fly:    { M: { p1: 0.4578, p3: 0.4916, n: 137 }, F: { p1: 0.4580, p3: 0.4916, n: 113 } },
+};
 function buildDisplaySegments(r) {
   const isIM = r.stroke === 'IM';
   const per100 = !isIM && r.distance >= 400 && state.splitView === '100' && r.splits.length % 2 === 0;
@@ -3854,16 +3863,22 @@ function buildDisplaySegments(r) {
       { time: r.splits[n - 1], lo: r.lo[n - 1], hi: r.hi[n - 1], label: 'Last 50', count: 1, half: 'middle' },
     ];
   }
-  // SCM 100: show 25 m lines with cumulative (Gaël 2026-07-22e). Each 50 is sub-split
-  // with the stroke/sex SCM-50 per-25 shape (dive-50 table, applied to both laps), so the
-  // 25 and 75 marks are estimates; the 50 and 100 rows stay exactly on the pacing table.
+  // SCM 100: four 25 m lines. Each predicted 50 is split into its two 25s using the MEDIAN
+  // within-lap shape from real 100 SCM races (scm100Per25): a dive shape for lap 1 (p1) and a
+  // push shape for lap 2 (p3), so the 25/75 marks reflect the actual race, not the standalone
+  // 50. The 50 and 100 rows stay exactly on the pacing table (shares sum to 1 within each 50).
+  // Falls back to the dive-both-laps 50 shape only if a stroke/sex is missing from the table.
   if (!isIM && r.pool === 'SCM' && r.distance === 100 && r.splits.length === 2) {
-    const t50 = getRatios(r.stroke, r.sex, 'SCM', 50);
-    if (t50 && t50.median && t50.median.length === 2) {
-      const s0 = t50.median[0] + t50.median[1];
-      const fa = t50.median[0] / s0, fb = t50.median[1] / s0;
+    const sp = scm100Per25[r.stroke] && scm100Per25[r.stroke][r.sex];
+    let shares = sp ? [sp.p1, sp.p3] : null;
+    if (!shares) {
+      const t50 = getRatios(r.stroke, r.sex, 'SCM', 50);
+      if (t50 && t50.median && t50.median.length === 2) { const fa = t50.median[0] / (t50.median[0] + t50.median[1]); shares = [fa, fa]; }
+    }
+    if (shares) {
       const out = [];
       [0, 1].forEach(j => {
+        const fa = shares[j], fb = 1 - fa;
         out.push({ time: r.splits[j] * fa, lo: r.lo[j] * fa, hi: r.hi[j] * fa, label: (j * 50 + 25) + ' m (est.)', srIdx: j, half: j === 0 ? 'front' : 'middle' });
         out.push({ time: r.splits[j] * fb, lo: r.lo[j] * fb, hi: r.hi[j] * fb, label: (j * 50 + 50) + ' m', srIdx: j, half: j === 1 ? 'back' : 'middle' });
       });
@@ -4723,8 +4738,8 @@ function tpDistances(pool) {
 // One entry per swimmer PER STROKE holding a recorded time at this pool + distance, alphabetical
 // by first name. `basis` picks which of their swims sets the pace: 'best' (fastest) or 'recent'
 // (latest date). Sex is per swimmer, read from their own race record — hence no sex picker.
-// Segments come from buildDisplaySegments so a 100 SCM gets its four 25 s (25/75 estimated from
-// the SCM-50 shape), IM gets stroke legs, and 400+ gets the collapsed First/Middle/Last rows.
+// Segments come from buildDisplaySegments so a 100 SCM gets its four 25 s (25/75 modeled from
+// real 100 SCM race splits), IM gets stroke legs, and 400+ gets the collapsed First/Middle/Last rows.
 function trainingRows(pool, distance, basis) {
   const byKey = {};
   state.saved.forEach((s) => {
@@ -4995,7 +5010,7 @@ function renderTrainingPace() {
     <div id="tp-print" class="bg-white">
       <div class="px-3 pt-3 pb-1">
         <div data-tp-title class="text-[15px] font-bold text-slate-900">${f.distance} m ${f.pool} — training pace</div>
-        <div data-tp-sub class="text-[11px] text-muted">Targets from each swimmer's ${basisLab} time${fellBackCount ? ` · †${fellBackCount} with no target for this event, showing their best time` : ''}${anyEstimate ? ' · *25 m marks estimated from the SCM 50 shape' : ''}</div>
+        <div data-tp-sub class="text-[11px] text-muted">Targets from each swimmer's ${basisLab} time${fellBackCount ? ` · †${fellBackCount} with no target for this event, showing their best time` : ''}${anyEstimate ? ' · *25/75 m modeled from real 100 SCM race splits' : ''}</div>
       </div>
       ${body}
     </div>` : body;
