@@ -1,7 +1,7 @@
 // BUMP THIS ON EVERY UPLOAD. The activate handler deletes every cache whose name differs,
 // so changing the number is what forces an already-installed PWA to drop the old build.
 // Without a bump, a phone can keep serving the previous version for days.
-const CACHE = 'swim-book-v23';
+const CACHE = 'swim-book-v25';
 const CORE = ['./index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(CORE)).then(() => self.skipWaiting()).catch(() => self.skipWaiting()));

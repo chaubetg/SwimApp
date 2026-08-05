@@ -2126,6 +2126,8 @@ function render() {
         row.style.display = nameMatches(row.getAttribute('data-name') || '', q) ? '' : 'none';
       });
     });
+    // Return/"check" key: commit the search — refresh to the full current-settings list.
+    search.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); search.blur(); render(); } });
   }
   const tpq = host.querySelector('[data-tp-search]');
   if (tpq) {
@@ -2133,6 +2135,8 @@ function render() {
       state.tpForm.q = tpq.value; const q = tpq.value.trim();
       host.querySelectorAll('.tp-row').forEach((row) => { row.style.display = nameMatches(row.getAttribute('data-name') || '', q) ? '' : 'none'; });
     });
+    // Return/"check" key: commit the search — refresh to the full current-settings table.
+    tpq.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); tpq.blur(); render(); } });
   }
 }
 
@@ -3828,6 +3832,14 @@ const scm100Per25 = {
   Breast: { M: { p1: 0.4558, p3: 0.4928, n: 151 }, F: { p1: 0.4595, p3: 0.4933, n: 138 } },
   Fly:    { M: { p1: 0.4578, p3: 0.4916, n: 137 }, F: { p1: 0.4580, p3: 0.4916, n: 113 } },
 };
+// Median within-lap shares for a 200 SCM, from 1,004 clean races (World Cup 2025, 3 stops):
+// p1 = 1st-25 share of the DIVE 50 (opening); pLast = last-25 share of the FINAL 50 (closing).
+const scm200Per25 = {
+  Free:   { M: { p1: 0.4704, pLast: 0.4934, n: 194 }, F: { p1: 0.4739, pLast: 0.4921, n: 134 } },
+  Back:   { M: { p1: 0.4790, pLast: 0.4938, n: 112 }, F: { p1: 0.4803, pLast: 0.4930, n: 119 } },
+  Breast: { M: { p1: 0.4555, pLast: 0.5013, n: 136 }, F: { p1: 0.4570, pLast: 0.5012, n: 113 } },
+  Fly:    { M: { p1: 0.4538, pLast: 0.5026, n: 119 }, F: { p1: 0.4567, pLast: 0.5017, n: 77 } },
+};
 function buildDisplaySegments(r) {
   const isIM = r.stroke === 'IM';
   const per100 = !isIM && r.distance >= 400 && state.splitView === '100' && r.splits.length % 2 === 0;
@@ -4786,7 +4798,7 @@ function trainingRows(pool, distance, basis) {
 // Columns for one stroke at one event, in the order a coach calls the set: the 50 s first, then
 // every 25 in order. (Target is rendered separately as the first column.)
 const TP_ORD = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th'];
-function tpCells(segs, stroke, pool, distance, splits) {
+function tpCells(segs, stroke, pool, distance, splits, sex) {
   if (!segs || !segs.length) return [];
   // A 400 IM comes back as eight 50 s; it is swum and written as four 100 s, one per stroke.
   if (stroke === 'IM' && splits && splits.length === 8) {
@@ -4827,6 +4839,19 @@ function tpCells(segs, stroke, pool, distance, splits) {
       { h: 'Fly', v: segs[0].time }, { h: 'Back', v: segs[1].time },
       { h: 'Breast', v: segs[2].time }, { h: 'Free', v: segs[3].time },
     ];
+  }
+  // SCM 200: the four 50s, then 1st 25 / 2nd 25 / last 25 modeled from real 200 SCM race medians
+  // (scm200Per25) — dive-50 first-25 share and final-50 last-25 share, per stroke/sex.
+  if (pool === 'SCM' && distance === 200 && stroke !== 'IM' && segs.length === 4) {
+    const cells = segs.map((s, i) => ({ h: `${TP_ORD[i]} 50`, v: s.time }));
+    const sp = scm200Per25[stroke] && scm200Per25[stroke][sex];
+    if (sp) {
+      const first50 = segs[0].time, last50 = segs[3].time;
+      cells.push({ h: '1st 25', v: first50 * sp.p1 });
+      cells.push({ h: '2nd 25', v: first50 * (1 - sp.p1) });
+      cells.push({ h: 'Last 25', v: last50 * sp.pLast });
+    }
+    return cells;
   }
   // Uniform segments get "1st 50 / 2nd 50" style headings; collapsed 400+ rows and IM legs keep
   // the label buildDisplaySegments gave them.
@@ -4942,7 +4967,8 @@ function renderTrainingPace() {
   if (availStrokes.length && availStrokes.indexOf(f.stroke) < 0) f.stroke = availStrokes[0];
   const oneStroke = availStrokes.length <= 1;
   const tpQ = (f.q || '').trim();
-  const shownRows = rows ? rows.filter((r) => (oneStroke || r.stroke === f.stroke) && nameMatches(r.name, tpQ)) : null;
+  const sxf = f.sexFilter || 'all';
+  const shownRows = rows ? rows.filter((r) => (oneStroke || r.stroke === f.stroke) && (sxf === 'all' || r.sex === sxf) && nameMatches(r.name, tpQ)) : null;
   const basisLab = f.basis === 'recent' ? 'most recent' : (f.basis === 'target' ? 'season target' : 'best');
   const TP_ABBR = { Free: 'FR', Back: 'BK', Breast: 'BR', Fly: 'FLY', IM: 'IM' };
   const TP_BLOCK = 'border-t-2 border-slate-400';   // the rule between stroke blocks
@@ -4964,7 +4990,7 @@ function renderTrainingPace() {
     const present = FORM.filter((s) => byStroke[s]);
     const shapeOf = (st) => {
       const r = byStroke[st].find((x) => x.segs && x.segs.length);
-      return r ? tpCells(r.segs, st, f.pool, f.distance, r.splits).map((c) => c.h) : [];
+      return r ? tpCells(r.segs, st, f.pool, f.distance, r.splits, r.sex).map((c) => c.h) : [];
     };
     const mainHeads = present.length ? shapeOf(present[0]) : (byStroke.IM ? shapeOf('IM') : []);
     const imHeads = byStroke.IM ? shapeOf('IM') : [];
@@ -4975,17 +5001,17 @@ function renderTrainingPace() {
     const headRow = (heads, cls) => `<tr class="text-[10px] uppercase tracking-wide text-faint ${cls}">
         <th class="text-left font-semibold py-1.5 pl-3">Swimmer</th>
         <th class="text-right font-semibold px-2">Target</th>
-        ${pad(heads).map((h) => `<th class="text-right font-semibold px-2 whitespace-nowrap">${h == null ? '' : h + (anyEstimate && /25$/.test(h) ? '*' : '')}</th>`).join('')}
+        ${pad(heads).map((h) => `<th class="text-right font-semibold px-2 whitespace-nowrap">${h == null ? '' : h}</th>`).join('')}
       </tr>`;
 
     const rowHtml = (r, heads, opensBlock) => {
-      const cells = pad(tpCells(r.segs, r.stroke, f.pool, f.distance, r.splits));
+      const cells = pad(tpCells(r.segs, r.stroke, f.pool, f.distance, r.splits, r.sex));
       return `<tr class="tp-row ${opensBlock ? TP_BLOCK : 'border-t border-slate-100'}" data-name="${r.name}">
         <td class="py-2 pl-3">
           <div class="font-semibold text-[13px] whitespace-nowrap">${r.name}</div>
           ${r.date ? `<div class="text-[10px] text-faint leading-none mt-0.5">${r.date}</div>` : ''}
         </td>
-        <td class="text-right px-2 whitespace-nowrap"><span class="mono text-[13px] font-bold text-cyan-800">${formatTime(r.total)}</span> <span class="text-[10px] font-semibold text-slate-500">(${TP_ABBR[r.stroke] || r.stroke})</span>${r.fellBack ? '<span class="text-[10px] font-semibold text-amber-600">†</span>' : ''}</td>
+        <td class="text-right px-2 whitespace-nowrap"><span class="mono text-[13px] font-bold text-cyan-800">${formatTime(r.total)}</span> <span class="text-[10px] font-semibold text-slate-500">(${TP_ABBR[r.stroke] || r.stroke})</span></td>
         ${cells.map((c, i) => `<td class="text-right px-2 mono text-[13px] ${c && /((1st|2nd|3rd|4th|First|Last|Middle|Mid) ?(50|100)|Fly-Bk|Bk-Br|Br-Fr)$/.test(heads[i] || '') ? 'text-slate-900 font-semibold' : 'text-slate-600'}">${c ? formatTime(c.v) : ''}</td>`).join('')}
       </tr>`;
     };
@@ -5004,13 +5030,15 @@ function renderTrainingPace() {
 
   const strokeChips = (rows && rows.length && !oneStroke)
     ? availStrokes.map((st) => `<button class="${chip(f.stroke === st)}" data-tp-stroke="${st}">${st}</button>`).join(' ') : '';
+  const sexesPresent = rows ? [...new Set(rows.map((r) => r.sex))] : [];
+  const sexChips = (rows && rows.length && sexesPresent.length > 1)
+    ? [['all', 'All'], ['M', 'Men'], ['F', 'Women']].map(([v, l]) => `<button class="${chip(sxf === v)}" data-tp-sex="${v}">${l}</button>`).join(' ') : '';
   const tpSearch = (rows && rows.length)
     ? `<input type="text" data-tp-search value="${f.q || ''}" placeholder="Search swimmer" class="w-full mt-2 bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-cyan-300 placeholder:text-muted" />` : '';
   const sheet = rows && rows.length ? `
     <div id="tp-print" class="bg-white">
       <div class="px-3 pt-3 pb-1">
         <div data-tp-title class="text-[15px] font-bold text-slate-900">${f.distance} m ${f.pool} — training pace</div>
-        <div data-tp-sub class="text-[11px] text-muted">Targets from each swimmer's ${basisLab} time${fellBackCount ? ` · †${fellBackCount} with no target for this event, showing their best time` : ''}${anyEstimate ? ' · *25/75 m modeled from real 100 SCM race splits' : ''}</div>
       </div>
       ${body}
     </div>` : body;
@@ -5031,7 +5059,7 @@ function renderTrainingPace() {
         ${group('Pace from', [['best', 'Best time'], ['recent', 'Most recent'], ['target', 'Target']], 'basis')}
         <button class="w-full bg-cyan-600 text-white font-semibold rounded-xl py-3.5 text-sm hover:bg-cyan-700 active:scale-[0.99] transition shadow-lg shadow-cyan-600/20" data-action="tp-show">Show Training Table</button>
       </div>
-      ${rows && rows.length ? `<div class="mx-3 mt-3 no-print">${strokeChips ? `<div class="flex flex-wrap gap-1.5">${strokeChips}</div>` : ''}${tpSearch}</div>` : ''}
+      ${rows && rows.length ? `<div class="mx-3 mt-3 no-print">${strokeChips ? `<div class="flex flex-wrap gap-1.5">${strokeChips}</div>` : ''}${sexChips ? `<div class="flex flex-wrap gap-1.5 mt-2">${sexChips}</div>` : ''}${tpSearch}</div>` : ''}
       ${rows ? `<div class="m-3 bg-white rounded-2xl border border-slate-200 overflow-hidden">${sheet}</div>` : ''}
     </div>`;
 }
@@ -5553,6 +5581,8 @@ document.addEventListener('click', (e) => {
     }
     const tps = e.target.closest('[data-tp-stroke]');
     if (tps) { state.tpForm.stroke = tps.getAttribute('data-tp-stroke'); render(); return; }
+    const tpx = e.target.closest('[data-tp-sex]');
+    if (tpx) { state.tpForm.sexFilter = tpx.getAttribute('data-tp-sex'); render(); return; }
     const sws = e.target.closest('[data-sw-stroke]');
     if (sws) { state.swimmerStroke = sws.getAttribute('data-sw-stroke'); render(); return; }
     const sv = e.target.closest('[data-saved]');
