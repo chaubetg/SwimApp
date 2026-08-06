@@ -1070,13 +1070,9 @@ function backupIsStale() {
 // otherwise a gentle stale-backup nag. Nothing at all when there's no data yet.
 function durabilityBanner() {
   if (!state.saved.length) return '';
-  if (!appInstalled()) {
-    return `<div class="px-5 pb-2"><div data-guard="install" class="bg-amber-50 border border-amber-300 rounded-2xl px-4 py-3">
-      <div class="text-[13px] font-bold text-amber-900">Add Split Compass to your Home Screen</div>
-      <div class="text-[11px] text-amber-800 mt-1 leading-snug">Your times are saved in this browser only. iPhone deletes browser data after about a week of not opening the site \u2014 installing it stops that. Tap Share \u2191 then \u201cAdd to Home Screen\u201d.</div>
-      <button class="mt-2 text-[11px] font-bold text-amber-900 underline" data-action="backup-json">Back up now instead</button>
-    </div></div>`;
-  }
+  // The Add-to-Home-Screen banner used to sit here and was removed 2026-08-02 (too heavy
+  // on the main page). appInstalled() is kept for a subtler nudge later if wanted; the
+  // stale-backup nag below now covers installed and uninstalled users alike.
   if (backupIsStale()) {
     const a = backupAgeDays();
     const whenTxt = a === null ? 'never backed up' : `last backup ${Math.floor(a)} days ago`;
