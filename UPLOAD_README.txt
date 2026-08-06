@@ -3,8 +3,8 @@ UPLOAD EVERY FILE HERE TO THE SwimApp REPO **ROOT** (not as a subfolder).
   README.md                -> shown on the GitHub repo page (public-facing)
   index.html               -> chaubetg.github.io/SwimApp/   PUBLIC build
   pacer_19a0177a4f06.html  -> private FULL build (all tools)
-  manifest.webmanifest     (Swim Book)
-  manifest-v3.webmanifest  (Swim Book — Full)
+  manifest.webmanifest     (Split Compass)
+  manifest-v3.webmanifest  (Split Compass — Full)
   sw.js                    (service worker — SEE THE WARNING BELOW)
   icon-192.png / icon-512.png
 
@@ -19,7 +19,7 @@ appears in the other.
 *** IF A CHANGE DOESN'T SHOW UP AFTER UPLOADING, IT IS ALMOST ALWAYS THE CACHE. ***
 sw.js serves the cached copy if the network takes longer than 2.5 s, and an installed
 home-screen app can keep the old build for days. Two fixes:
-  1. Bump `const CACHE = 'swim-book-vN'` in sw.js on every upload (the activate handler
+  1. Bump `const CACHE = 'split-compass-vN'` in sw.js on every upload (the activate handler
      deletes every cache whose name differs, which is what forces the refresh).
   2. To check immediately: open in a private/incognito tab, which ignores the cache.
 Current cache name: whatever sw.js says — sync_deploy.py bumps it on every run

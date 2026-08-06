@@ -1,4 +1,4 @@
-# Swim Book
+# Split Compass
 
 **A swim coach's race tool that runs in a browser.** Record a race, see how the swim was
 actually paced against a model built from elite race analysis, and print pace targets for the
