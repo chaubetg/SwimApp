@@ -1126,6 +1126,7 @@ function seedSelf() {
   const sx = selfSex() || 'M';
   state.form.name = nm; state.form.sid = sid; state.form.sex = sx;
   state.raceForm.name = nm; state.raceForm.sex = sx;
+  state.savedSid = sid;   // My races / Best times / Progress / AQUA all read this
 }
 // Sex is stored on the entries; fall back to the setup value while there are none.
 function selfSex() {
@@ -2239,13 +2240,17 @@ function scHeaderHtml() {
 }
 // ----- Screen: swimmer build — first-run setup (who am I?) -----
 function renderSwimmerSetup() {
+  const editing = !!selfSid();   // already set up -> this is "edit", not first run
   const f = state.selfSetup || (state.selfSetup = { name: '', sex: 'M' });
   const sexBtn = (v, l) => `<button class="flex-1 rounded-xl py-3 text-sm font-semibold transition ${f.sex === v ? 'bg-cyan-600 text-white shadow' : 'bg-white border border-slate-200 text-slate-700'}" data-self-sex="${v}">${l}</button>`;
   return `
     <div class="statusbar"></div>
-    ${scHeaderHtml()}
+    ${editing ? `<div class="px-5 pt-3 pb-3 flex items-center gap-3">
+      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back" aria-label="Back">\u2039</button>
+      <div class="text-lg font-semibold">Your details</div>
+    </div>` : scHeaderHtml()}
     <div class="scrollable px-5 py-4 space-y-4 bg-slate-50">
-      <div class="text-center text-sm text-muted leading-relaxed px-2">Record your races and splits, and set target times for the events you swim.</div>
+      ${editing ? '' : `<div class="text-center text-sm text-muted leading-relaxed px-2">Record your races and splits, and set target times for the events you swim.</div>`}
       <div class="bg-white border border-slate-200 rounded-2xl p-4 space-y-4">
         <div>
           <div class="label-cap mb-2">Your name</div>
@@ -2257,8 +2262,9 @@ function renderSwimmerSetup() {
           <div class="text-[11px] text-muted mt-1.5 leading-snug">Split targets come from elite race data, which differs by sex \u2014 pick the one that matches you.</div>
         </div>
       </div>
-      <button class="w-full bg-cyan-600 text-white font-semibold rounded-xl py-4 text-base hover:bg-cyan-700 active:scale-[0.98] transition shadow-lg shadow-cyan-600/20" data-action="self-save">Get started</button>
-      <div class="text-[11px] text-muted text-center leading-snug px-2">Everything stays on this phone. Nothing is uploaded anywhere.</div>
+      <button class="w-full bg-cyan-600 text-white font-semibold rounded-xl py-4 text-base hover:bg-cyan-700 active:scale-[0.98] transition shadow-lg shadow-cyan-600/20" data-action="self-save">${editing ? 'Save changes' : 'Get started'}</button>
+      ${editing ? `<div class="text-[11px] text-muted text-center leading-snug px-2">Changing the pacing model updates the split targets on races you have already saved.</div>`
+                : `<div class="text-[11px] text-muted text-center leading-snug px-2">Everything stays on this phone. Nothing is uploaded anywhere.</div>`}
     </div>`;
 }
 // ----- Screen: swimmer build — home (their own data only) -----
@@ -2272,7 +2278,7 @@ function renderSwimmerHome() {
     <div class="statusbar"></div>
     ${scHeaderHtml()}
     <div class="px-5 pb-3 text-center">
-      <button class="text-xs font-semibold text-cyan-700 hover:underline" data-action="self-rename">${nm}</button>
+      <button class="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200 active:scale-95 transition" data-action="self-edit">${nm}<span class="text-cyan-700 text-sm leading-none">\u270e</span></button>
     </div>
     ${durabilityBanner()}
     <div class="px-5 pb-2 grid grid-cols-2 gap-2">
@@ -2287,6 +2293,7 @@ function renderSwimmerHome() {
       ${races.length ? tile('sw-view-races', 'My races', `${races.length} recorded \u00b7 tap an event to see them`) : ''}
       ${races.length ? tile('best-times', 'My best times', 'Fastest time in each event') : ''}
       ${hasProgress(sid) ? tile('progress', 'Progress over time', 'How your times are trending') : ''}
+      ${races.length ? tile('sw-view-ranked', 'Ranked by AQUA points', 'Your strongest events, by World Aquatics points') : ''}
       ${plans.length ? tile('sw-view-plans', 'My target times', `${plans.length} saved`) : ''}
       ${!races.length && !plans.length ? `<div class="text-center text-sm text-muted px-6 py-10 leading-relaxed">Tap <span class="font-semibold text-cyan-700">Record Races</span> to enter a race and its splits, or <span class="font-semibold text-cyan-700">Set target time</span> to see the splits a goal time needs.</div>` : ''}
       <div class="pt-2 flex items-center justify-center gap-2 text-[11px] text-slate-400">
@@ -3960,14 +3967,14 @@ function renderQuickCalc() {
           </div>
         </div>
       </div>
-      <div>
+      ${SWIMMER ? '' : `<div>
         <div class="label-cap mb-2">Search or Add Swimmer</div>
         <div class="relative">
-          <input type="text" data-name-input autocomplete="off" ${SWIMMER ? 'readonly' : ''} value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="e.g. Tegan O'Neill"
+          <input type="text" data-name-input autocomplete="off" value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="e.g. Tegan O'Neill"
             class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-base outline-none focus:ring-2 focus:ring-cyan-300" />
           <div data-name-suggest class="hidden" style="position:absolute;left:0;right:0;bottom:100%;margin-bottom:4px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 8px 24px rgba(15,23,42,.12);z-index:60;max-height:200px;overflow-y:auto;"></div>
         </div>
-      </div>
+      </div>`}
     </div>
     <div class="border-t border-slate-200 px-5 py-4 pb-5 bg-white flex-shrink-0">
       <button class="w-full bg-cyan-600 text-white font-semibold rounded-xl py-4 text-base hover:bg-cyan-700 active:scale-[0.98] transition shadow-lg shadow-cyan-600/20" data-action="predict">
@@ -5320,14 +5327,14 @@ function renderRaceEntry() {
         <div class="label-cap mb-2">Notes</div>
         <textarea data-race-notes rows="3" placeholder="What was good?&#10;What could have been better?&#10;What's the one thing to change next time?" class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-sm outline-none focus:ring-2 focus:ring-cyan-300 resize-none">${(rf.notes || '').replace(/</g, '&lt;')}</textarea>
       </div>
-      <div>
+      ${SWIMMER ? '' : `<div>
         <div class="label-cap mb-2">Search or Add Swimmer</div>
         <div class="relative">
-          <input type="text" data-name-input autocomplete="off" ${SWIMMER ? 'readonly' : ''} value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="e.g. Tegan O'Neill"
+          <input type="text" data-name-input autocomplete="off" value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="e.g. Tegan O'Neill"
             class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-base outline-none focus:ring-2 focus:ring-cyan-300" />
           <div data-name-suggest class="hidden" style="position:absolute;left:0;right:0;bottom:100%;margin-bottom:4px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 8px 24px rgba(15,23,42,.12);z-index:60;max-height:200px;overflow-y:auto;"></div>
         </div>
-      </div>
+      </div>`}
     </div>
     <div class="border-t border-slate-200 px-5 py-4 pb-5 bg-white flex-shrink-0">
       <button class="w-full bg-cyan-600 text-white font-semibold rounded-xl py-4 text-base hover:bg-cyan-700 active:scale-[0.98] transition shadow-lg shadow-cyan-600/20" data-action="analyze-race">
@@ -6166,20 +6173,20 @@ function handleAction(action, el) {
       if (!sid) { sid = newSid(); setSelfSid(sid); }
       try { localStorage.setItem('sc_self_sex', f.sex || 'M'); } catch (e) {}
       setSelfName(nm);
-      // name any existing entries for this sid too, so a rename stays consistent
-      state.saved.forEach((s) => { if (s.sid === sid) s.name = nm; });
+      // Apply to existing entries too, so a correction actually repairs saved races —
+      // a wrong sex silently skews every split prediction until it is fixed.
+      const sx = f.sex || 'M';
+      state.saved.forEach((s) => { if (s.sid === sid) { s.name = nm; s.sex = sx; } });
       persistSaved();
       seedSelf();
       navigate('roster');
       break;
     }
-    case 'self-rename': {
-      const sid = selfSid(); if (!sid) break;
-      const nn = (prompt('Your name', swimmerName(sid) || '') || '').trim();
-      if (!nn) break;
-      state.saved.forEach((s) => { if (s.sid === sid) s.name = nn; });
-      setSelfName(nn);
-      persistSaved(); seedSelf(); render();
+    case 'self-edit': {
+      // Open the setup screen prefilled. Reset the draft here (not in render) so a
+      // re-entry always starts from what is actually stored, without clobbering typing.
+      state.selfSetup = { name: selfName(), sex: selfSex() || 'M' };
+      navigate('swimmer-setup');
       break;
     }
     case 'training-pace': state.tpShow = false; navigate('training-pace'); break;
