@@ -1401,6 +1401,12 @@ function navigate(view, opts = {}) {
   render();
 }
 
+// Show a saved-swimmer sub-view, navigating to that screen first if we aren't on it.
+function openSwimmerView() {
+  if (state.view !== 'saved-swimmer') navigate('saved-swimmer');
+  else render();
+}
+
 function back() {
   if (state.history.length === 0) return navigate('roster');
   // Go through navigate() so a Back applies the SAME resets as any other screen change —
@@ -5449,9 +5455,14 @@ function renderRaceAnalysis() {
   const cmpBtn = (mode, label, avail) => avail
     ? `<button class="flex-1 rounded-xl px-3 py-2.5 text-xs font-semibold transition ${state.cmpMode === mode ? 'bg-cyan-600 text-white shadow' : 'bg-white border border-slate-200 text-slate-700 hover:border-cyan-300 hover:bg-cyan-50/40'}" data-action="cmp-mode" data-mode="${mode}">${label}</button>`
     : '';
-  const cmpButtons = (cmpBest || cmpLast || cmpTarget)
-    ? `<div class="flex gap-2 flex-wrap">${cmpBtn('best', 'Compare to best time', cmpBest)}${cmpBtn('last', 'Compare to last race', cmpLast)}${cmpBtn('target', 'Compare to target time', cmpTarget)}</div>`
-    : '';
+  // All three slots are always accounted for. A mode with no data becomes a prompt
+  // explaining what would unlock it, never a silently absent button.
+  const evName = `${race.distance} ${race.stroke} ${race.pool}`;
+  const cmpButtons = `<div class="space-y-2">
+      ${(cmpBest || cmpLast || cmpTarget) ? `<div class="flex gap-2 flex-wrap">${cmpBtn('best', 'Compare to best time', cmpBest)}${cmpBtn('last', 'Compare to last race', cmpLast)}${cmpBtn('target', 'Compare to target time', cmpTarget)}</div>` : ''}
+      ${!cmpTarget ? `<button class="w-full rounded-xl px-3 py-2.5 text-xs font-semibold bg-white border border-dashed border-cyan-300 text-cyan-800 hover:bg-cyan-50/40 active:scale-[0.99] transition" data-action="cmp-set-target">Set a target time for ${evName} to compare</button>` : ''}
+      ${(!cmpBest && !cmpLast) ? `<div class="text-[11px] text-muted leading-snug px-1">Record another ${evName} and you can compare this one to your best and most recent.</div>` : ''}
+    </div>`;
 
   let bestCard = '';
   let ref = null;
@@ -6050,10 +6061,18 @@ function handleAction(action, el) {
     case 'adjacent': navigate('adjacent'); break;
     case 'trends': navigate('trends'); break;
     case 'progress': navigate('progress'); break;
-    case 'sw-view-races': state.swimmerView = 'races'; state.swimmerStroke = null; render(); break;
-    case 'sw-view-plans': state.swimmerView = 'plans'; state.swimmerStroke = null; render(); break;
-    case 'sw-view-ranked': state.swimmerView = 'ranked'; render(); break;
-    case 'sw-view-back': state.swimmerView = null; render(); break;
+    // These sub-views live on the saved-swimmer screen. The coach reaches them from
+    // that screen (so a bare render() sufficed); the swimmer reaches them from the
+    // home, which needs an actual navigation or the tap does nothing.
+    case 'sw-view-races': state.swimmerView = 'races'; state.swimmerStroke = null; openSwimmerView(); break;
+    case 'sw-view-plans': state.swimmerView = 'plans'; state.swimmerStroke = null; openSwimmerView(); break;
+    case 'sw-view-ranked': state.swimmerView = 'ranked'; openSwimmerView(); break;
+    // Back out of a sub-view: the swimmer returns to their home, since the coach-style
+    // detail page underneath isn't part of their build.
+    case 'sw-view-back':
+      state.swimmerView = null;
+      if (SWIMMER) navigate('roster'); else render();
+      break;
     case 'best-times': state.btFilter = { mode: 'all', year: null }; state.btYearOpen = false; navigate('best-times'); break;
     case 'save-conv': {
       const c = state.convForm;
@@ -6154,6 +6173,19 @@ function handleAction(action, el) {
       setSwimmerTeam(sid, t);
       render();
       showToast(t.trim() ? `Team set to ${t.trim()}` : 'Team cleared');
+      break;
+    }
+    case 'cmp-set-target': {
+      const r = state.race; if (!r) break;
+      // Seed the goal from the time they actually swam, so it only needs nudging.
+      const rc = buildRaceComparison(r);
+      const t = (rc && rc.actualTotal > 0) ? rc.actualTotal : (r.targetSeconds || 0);
+      state.swimmer = null;
+      state.form = { stroke: r.stroke, sex: r.sex, pool: r.pool, distance: r.distance,
+                     targetSeconds: t, name: r.name || '', sid: r.sid || null };
+      state.result = null;
+      seedSelf();   // swimmer build: keep the pinned identity (name/sid/sex)
+      navigate('quick-calc');
       break;
     }
     case 'cmp-mode': {
