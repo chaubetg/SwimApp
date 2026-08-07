@@ -2240,9 +2240,12 @@ function render() {
 
 // Icon + wordmark at the top of the main page — shared by the coach and swimmer homes.
 const SC_BADGE = '<svg viewBox="0 0 512 512" width="34" height="34" class="flex-shrink-0" aria-hidden="true"><defs><linearGradient id="sc-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22d3ee"/><stop offset="0.55" stop-color="#0891b2"/><stop offset="1" stop-color="#0e5f74"/></linearGradient><clipPath id="sc-d"><circle cx="256" cy="256" r="196"/></clipPath></defs><rect width="512" height="512" rx="112" fill="url(#sc-g)"/><g transform="translate(256,256) scale(0.94) translate(-256,-256)"><circle cx="256" cy="256" r="196" fill="#0b4a5c" opacity="0.22"/><g clip-path="url(#sc-d)"><path d="M -10,352 C 60,306 120,398 206,352 S 370,306 470,352 L 490,520 L -10,520 Z" fill="#fff" opacity="0.22"/><path d="M -10,352 C 60,306 120,398 206,352 S 370,306 470,352" fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round"/></g><g clip-path="url(#sc-d)"><path d="M 20,386 C 90,344 150,428 236,386 S 400,344 500,386 L 520,520 L 20,520 Z" fill="#fff" opacity="0.4"/><path d="M 20,386 C 90,344 150,428 236,386 S 400,344 500,386" fill="none" stroke="#fff" stroke-width="13" stroke-linecap="round"/></g><circle cx="256" cy="256" r="196" fill="none" stroke="#fff" stroke-width="17"/><path d="M 256,106 C 280.3,181 310,230.6 310,256 L 202,256 C 202,230.6 231.7,181 256,106 Z" fill="#fff"/><path d="M 256,406 C 231.7,331 202,281.4 202,256 L 310,256 C 310,281.4 280.3,331 256,406 Z" fill="#fff" opacity="0.55"/><circle cx="256" cy="256" r="20" fill="#0e5f74"/></g></svg>';
+// Which edition the user is looking at. Small, muted, beside the wordmark.
+const BUILD_LABEL = BUILD === 'swimmer' ? 'Swimmer' : (BUILD === 'public' ? 'Coach' : 'all features');
 function scHeaderHtml() {
-  return '<div class="px-5 pt-2 pb-4 flex items-center justify-center gap-2.5">' + SC_BADGE +
-    '<div class="text-[28px] font-bold tracking-tight leading-none">Split Compass</div></div>';
+  return '<div class="px-5 pt-2 pb-4 flex items-center justify-center gap-2">' + SC_BADGE +
+    '<div class="text-[28px] font-bold tracking-tight leading-none">Split Compass</div>' +
+    '<span class="text-[11px] font-semibold text-muted leading-none">(' + BUILD_LABEL + ')</span></div>';
 }
 // ----- Screen: swimmer build — first-run setup (who am I?) -----
 function renderSwimmerSetup() {
@@ -2373,14 +2376,23 @@ function renderRoster() {
       </button>
     </div>
     <div class="px-5 pb-2">
+      <button class="w-full bg-white border border-cyan-300 rounded-2xl px-4 py-3.5 text-left hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm flex items-center justify-between gap-3" data-action="quick-calc">
+        <div>
+          <div class="font-bold text-slate-800 text-[15px]">Set target time</div>
+          <div class="text-[11px] text-muted mt-0.5 leading-snug">Split targets for a target time</div>
+        </div>
+        <span class="text-cyan-600 text-xl leading-none flex-shrink-0">⏱</span>
+      </button>
+    </div>
+    ${PUBLIC_BUILD ? '' : `<div class="px-5 pb-2">
       <button class="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3.5 text-left hover:border-cyan-300 hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm flex items-center justify-between gap-3" data-action="other-tools">
         <div>
           <div class="font-bold text-slate-800 text-[15px]">Other tools</div>
-          <div class="text-[11px] text-muted mt-0.5 leading-snug">Set target time, course converter, adjacent events</div>
+          <div class="text-[11px] text-muted mt-0.5 leading-snug">Course converter, adjacent events, 50 m splits, efficiency</div>
         </div>
         <span class="text-slate-300 text-2xl leading-none flex-shrink-0">›</span>
       </button>
-    </div>
+    </div>`}
     <div class="px-5 pb-1">
       <div class="bg-slate-100 rounded-xl px-3.5 py-3 flex items-center gap-2">
         <span class="text-muted">⌕</span>
@@ -4848,10 +4860,9 @@ function renderOtherTools() {
     </div>
     <div class="scrollable bg-slate-50">
       <div class="px-5 py-4 space-y-2">
-        ${tool('quick-calc', 'Set target time', 'Split targets for a target time', '⏱')}
+        ${PUBLIC_BUILD ? '' : `
         ${tool('converter', 'Course converter', 'Convert a time between SCY, SCM &amp; LCM', '⇄')}
         ${tool('adjacent', 'Adjacent events', 'Predict the event up &amp; down from your main', '↕')}
-        ${PUBLIC_BUILD ? '' : `
         ${tool('fifty-splits', '50 m LCM splits', 'Sub-splits, checkpoints &amp; stroke rate', '½')}
         ${tool('efficiency', 'Efficiency test', 'Stroke Index from a 15 m pure swim', '◇')}`}
       </div>
@@ -5322,7 +5333,7 @@ function renderRaceEntry() {
         </div>
       </div>
       <div>
-        <div class="label-cap mb-2">What they swam · time${showRowSr ? ' + SR <span class="text-faint" style="text-transform:none;letter-spacing:0;font-weight:400;">(optional)</span>' : ''} ${distFree ? '<span class="text-faint" style="text-transform:none;letter-spacing:0;font-weight:400;">· middle 50s averaged</span>' : ''}</div>
+        <div class="label-cap mb-2">Splits${showRowSr ? ' &amp; SR <span class="text-faint" style="text-transform:none;letter-spacing:0;font-weight:400;">(optional)</span>' : ''} ${distFree ? '<span class="text-faint" style="text-transform:none;letter-spacing:0;font-weight:400;">· middle 50s averaged</span>' : ''}</div>
         <div class="bg-white border border-slate-200 rounded-2xl px-4 py-1">${fieldRows}</div>
       </div>
       ${extraSrRows ? `<div>
@@ -5503,7 +5514,7 @@ function renderRaceAnalysis() {
       </div>
       ${beats ? `<div class="px-3 pb-2"><span class="text-xs font-semibold text-emerald-700">New best for this event — ${Math.abs(gap).toFixed(2)}s faster.</span></div>`
               : `<div class="px-3 pb-2"><span class="text-xs ${gc} font-semibold">${gap >= 0 ? '+' : ''}${gap.toFixed(2)}s ${ref.head}${ref.predicted ? ' (predicted splits)' : ''}</span></div>`}
-      <div style="display:grid;grid-template-columns:minmax(0,1fr) 4rem 4rem 3rem;gap:4px;align-items:center;" class="px-3 pb-1"><span class="label-cap text-muted">Split</span><span class="label-cap text-muted" style="text-align:right;">${ref.col}</span><span class="label-cap text-muted" style="text-align:right;">This</span><span class="label-cap text-muted" style="text-align:right;">Δ</span></div>
+      <div style="display:grid;grid-template-columns:minmax(0,1fr) 4rem 4rem 3rem;gap:4px;align-items:center;" class="px-3 pb-1"><span class="label-cap text-muted">Split</span><span class="label-cap text-muted" style="text-align:right;">${ref.col}</span><span class="label-cap text-muted" style="text-align:right;">Swam</span><span class="label-cap text-muted" style="text-align:right;">Δ</span></div>
       ${rows}
       ${(other.notes || '').trim() ? `<div class="px-3 py-2.5 border-t border-slate-100"><div class="label-cap text-muted mb-1">${ref.col} notes</div><div class="text-xs text-slate-600 leading-relaxed" style="white-space:pre-wrap;">${(other.notes || '').replace(/</g, '&lt;')}</div></div>` : ''}
     </div>`;
