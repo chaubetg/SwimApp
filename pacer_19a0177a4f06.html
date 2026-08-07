@@ -2263,7 +2263,7 @@ function renderSwimmerSetup() {
         </div>
       </div>
       <button class="w-full bg-cyan-600 text-white font-semibold rounded-xl py-4 text-base hover:bg-cyan-700 active:scale-[0.98] transition shadow-lg shadow-cyan-600/20" data-action="self-save">${editing ? 'Save changes' : 'Get started'}</button>
-      ${editing ? `<div class="text-[11px] text-muted text-center leading-snug px-2">Changing the pacing model updates the split targets on races you have already saved.</div>`
+      ${editing ? `<div class="text-[11px] text-muted text-center leading-snug px-2">Applies to every race you have already saved \u2014 including the split targets, if you change the pacing model.</div>`
                 : `<div class="text-[11px] text-muted text-center leading-snug px-2">Everything stays on this phone. Nothing is uploaded anywhere.</div>`}
     </div>`;
 }
@@ -3917,13 +3917,13 @@ function renderQuickCalc() {
         </div>
       </div>
       <div class="flex gap-3">
-        <div class="flex-1">
+        ${SWIMMER ? '' : `<div class="flex-1">
           <div class="label-cap mb-2">Sex</div>
           <div class="seg-group">
             <div class="seg ${f.sex === 'M' ? 'active' : ''}" data-sex="M">Men</div>
             <div class="seg ${f.sex === 'F' ? 'active' : ''}" data-sex="F">Women</div>
           </div>
-        </div>
+        </div>`}
         <div class="flex-1">
           <div class="label-cap mb-2">Pool</div>
           <div class="seg-group">
@@ -5268,13 +5268,13 @@ function renderRaceEntry() {
         </div>
       </div>
       <div class="flex gap-3">
-        <div class="flex-1">
+        ${SWIMMER ? '' : `<div class="flex-1">
           <div class="label-cap mb-2">Sex</div>
           <div class="seg-group">
             <div class="seg ${f.sex === 'M' ? 'active' : ''}" data-sex="M">Men</div>
             <div class="seg ${f.sex === 'F' ? 'active' : ''}" data-sex="F">Women</div>
           </div>
-        </div>
+        </div>`}
         <div class="flex-1">
           <div class="label-cap mb-2">Pool</div>
           <div class="seg-group">
@@ -5902,6 +5902,7 @@ function handleAction(action, el) {
     case 'quick-calc':
       state.swimmer = null;
       state.form = { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 200, targetSeconds: 120, name: '' };
+      seedSelf();   // swimmer build: keep their name and pacing model across the reset
       navigate('quick-calc');
       break;
     case 'add-event': {
@@ -5921,6 +5922,7 @@ function handleAction(action, el) {
       state.form = { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 200, targetSeconds: 120, name: '' };
       state.raceForm = { times: {}, sr: {}, touched: {}, competition: '', round: 'Final', date: '', notes: '' };
       state.raceEditId = null;
+      seedSelf();   // swimmer build: the reset above just wiped name/sid/sex — put them back
       seedRaceTimes();
       navigate('race-entry');
       break;
