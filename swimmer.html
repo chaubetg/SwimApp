@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Split Compass — v3 (private preview)</title>
-  <link rel="manifest" href="manifest-v3.webmanifest">
+  <title>Split Compass — for swimmers</title>
+  <link rel="manifest" href="manifest-swimmer.webmanifest">
   <meta name="theme-color" content="#0891b2">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
@@ -1031,7 +1031,7 @@ function generateInsights(prediction, actualSplits, swimmer) {
 //   'private' -> pacer_19a0177a4f06.html (every tool)
 //   'public'  -> index.html   (coach app)
 //   'swimmer' -> swimmer.html (one athlete, their own races only)
-const BUILD = 'private';
+const BUILD = 'swimmer';
 const PUBLIC_BUILD = BUILD !== 'private'; // hides the advanced tools (public + swimmer)
 const SWIMMER = BUILD === 'swimmer';      // one-athlete edition: no roster, own data only
 // Saved predictions persist in the browser (localStorage) so a coach can search a

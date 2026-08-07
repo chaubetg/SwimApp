@@ -1,31 +1,81 @@
 UPLOAD EVERY FILE HERE TO THE SwimApp REPO **ROOT** (not as a subfolder).
 
-  README.md                -> shown on the GitHub repo page (public-facing)
-  index.html               -> chaubetg.github.io/SwimApp/   PUBLIC build
-  pacer_19a0177a4f06.html  -> private FULL build (all tools)
-  manifest.webmanifest     (Split Compass)
-  manifest-v3.webmanifest  (Split Compass — Full)
-  sw.js                    (service worker — SEE THE WARNING BELOW)
-  icon-192.png / icon-512.png
+ALL THREE BUILDS SHARE ONE FOLDER AND ONE REPO. Do not split them.
+They must sit on the SAME ORIGIN (chaubetg.github.io/SwimApp/) because browser
+storage is per-origin: a swimmer's races live in that origin's localStorage. Put
+the swimmer build on a different repo or domain and it becomes a separate island
+that can never see the coach build's data, and you'd need a second service
+worker, second icon set and second manifest to maintain.
 
-The two builds are ONE codebase and differ by exactly three lines: the PUBLIC_BUILD flag,
-which manifest they load, and the <title>. Same site storage, so a swimmer saved in one
-appears in the other.
 
-  PUBLIC build  = Record Races + Split Predictor + Training Pace
-  PRIVATE build = all of the above plus Course converter, Adjacent events, 50 m splits,
-                  Efficiency tests and Squad targets
+THE FILES
+---------
+  index.html                   COACH app        -> chaubetg.github.io/SwimApp/
+  swimmer.html                 SWIMMER app      -> .../SwimApp/swimmer.html
+  pacer_19a0177a4f06.html      PRIVATE full build (every tool)
+  sw.js                        service worker — SEE THE CACHE WARNING BELOW
+  manifest.webmanifest         coach app identity
+  manifest-swimmer.webmanifest swimmer app identity
+  manifest-v3.webmanifest      private build identity
+  icon-192.png / icon-512.png  app icon (both sizes referenced)
+  .nojekyll                    empty file; stops GitHub Pages running Jekyll
+  README.md                    shown on the GitHub repo page (optional)
+
+The three builds are ONE codebase generated from pacer_19a0177a4f06.html. Each
+differs from it by exactly three lines: the <title>, which manifest it loads, and
+one flag —  const BUILD = 'private' | 'public' | 'swimmer'.
+
+  PUBLIC  (index.html)   Record Races + Set target time + Training Pace, full roster
+  PRIVATE (pacer_*.html) all of the above plus Course converter, Adjacent events,
+                         50 m splits, Efficiency tests, Squad targets
+  SWIMMER (swimmer.html) ONE athlete, their own races only: Record Races,
+                         Set target time, best times, progress, backup.
+                         No roster, no search, no Training Pace, no import.
+
+
+WHAT TO UPLOAD, AND WHEN
+------------------------
+FIRST TIME / AFTER A LONG GAP:  upload everything above. Replace all.
+
+EVERY NORMAL UPDATE — these four change on basically every build:
+    index.html
+    swimmer.html
+    pacer_19a0177a4f06.html
+    sw.js                      <- the cache bump; without it nothing updates
+
+ONLY WHEN THEY CHANGE (rare, set-and-forget):
+    the three manifests   — app name, icons, start_url
+    icon-192 / icon-512   — new artwork
+    .nojekyll             — once, ever
+    README.md             — when you edit it
+
 
 *** IF A CHANGE DOESN'T SHOW UP AFTER UPLOADING, IT IS ALMOST ALWAYS THE CACHE. ***
-sw.js serves the cached copy if the network takes longer than 2.5 s, and an installed
-home-screen app can keep the old build for days. Two fixes:
-  1. Bump `const CACHE = 'split-compass-vN'` in sw.js on every upload (the activate handler
-     deletes every cache whose name differs, which is what forces the refresh).
+sw.js serves the cached copy if the network takes longer than 2.5 s, and an
+installed home-screen app can keep the old build for days. Two fixes:
+  1. Bump `const CACHE = 'split-compass-vN'` in sw.js on every upload. The activate
+     handler deletes every cache whose name differs — that is what forces the
+     refresh. sync_deploy.py does this bump for you automatically.
   2. To check immediately: open in a private/incognito tab, which ignores the cache.
-Current cache name: whatever sw.js says — sync_deploy.py bumps it on every run
 
-Regenerating after edits (since the 2026-07-31 consolidation, the private build HERE is the
-editable source of truth): edit pacer_19a0177a4f06.html in this folder, run the tests, then
-run  python3 outputs/sync_deploy.py  from the sw_database root. It regenerates index.html
-from the private build (refusing to run if they'd differ beyond the three lines) and bumps
-the sw.js cache. Never hand-edit index.html.
+
+REGENERATING AFTER EDITS
+------------------------
+The PRIVATE build in this folder is the editable source of truth. Never hand-edit
+index.html or swimmer.html — they are generated and your edits will be overwritten.
+
+    edit SwimApp_deploy/pacer_19a0177a4f06.html
+    node outputs/test_*.js                  (run the suites)
+    python3 outputs/sync_deploy.py          (from the sw_database root)
+
+sync_deploy regenerates index.html AND swimmer.html from the private build,
+refuses to run if either would differ by more than its three allowed lines, and
+bumps the sw.js cache.
+
+
+DO NOT RENAME THE REPO
+----------------------
+The URL is the origin. Renaming SwimApp changes it, which (a) breaks every
+already-installed home-screen app and (b) orphans everyone's saved data, since
+localStorage is per-origin. If the name is ever going to change, it has to happen
+before anyone installs it.

@@ -2,9 +2,17 @@ DEPLOYING TO github.com/chaubetg/SwimApp  —  troubleshooting order
 
 WHAT "DEPLOYED" MEANS
   The repo root must contain these files, at the ROOT, not inside a folder:
-    .nojekyll  index.html  pacer_19a0177a4f06.html  README.md
-    manifest.webmanifest  manifest-v3.webmanifest  sw.js
-    icon-192.png  icon-512.png
+    .nojekyll  index.html  swimmer.html  pacer_19a0177a4f06.html  README.md
+    manifest.webmanifest  manifest-swimmer.webmanifest  manifest-v3.webmanifest
+    sw.js  icon-192.png  icon-512.png
+
+  All three builds live in ONE repo on purpose — same origin, because browser
+  storage is per-origin. Never split the swimmer build into its own repo.
+
+  THE THREE URLS
+    coach    https://chaubetg.github.io/SwimApp/
+    swimmer  https://chaubetg.github.io/SwimApp/swimmer.html
+    private  https://chaubetg.github.io/SwimApp/pacer_19a0177a4f06.html
 
 1. CHECK IT ACTUALLY UPLOADED (most common cause)
    Open github.com/chaubetg/SwimApp and look at the file list.
@@ -28,14 +36,18 @@ WHAT "DEPLOYED" MEANS
    exactly  .nojekyll  -> leave it empty -> Commit.
 
 4. CONFIRM WHAT IS LIVE (don't trust a normal browser tab)
-   Open https://chaubetg.github.io/SwimApp/ in a PRIVATE / INCOGNITO window.
-   The browser tab should read:  "Split Compass — Swim Split Predictor"
-   If it still reads "Split Compass — v3 (private preview)", the new index.html is NOT live,
-   regardless of what the repo looks like.
-   Then: Training Pace should show only three pickers — Pool, Distance, Pace from.
+   Open each URL in a PRIVATE / INCOGNITO window. Check the tab title:
+     /SwimApp/               -> "Split Compass — Swim Split Predictor"
+     /SwimApp/swimmer.html   -> "Split Compass — for swimmers"
+   If either still reads "Split Compass — v3 (private preview)", that generated
+   file is NOT live regardless of what the repo looks like.
+   Coach app: the icon shows left of the title; Training Pace has Pool / Distance /
+   Pace from. Swimmer app: first open asks your name and Men/Women, and there is
+   NO roster and NO Training Pace.
 
 5. STILL SEEING THE OLD APP ON YOUR PHONE
-   That is the service worker, not the deploy. sw.js cache is now "split-compass-v4"; an
+   That is the service worker, not the deploy. Check the current cache name in sw.js
+   (it is bumped automatically by sync_deploy.py on every run); an
    installed home-screen app drops the old copy only when that name changes. If it persists:
    delete the home-screen icon, open the site in Safari, re-add it.
 

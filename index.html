@@ -1027,7 +1027,13 @@ function generateInsights(prediction, actualSplits, swimmer) {
 // STATE
 // ============================================================
 
-const PUBLIC_BUILD = true; // true in index.html — public root app: Split predictor + Race Review only
+// Which edition this file is. sync_deploy.py rewrites this ONE line per output:
+//   'private' -> pacer_19a0177a4f06.html (every tool)
+//   'public'  -> index.html   (coach app)
+//   'swimmer' -> swimmer.html (one athlete, their own races only)
+const BUILD = 'public';
+const PUBLIC_BUILD = BUILD !== 'private'; // hides the advanced tools (public + swimmer)
+const SWIMMER = BUILD === 'swimmer';      // one-athlete edition: no roster, own data only
 // Saved predictions persist in the browser (localStorage) so a coach can search a
 // swimmer later and pull their splits. Multiple entries per name are allowed.
 const SAVED_KEY = 'pacer_saved_v2';
@@ -1098,6 +1104,36 @@ function migrateSids(arr) {
   return arr || [];
 }
 function entriesOf(sid) { return state.saved.filter(s => s.sid === sid); }
+// --- Swimmer build: the one athlete this install belongs to -----------------
+// Their sid is stored separately from the data, so re-importing a backup never
+// changes who "I" am. Shared origin with the coach build is intentional.
+const SELF_KEY = 'sc_self_sid';
+function selfSid() { try { return localStorage.getItem(SELF_KEY) || null; } catch (e) { return null; } }
+function setSelfSid(sid) { try { localStorage.setItem(SELF_KEY, sid); } catch (e) {} }
+// Entries win once they exist; the stored copy covers the gap before the first save.
+function selfName() {
+  const s = selfSid(); if (!s) return '';
+  const fromEntries = swimmerName(s);
+  if (fromEntries) return fromEntries;
+  try { return localStorage.getItem('sc_self_name') || ''; } catch (e) { return ''; }
+}
+function setSelfName(nm) { try { localStorage.setItem('sc_self_name', nm); } catch (e) {} }
+// Point the entry forms at the one athlete, so nothing can be filed under another name.
+function seedSelf() {
+  if (!SWIMMER) return;
+  const sid = selfSid(); if (!sid) return;
+  const nm = selfName();
+  const sx = selfSex() || 'M';
+  state.form.name = nm; state.form.sid = sid; state.form.sex = sx;
+  state.raceForm.name = nm; state.raceForm.sex = sx;
+}
+// Sex is stored on the entries; fall back to the setup value while there are none.
+function selfSex() {
+  const sid = selfSid(); if (!sid) return null;
+  const e = entriesOf(sid);
+  if (e.length) return e[e.length - 1].sex || null;
+  try { return localStorage.getItem('sc_self_sex') || null; } catch (x) { return null; }
+}
 function swimmerName(sid) { const e = entriesOf(sid); return e.length ? e[e.length - 1].name : ''; }
 // Team rides on the swimmer's entries so it survives backups; read the latest non-empty.
 function swimmerTeam(sid) { const e = entriesOf(sid); for (let i = e.length - 1; i >= 0; i--) { const t = (e[i].team || '').trim(); if (t) return t; } return ''; }
@@ -1106,6 +1142,7 @@ function setSwimmerTeam(sid, team) { const t = (team || '').trim(); state.saved.
 // attach to an existing swimmer if exactly one has this name; otherwise it's a brand-new swimmer.
 // (To keep two same-named swimmers separate, rename one — they then hold different ids.)
 function resolveSid(form) {
+  if (SWIMMER) { const s = selfSid(); if (s) return s; }   // one-athlete build: always me
   if (form && form.sid) return form.sid;
   const nm = (form && form.name || '').trim();
   const sids = [...new Set(state.saved.filter(s => (s.name || '') === nm).map(s => s.sid))];
@@ -1776,7 +1813,8 @@ function render() {
   if (state.view === 'roster') state.rgOpen = {};
   let html = '';
   switch (state.view) {
-    case 'roster': html = renderRoster(); break;
+    case 'roster': html = SWIMMER ? (selfSid() ? renderSwimmerHome() : renderSwimmerSetup()) : renderRoster(); break;
+    case 'swimmer-setup': html = renderSwimmerSetup(); break;
     case 'saved-swimmer': html = renderSavedSwimmer(); break;
     case 'swimmer-detail': html = renderSwimmerDetail(); break;
     case 'quick-calc': html = renderQuickCalc(); break;
@@ -2177,6 +2215,11 @@ function render() {
     // Return/"check" key: commit the search — refresh to the full current-settings list.
     search.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); search.blur(); render(); } });
   }
+  const selfN = host.querySelector('[data-self-name]');
+  if (selfN) {
+    selfN.addEventListener('input', () => { (state.selfSetup = state.selfSetup || {}).name = selfN.value; });
+    selfN.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); selfN.blur(); } });
+  }
   const tpq = host.querySelector('[data-tp-search]');
   if (tpq) {
     tpq.addEventListener('input', () => {
@@ -2188,6 +2231,72 @@ function render() {
   }
 }
 
+// Icon + wordmark at the top of the main page — shared by the coach and swimmer homes.
+const SC_BADGE = '<svg viewBox="0 0 512 512" width="34" height="34" class="flex-shrink-0" aria-hidden="true"><defs><linearGradient id="sc-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22d3ee"/><stop offset="0.55" stop-color="#0891b2"/><stop offset="1" stop-color="#0e5f74"/></linearGradient><clipPath id="sc-d"><circle cx="256" cy="256" r="196"/></clipPath></defs><rect width="512" height="512" rx="112" fill="url(#sc-g)"/><g transform="translate(256,256) scale(0.94) translate(-256,-256)"><circle cx="256" cy="256" r="196" fill="#0b4a5c" opacity="0.22"/><g clip-path="url(#sc-d)"><path d="M -10,352 C 60,306 120,398 206,352 S 370,306 470,352 L 490,520 L -10,520 Z" fill="#fff" opacity="0.22"/><path d="M -10,352 C 60,306 120,398 206,352 S 370,306 470,352" fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round"/></g><g clip-path="url(#sc-d)"><path d="M 20,386 C 90,344 150,428 236,386 S 400,344 500,386 L 520,520 L 20,520 Z" fill="#fff" opacity="0.4"/><path d="M 20,386 C 90,344 150,428 236,386 S 400,344 500,386" fill="none" stroke="#fff" stroke-width="13" stroke-linecap="round"/></g><circle cx="256" cy="256" r="196" fill="none" stroke="#fff" stroke-width="17"/><path d="M 256,106 C 280.3,181 310,230.6 310,256 L 202,256 C 202,230.6 231.7,181 256,106 Z" fill="#fff"/><path d="M 256,406 C 231.7,331 202,281.4 202,256 L 310,256 C 310,281.4 280.3,331 256,406 Z" fill="#fff" opacity="0.55"/><circle cx="256" cy="256" r="20" fill="#0e5f74"/></g></svg>';
+function scHeaderHtml() {
+  return '<div class="px-5 pt-2 pb-4 flex items-center justify-center gap-2.5">' + SC_BADGE +
+    '<div class="text-[28px] font-bold tracking-tight leading-none">Split Compass</div></div>';
+}
+// ----- Screen: swimmer build — first-run setup (who am I?) -----
+function renderSwimmerSetup() {
+  const f = state.selfSetup || (state.selfSetup = { name: '', sex: 'M' });
+  const sexBtn = (v, l) => `<button class="flex-1 rounded-xl py-3 text-sm font-semibold transition ${f.sex === v ? 'bg-cyan-600 text-white shadow' : 'bg-white border border-slate-200 text-slate-700'}" data-self-sex="${v}">${l}</button>`;
+  return `
+    <div class="statusbar"></div>
+    ${scHeaderHtml()}
+    <div class="scrollable px-5 py-4 space-y-4 bg-slate-50">
+      <div class="text-center text-sm text-muted leading-relaxed px-2">Record your races and splits, and set target times for the events you swim.</div>
+      <div class="bg-white border border-slate-200 rounded-2xl p-4 space-y-4">
+        <div>
+          <div class="label-cap mb-2">Your name</div>
+          <input type="text" data-self-name value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="e.g. Alex Rivers" class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-base outline-none focus:ring-2 focus:ring-cyan-300" />
+        </div>
+        <div>
+          <div class="label-cap mb-2">Pacing model</div>
+          <div class="flex gap-2">${sexBtn('M', 'Men')}${sexBtn('F', 'Women')}</div>
+          <div class="text-[11px] text-muted mt-1.5 leading-snug">Split targets come from elite race data, which differs by sex \u2014 pick the one that matches you.</div>
+        </div>
+      </div>
+      <button class="w-full bg-cyan-600 text-white font-semibold rounded-xl py-4 text-base hover:bg-cyan-700 active:scale-[0.98] transition shadow-lg shadow-cyan-600/20" data-action="self-save">Get started</button>
+      <div class="text-[11px] text-muted text-center leading-snug px-2">Everything stays on this phone. Nothing is uploaded anywhere.</div>
+    </div>`;
+}
+// ----- Screen: swimmer build — home (their own data only) -----
+function renderSwimmerHome() {
+  const sid = selfSid();
+  const nm = selfName() || 'Me';
+  const races = state.saved.filter((s) => s.sid === sid && s.kind === 'race');
+  const plans = state.saved.filter((s) => s.sid === sid && (!s.kind || s.kind === 'plan'));
+  const tile = (action, title, sub) => `<button class="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3.5 text-left hover:border-cyan-300 hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm flex items-center justify-between gap-3" data-action="${action}"><div><div class="font-bold text-slate-800 text-[15px]">${title}</div><div class="text-[11px] text-muted mt-0.5 leading-snug">${sub}</div></div><span class="text-slate-300 text-2xl leading-none flex-shrink-0">\u203a</span></button>`;
+  return `
+    <div class="statusbar"></div>
+    ${scHeaderHtml()}
+    <div class="px-5 pb-3 text-center">
+      <button class="text-xs font-semibold text-cyan-700 hover:underline" data-action="self-rename">${nm}</button>
+    </div>
+    ${durabilityBanner()}
+    <div class="px-5 pb-2 grid grid-cols-2 gap-2">
+      <button class="bg-gradient-to-br from-cyan-500 to-cyan-700 rounded-2xl px-4 py-4 text-center hover:from-cyan-600 hover:to-cyan-800 active:scale-[0.99] transition shadow-lg shadow-cyan-600/25" data-action="new-race">
+        <div class="font-bold text-white text-[15px]">Record Races</div>
+      </button>
+      <button class="bg-gradient-to-br from-cyan-500 to-cyan-700 rounded-2xl px-4 py-4 text-center hover:from-cyan-600 hover:to-cyan-800 active:scale-[0.99] transition shadow-lg shadow-cyan-600/25" data-action="quick-calc">
+        <div class="font-bold text-white text-[15px]">Set target time</div>
+      </button>
+    </div>
+    <div class="scrollable px-5 pb-4 space-y-2">
+      ${races.length ? tile('sw-view-races', 'My races', `${races.length} recorded \u00b7 tap an event to see them`) : ''}
+      ${races.length ? tile('best-times', 'My best times', 'Fastest time in each event') : ''}
+      ${hasProgress(sid) ? tile('progress', 'Progress over time', 'How your times are trending') : ''}
+      ${plans.length ? tile('sw-view-plans', 'My target times', `${plans.length} saved`) : ''}
+      ${!races.length && !plans.length ? `<div class="text-center text-sm text-muted px-6 py-10 leading-relaxed">Tap <span class="font-semibold text-cyan-700">Record Races</span> to enter a race and its splits, or <span class="font-semibold text-cyan-700">Set target time</span> to see the splits a goal time needs.</div>` : ''}
+      <div class="pt-2 flex items-center justify-center gap-2 text-[11px] text-slate-400">
+        <button class="font-semibold hover:text-cyan-700 transition" data-action="backup-json">Back up</button>
+        <span class="text-slate-200">\u00b7</span>
+        <button class="font-semibold hover:text-cyan-700 transition" data-action="import-json">Restore</button>
+      </div>
+    </div>
+    <div class="text-center text-[10px] text-faint py-2 flex-shrink-0">\u00a9 2026 Ga\u00ebl Chaubet \u00b7 All rights reserved</div>`;
+}
 // ----- Screen 1: Roster -----
 function renderRoster() {
   // One row per swimmer (by stable id, so same-name swimmers don't merge), alphabetical.
@@ -2233,9 +2342,7 @@ function renderRoster() {
 
   return `
     <div class="statusbar"></div>
-    <div class="px-5 pt-2 pb-4 flex items-center justify-center gap-2.5">
-      <svg viewBox="0 0 512 512" width="34" height="34" class="flex-shrink-0" aria-hidden="true"><defs><linearGradient id="sc-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22d3ee"/><stop offset="0.55" stop-color="#0891b2"/><stop offset="1" stop-color="#0e5f74"/></linearGradient><clipPath id="sc-d"><circle cx="256" cy="256" r="196"/></clipPath></defs><rect width="512" height="512" rx="112" fill="url(#sc-g)"/><g transform="translate(256,256) scale(0.94) translate(-256,-256)"><circle cx="256" cy="256" r="196" fill="#0b4a5c" opacity="0.22"/><g clip-path="url(#sc-d)"><path d="M -10,352 C 60,306 120,398 206,352 S 370,306 470,352 L 490,520 L -10,520 Z" fill="#fff" opacity="0.22"/><path d="M -10,352 C 60,306 120,398 206,352 S 370,306 470,352" fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round"/></g><g clip-path="url(#sc-d)"><path d="M 20,386 C 90,344 150,428 236,386 S 400,344 500,386 L 520,520 L 20,520 Z" fill="#fff" opacity="0.4"/><path d="M 20,386 C 90,344 150,428 236,386 S 400,344 500,386" fill="none" stroke="#fff" stroke-width="13" stroke-linecap="round"/></g><circle cx="256" cy="256" r="196" fill="none" stroke="#fff" stroke-width="17"/><path d="M 256,106 C 280.3,181 310,230.6 310,256 L 202,256 C 202,230.6 231.7,181 256,106 Z" fill="#fff"/><path d="M 256,406 C 231.7,331 202,281.4 202,256 L 310,256 C 310,281.4 280.3,331 256,406 Z" fill="#fff" opacity="0.55"/><circle cx="256" cy="256" r="20" fill="#0e5f74"/></g></svg>
-      <div class="text-[28px] font-bold tracking-tight leading-none">Split Compass</div>
+    ${scHeaderHtml()}
     </div>
     ${durabilityBanner()}
     <div class="px-5 pb-2 grid grid-cols-2 gap-2">
@@ -3856,7 +3963,7 @@ function renderQuickCalc() {
       <div>
         <div class="label-cap mb-2">Search or Add Swimmer</div>
         <div class="relative">
-          <input type="text" data-name-input autocomplete="off" value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="e.g. Tegan O'Neill"
+          <input type="text" data-name-input autocomplete="off" ${SWIMMER ? 'readonly' : ''} value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="e.g. Tegan O'Neill"
             class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-base outline-none focus:ring-2 focus:ring-cyan-300" />
           <div data-name-suggest class="hidden" style="position:absolute;left:0;right:0;bottom:100%;margin-bottom:4px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 8px 24px rgba(15,23,42,.12);z-index:60;max-height:200px;overflow-y:auto;"></div>
         </div>
@@ -5216,7 +5323,7 @@ function renderRaceEntry() {
       <div>
         <div class="label-cap mb-2">Search or Add Swimmer</div>
         <div class="relative">
-          <input type="text" data-name-input autocomplete="off" value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="e.g. Tegan O'Neill"
+          <input type="text" data-name-input autocomplete="off" ${SWIMMER ? 'readonly' : ''} value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="e.g. Tegan O'Neill"
             class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-base outline-none focus:ring-2 focus:ring-cyan-300" />
           <div data-name-suggest class="hidden" style="position:absolute;left:0;right:0;bottom:100%;margin-bottom:4px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 8px 24px rgba(15,23,42,.12);z-index:60;max-height:200px;overflow-y:auto;"></div>
         </div>
@@ -5629,6 +5736,8 @@ document.addEventListener('click', (e) => {
       state.tpForm[k] = (k === 'distance') ? parseInt(v, 10) : v;
       render(); return;
     }
+    const selfSx = e.target.closest('[data-self-sex]');
+    if (selfSx) { (state.selfSetup = state.selfSetup || {}).sex = selfSx.getAttribute('data-self-sex'); render(); return; }
     const tps = e.target.closest('[data-tp-stroke]');
     if (tps) { state.tpForm.stroke = tps.getAttribute('data-tp-stroke'); render(); return; }
     const tpx = e.target.closest('[data-tp-sex]');
@@ -6049,6 +6158,30 @@ function handleAction(action, el) {
     // the two controls in that header no longer lead to the same screen.
     case 'home': navigate('roster'); break;
     case 'print-page': window.print(); break;
+    case 'self-save': {
+      const f = state.selfSetup || {};
+      const nm = (f.name || '').trim();
+      if (!nm) { showToast('Enter your name to continue'); break; }
+      let sid = selfSid();
+      if (!sid) { sid = newSid(); setSelfSid(sid); }
+      try { localStorage.setItem('sc_self_sex', f.sex || 'M'); } catch (e) {}
+      setSelfName(nm);
+      // name any existing entries for this sid too, so a rename stays consistent
+      state.saved.forEach((s) => { if (s.sid === sid) s.name = nm; });
+      persistSaved();
+      seedSelf();
+      navigate('roster');
+      break;
+    }
+    case 'self-rename': {
+      const sid = selfSid(); if (!sid) break;
+      const nn = (prompt('Your name', swimmerName(sid) || '') || '').trim();
+      if (!nn) break;
+      state.saved.forEach((s) => { if (s.sid === sid) s.name = nn; });
+      setSelfName(nn);
+      persistSaved(); seedSelf(); render();
+      break;
+    }
     case 'training-pace': state.tpShow = false; navigate('training-pace'); break;
     case 'other-tools': navigate('other-tools'); break;
     case 'tp-show': state.tpShow = true; render(); break;
@@ -6245,6 +6378,7 @@ function runDemo(flow) {
 // BOOT
 // ============================================================
 persistSaved(); // lock in any sids assigned by migration so they stay stable across reloads
+seedSelf();     // swimmer build: point the entry forms at the one athlete
 render();
 </script>
 
