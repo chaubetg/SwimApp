@@ -4,67 +4,96 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Split Compass</title>
+  <link rel="manifest" href="manifest-start.webmanifest">
   <meta name="theme-color" content="#0891b2">
-  <meta name="description" content="Split Compass — swim race split targets, race review and training pace.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Split Compass">
   <link rel="apple-touch-icon" href="icon-192.png">
+  <meta name="description" content="Split Compass &mdash; swim race split targets, race review and training pace.">
   <!--
-    Split Compass — front door. Deliberately has NO manifest link: installing THIS page
-    would give a home-screen icon that just asks the question again every launch. Users
-    pick first, then install the app they landed on.
-    © 2026 Gaël Chaubet. All rights reserved.
+    Front door. Installable on purpose: people are told to add it to the home screen
+    BEFORE choosing a role, so the choice is remembered here and the icon jumps
+    straight to their app from then on. ?switch re-opens this page to change role.
+    (c) 2026 Gael Chaubet. All rights reserved.
   -->
-  <meta name="author" content="Gaël Chaubet" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script>
+    (function () {
+      try {
+        if (/switch/.test(location.search + location.hash)) return;
+        var r = localStorage.getItem('sc_start');
+        if (r === 'coach' || r === 'swimmer') location.replace(r + '.html');
+      } catch (e) {}
+    })();
+  </script>
   <style>
     *{box-sizing:border-box}
     body{margin:0;min-height:100dvh;display:flex;align-items:center;justify-content:center;
-      padding:24px calc(20px + env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left));
+      padding:22px calc(20px + env(safe-area-inset-right)) calc(22px + env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left));
       font-family:'Inter',system-ui,sans-serif;background:#f1f5f9;color:#0f172a;-webkit-font-smoothing:antialiased}
-    .wrap{width:100%;max-width:420px;text-align:center}
-    h1{font-size:30px;font-weight:700;letter-spacing:-.02em;margin:14px 0 4px}
-    .sub{font-size:14px;color:#475569;margin:0 0 26px;line-height:1.5}
-    a.card{display:flex;align-items:center;justify-content:space-between;gap:12px;text-decoration:none;
-      background:#fff;border:1px solid #e2e8f0;border-radius:18px;padding:17px 18px;margin-bottom:12px;
-      box-shadow:0 1px 2px rgba(15,23,42,.05);transition:border-color .12s,background .12s,transform .06s;min-height:64px}
+    .wrap{width:100%;max-width:430px;text-align:center}
+    h1{font-size:27px;font-weight:700;letter-spacing:-.02em;margin:10px 0 3px}
+    .sub{font-size:13.5px;color:#475569;margin:0 0 18px;line-height:1.5}
+    .install{background:#ecfeff;border:1px solid #a5f3fc;border-radius:16px;padding:14px 15px;margin-bottom:16px;text-align:left}
+    .install h2{font-size:13.5px;font-weight:700;margin:0 0 9px;color:#0e5f74}
+    .step{display:flex;align-items:baseline;gap:8px;margin:0 0 9px}
+    .step:last-child{margin-bottom:0}
+    .num{flex:0 0 22px;height:22px;border-radius:999px;background:#0891b2;color:#fff;font-size:12px;
+      font-weight:700;display:inline-flex;align-items:center;justify-content:center;line-height:1}
+    .steptxt{font-size:12.5px;color:#155e63;line-height:1.75}
+    .k{display:inline-block;background:#fff;border:1px solid #a5f3fc;border-radius:6px;padding:1px 7px;font-weight:600;white-space:nowrap}
+    a.card{display:flex;align-items:center;justify-content:space-between;gap:12px;text-decoration:none;color:inherit;
+      background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:15px 17px;margin-bottom:10px;
+      box-shadow:0 1px 2px rgba(15,23,42,.05);transition:border-color .12s,background .12s,transform .06s;min-height:60px}
     a.card:hover{border-color:#67e8f9;background:#ecfeff}
     a.card:active{transform:scale(.99)}
-    .t{font-size:16px;font-weight:700;text-align:left}
-    .d{font-size:12px;color:#475569;margin-top:3px;text-align:left;line-height:1.45}
-    .chev{color:#0891b2;font-size:22px;line-height:1;flex-shrink:0}
-    .foot{font-size:11px;color:#64748b;margin-top:22px;line-height:1.6}
+    .t{font-size:15.5px;font-weight:700;text-align:left}
+    .d{font-size:11.5px;color:#475569;margin-top:2px;text-align:left;line-height:1.45}
+    .chev{color:#0891b2;font-size:21px;line-height:1;flex-shrink:0}
+    .foot{font-size:11px;color:#64748b;margin-top:16px;line-height:1.6}
   </style>
 </head>
 <body>
   <div class="wrap">
-    <svg viewBox="0 0 512 512" width="72" height="72" class="flex-shrink-0" aria-hidden="true"><defs><linearGradient id="sc-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22d3ee"/><stop offset="0.55" stop-color="#0891b2"/><stop offset="1" stop-color="#0e5f74"/></linearGradient><clipPath id="sc-d"><circle cx="256" cy="256" r="196"/></clipPath></defs><rect width="512" height="512" rx="112" fill="url(#sc-g)"/><g transform="translate(256,256) scale(0.94) translate(-256,-256)"><circle cx="256" cy="256" r="196" fill="#0b4a5c" opacity="0.22"/><g clip-path="url(#sc-d)"><path d="M -10,352 C 60,306 120,398 206,352 S 370,306 470,352 L 490,520 L -10,520 Z" fill="#fff" opacity="0.22"/><path d="M -10,352 C 60,306 120,398 206,352 S 370,306 470,352" fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round"/></g><g clip-path="url(#sc-d)"><path d="M 20,386 C 90,344 150,428 236,386 S 400,344 500,386 L 520,520 L 20,520 Z" fill="#fff" opacity="0.4"/><path d="M 20,386 C 90,344 150,428 236,386 S 400,344 500,386" fill="none" stroke="#fff" stroke-width="13" stroke-linecap="round"/></g><circle cx="256" cy="256" r="196" fill="none" stroke="#fff" stroke-width="17"/><path d="M 256,106 C 280.3,181 310,230.6 310,256 L 202,256 C 202,230.6 231.7,181 256,106 Z" fill="#fff"/><path d="M 256,406 C 231.7,331 202,281.4 202,256 L 310,256 C 310,281.4 280.3,331 256,406 Z" fill="#fff" opacity="0.55"/><circle cx="256" cy="256" r="20" fill="#0e5f74"/></g></svg>
+    <svg viewBox="0 0 512 512" width="64" height="64" class="flex-shrink-0" aria-hidden="true"><defs><linearGradient id="sc-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22d3ee"/><stop offset="0.55" stop-color="#0891b2"/><stop offset="1" stop-color="#0e5f74"/></linearGradient><clipPath id="sc-d"><circle cx="256" cy="256" r="196"/></clipPath></defs><rect width="512" height="512" rx="112" fill="url(#sc-g)"/><g transform="translate(256,256) scale(0.94) translate(-256,-256)"><circle cx="256" cy="256" r="196" fill="#0b4a5c" opacity="0.22"/><g clip-path="url(#sc-d)"><path d="M -10,352 C 60,306 120,398 206,352 S 370,306 470,352 L 490,520 L -10,520 Z" fill="#fff" opacity="0.22"/><path d="M -10,352 C 60,306 120,398 206,352 S 370,306 470,352" fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round"/></g><g clip-path="url(#sc-d)"><path d="M 20,386 C 90,344 150,428 236,386 S 400,344 500,386 L 520,520 L 20,520 Z" fill="#fff" opacity="0.4"/><path d="M 20,386 C 90,344 150,428 236,386 S 400,344 500,386" fill="none" stroke="#fff" stroke-width="13" stroke-linecap="round"/></g><circle cx="256" cy="256" r="196" fill="none" stroke="#fff" stroke-width="17"/><path d="M 256,106 C 280.3,181 310,230.6 310,256 L 202,256 C 202,230.6 231.7,181 256,106 Z" fill="#fff"/><path d="M 256,406 C 231.7,331 202,281.4 202,256 L 310,256 C 310,281.4 280.3,331 256,406 Z" fill="#fff" opacity="0.55"/><circle cx="256" cy="256" r="20" fill="#0e5f74"/></g></svg>
     <h1>Split Compass</h1>
-    <p class="sub">Split targets from elite race data — for the pool deck.</p>
+    <p class="sub">Split targets from elite race data &mdash; for the pool deck.</p>
 
-    <a class="card" href="coach.html">
+    <div class="install">
+      <h2>First, add it to your phone</h2>
+      <div class="step"><span class="num">1</span><span class="steptxt">Tap <span class="k">&hellip;</span> or the <span class="k">Share</span> icon, scroll down, then <span class="k">Add to Home Screen</span>.</span></div>
+      <div class="step"><span class="num">2</span><span class="steptxt">Open it from the new icon and pick below &mdash; it remembers, and goes straight there next time.</span></div>
+    </div>
+
+    <a class="card" href="coach.html" data-role="coach">
       <div>
-        <div class="t">I'm a coach</div>
+        <div class="t">I&rsquo;m a coach</div>
         <div class="d">A whole squad: training pace tables, race review, best times, import a season of results.</div>
       </div>
       <span class="chev">&rsaquo;</span>
     </a>
 
-    <a class="card" href="swimmer.html">
+    <a class="card" href="swimmer.html" data-role="swimmer">
       <div>
-        <div class="t">I'm a swimmer</div>
+        <div class="t">I&rsquo;m a swimmer</div>
         <div class="d">Just you: record your races and splits, set target times, watch your progress.</div>
       </div>
       <span class="chev">&rsaquo;</span>
     </a>
 
-    <p class="foot">
-      Pick one, then use <strong>Share &rarr; Add to Home Screen</strong> so it opens like an app and keeps your data.<br>
-      Everything stays on your phone. Nothing is uploaded.
-    </p>
+    <p class="foot">Everything stays on your phone. Nothing is uploaded.<br>
+      &copy; 2026 Ga&euml;l Chaubet &middot; All rights reserved.</p>
   </div>
   <script>
-    // Cache the app for offline use even if they never come back to this page.
+    document.querySelectorAll('a.card').forEach(function (a) {
+      a.addEventListener('click', function () {
+        try { localStorage.setItem('sc_start', a.getAttribute('data-role')); } catch (e) {}
+      });
+    });
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); });
     }

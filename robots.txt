@@ -1,0 +1,6 @@
+# Split Compass
+# The coach and swimmer apps are public. The full-feature build is not for
+# indexing — it is the author's own coaching tool.
+User-agent: *
+Disallow: /pacer_19a0177a4f06.html
+Disallow: /manifest-v3.webmanifest

@@ -1771,16 +1771,7 @@ function deleteSwimmer(sid) {
 // RENDER
 // ============================================================
 
-const screenLabels = {
-  roster: { num: 1, label: 'Roster' },
-  'quick-calc': { num: 2, label: 'Set target time' },
-  'predicted-splits': { num: 3, label: 'Predicted splits' },
-  'race-analysis': { num: 4, label: 'Race analysis' },
-  'squad-targets': { num: 5, label: 'Squad targets' },
-  'training-pace': { num: null, label: 'Training Pace' },
-  'other-tools': { num: null, label: 'Other tools' },
-  'swimmer-detail': { num: null, label: 'Swimmer detail' },
-};
+
 
 function renderJumper() {
   const host = document.getElementById('jumper');
@@ -1829,11 +1820,6 @@ function render() {
     case 'race-entry': html = renderRaceEntry(); break;
     case 'race-analysis': html = renderRaceAnalysis(); break;
     case 'race-compare': html = renderRaceCompare(); break;
-    case 'squad-targets': html = renderSquadTargets(); break;
-    case 'converter': html = renderConverter(); break;
-    case 'efficiency': html = renderEfficiency(); break;
-    case 'fifty': html = renderFifty(); break;
-    case 'adjacent': html = renderAdjacent(); break;
     case 'trends': html = renderTrends(); break;
     case 'progress': html = renderProgress(); break;
     case 'progress-group': html = renderProgressGroup(); break;
@@ -1843,7 +1829,6 @@ function render() {
     case 'import-meet': html = renderImportMeet(); break;
     case 'import-preview': html = renderImportPreview(); break;
     case 'training-pace': html = renderTrainingPace(); break;
-    case 'other-tools': html = renderOtherTools(); break;
     default: html = '<div class="p-8 text-slate-500">Unknown view</div>';
   }
   host.innerHTML = html;
@@ -3250,130 +3235,40 @@ function convResultHtml() {
   }).join('<div class="h-3"></div>');
 }
 
-function renderConverter() {
-  const c = state.convForm;
-  const strokes = ['Free', 'Back', 'Breast', 'Fly', 'IM'];
-  // Yards events are the NCAA championship programme, not the metric list — a 500 and a 1650
-  // exist in yards and a 400/800/1500 does not.
-  const distances = c.from === 'SCY' ? (scyDistances[c.stroke] || []) : [50, 100, 200, 400, 800, 1500];
-  const secs = Math.max(0, c.seconds || 0);
-  const cmin = Math.floor(secs / 60);
-  const csec = Math.floor(secs % 60);
-  const chh = Math.round((secs - Math.floor(secs)) * 100);
-  return `
-    <div class="statusbar"></div>
-    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
-      <div class="flex-1 min-w-0">
-        <div class="text-lg font-semibold">Course converter</div>
-        <div class="text-xs text-muted truncate">SCY ↔ SCM ↔ LCM · paired-athlete ratios</div>
-      </div>
-    </div>
-    <div class="scrollable px-5 py-4 space-y-6">
-      <div>
-        <div class="label-cap mb-2">Stroke</div>
-        <div class="flex gap-2 flex-wrap">
-          ${strokes.map(s => `<span class="pill ${c.stroke === s ? 'active' : ''}" data-cstroke="${s}">${s}</span>`).join('')}
-        </div>
-      </div>
-      <div class="flex gap-3">
-        <div class="flex-[0.82]">
-          <div class="label-cap mb-2">Sex</div>
-          <div class="seg-group">
-            <div class="seg ${c.sex === 'M' ? 'active' : ''}" data-csex="M">Men</div>
-            <div class="seg ${c.sex === 'F' ? 'active' : ''}" data-csex="F">Women</div>
-          </div>
-        </div>
-        <div class="flex-[1.18] min-w-0">
-          <div class="label-cap mb-2">Convert from</div>
-          <div class="seg-group">
-            <div class="seg ${c.from === 'SCY' ? 'active' : ''}" data-convfrom="SCY" style="padding:10px 4px;font-size:12.5px;white-space:nowrap;">SCY</div>
-            <div class="seg ${c.from === 'SCM' ? 'active' : ''}" data-convfrom="SCM" style="padding:10px 4px;font-size:12.5px;white-space:nowrap;">SCM</div>
-            <div class="seg ${c.from === 'LCM' ? 'active' : ''}" data-convfrom="LCM" style="padding:10px 4px;font-size:12.5px;white-space:nowrap;">LCM</div>
-          </div>
-        </div>
-      </div>
-      <div>
-        <div class="label-cap mb-2">Distance</div>
-        <div class="flex gap-2 flex-wrap">
-          ${distances.map(d => `<span class="pill ${c.distance === d ? 'active' : ''}" data-cdist="${d}">${d}</span>`).join('')}
-        </div>
-      </div>
-      <div>
-        <div class="label-cap mb-2">${c.from} time to convert${c.from === 'SCY' ? ' (yards)' : ''}</div>
-        <div class="bg-gradient-to-br from-cyan-50 to-white border-2 border-cyan-200 rounded-2xl px-4 py-5 focus-within:border-cyan-500 transition">
-          <div class="flex items-end justify-center gap-1">
-            <div class="text-center">
-              <input data-cmin inputmode="numeric" maxlength="2" value="${cmin}" class="time-seg" aria-label="Minutes" />
-              <div class="time-seg-label">min</div>
-            </div>
-            <div class="time-seg-sep">:</div>
-            <div class="text-center">
-              <input data-csec inputmode="numeric" maxlength="2" value="${String(csec).padStart(2, '0')}" class="time-seg" aria-label="Seconds" />
-              <div class="time-seg-label">sec</div>
-            </div>
-            <div class="time-seg-sep">.</div>
-            <div class="text-center">
-              <input data-chh inputmode="numeric" maxlength="2" value="${String(chh).padStart(2, '0')}" class="time-seg" aria-label="Hundredths" />
-              <div class="time-seg-label">hund.</div>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div id="conv-result">${convResultHtml()}</div>
-      <div class="bg-white border border-slate-200 rounded-2xl p-4">
-        <div class="label-cap mb-2 text-muted">Save to a swimmer</div>
-        <div class="flex gap-2">
-          <input data-toolname data-form="conv" value="${(c.name || '').replace(/"/g, '&quot;')}" placeholder="Swimmer name" class="flex-1 bg-slate-100 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300" />
-          <button class="px-4 py-2.5 bg-cyan-600 text-white rounded-xl text-sm font-semibold hover:bg-cyan-700 active:scale-95 transition" data-action="save-conv">${state.reviewId ? 'Update' : 'Save'}</button>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
 // ===== Min–max efficiency test (push 25/50) — targets from a predicted 100 =====
 // score = time(s) + arm strokes; lower = better. See MINMAX_TESTS_README (built Jul 2026).
-const mmFrac    = { Free:{M:0.479,F:0.481}, Back:{M:0.482,F:0.483}, Fly:{M:0.466,F:0.462}, Breast:{M:0.465,F:0.466} }; // 100 → first-50 goal fraction
-const mmRatio47 = { Free:{M:2.73,F:2.71},  Back:{M:2.68,F:2.67},  Fly:{M:2.02,F:2.01},  Breast:{M:1.93,F:1.86} };     // 50 LCM score ratio (×first-50)
-const mmTurn    = { Free:0.6, Back:0.6, Fly:0.7, Breast:0.7 };                                                        // 50 SCM fixed turn time
+ // 100 → first-50 goal fraction
+     // 50 LCM score ratio (×first-50)
+                                                        // 50 SCM fixed turn time
 const mmSpc     = { Free:2, Back:2, Fly:1, Breast:1 };                                                                // arm strokes per cycle
-const mmElite   = { // elite reference scores (n=16 finals): l = 50 LCM, s = 50 SCM, q = 25 SCM
-  Free:{M:{l:62.1,s:61.4,q:29.1},F:{l:68.8,s:67.9,q:32.2}}, Back:{M:{l:67.9,s:67.1,q:31.8},F:{l:75.7,s:74.7,q:35.4}},
-  Fly:{M:{l:47.6,s:47.3,q:22.3},F:{l:52.7,s:52.3,q:24.7}}, Breast:{M:{l:53.0,s:52.6,q:24.8},F:{l:57.2,s:56.7,q:26.8}} };
-const mmScm2nd25 = { Free:{M:0.2515,F:0.2515}, Back:{M:0.2493,F:0.2484}, Fly:{M:0.2512,F:0.2522}, Breast:{M:0.2554,F:0.2544} }; // 2nd-25 of a 100 SCM (raw per-25, n=24)
-const mmScmMid50 = { Free:{M:0.5117,F:0.5116}, Back:{M:0.5080,F:0.5064}, Fly:{M:0.5139,F:0.5143}, Breast:{M:0.5182,F:0.5151} }; // 2nd+3rd-25 (middle 50) of a 100 SCM
-const mmScm2nd25hi = { Free:{M:0.2555,F:0.2538}, Back:{M:0.2544,F:0.2530}, Fly:{M:0.2565,F:0.2607}, Breast:{M:0.2598,F:0.2596} }; // MAX 2nd-25 (upper range = slowest still counting)
-const mmScmMid50hi = { Free:{M:0.5174,F:0.5144}, Back:{M:0.5153,F:0.5117}, Fly:{M:0.5186,F:0.5199}, Breast:{M:0.5223,F:0.5208} }; // MAX middle-50 (upper range)
-const mmLcm2ndMax  = { Free:{M:0.5289,F:0.5285}, Back:{M:0.5276,F:0.5296}, Fly:{M:0.5479,F:0.5478}, Breast:{M:0.5457,F:0.5454} }; // MAX 2nd-50 of a 100 LCM (upper range)
-const mmScoreBand  = { // min–max SCORE band: min → upper-IQR (lo=min/median, hi=q75/median of score/first-50 ratio, n=16)
-  Free:{M:{lo:0.9637,hi:1.0262},F:{lo:0.9526,hi:1.0172}}, Back:{M:{lo:0.9464,hi:1.0104},F:{lo:0.9409,hi:1.0332}},
-  Fly:{M:{lo:0.9614,hi:1.0071},F:{lo:0.9518,hi:1.0121}}, Breast:{M:{lo:0.9329,hi:1.0288},F:{lo:0.9567,hi:1.0236}} };
+
+ // 2nd-25 of a 100 SCM (raw per-25, n=24)
+ // 2nd+3rd-25 (middle 50) of a 100 SCM
+ // MAX 2nd-25 (upper range = slowest still counting)
+ // MAX middle-50 (upper range)
+ // MAX 2nd-50 of a 100 LCM (upper range)
+
 // --- pace-specific (100 vs 200) additions ---
-const mmRatio200 = { Free:{M:2.48,F:2.51}, Back:{M:2.48,F:2.50}, Fly:{M:1.94,F:1.92}, Breast:{M:1.73,F:1.65} }; // 50 LCM basis, 200-pace
-const mmFrac200  = { Free:{M:0.2322,F:0.2363}, Back:{M:0.2338,F:0.2347}, Fly:{M:0.2220,F:0.2232}, Breast:{M:0.2257,F:0.2274} }; // 200 LCM first-50 fraction
-const mmCeil = { '100': { Free:{M:1.06,F:1.05}, Back:{M:1.06,F:1.04}, Fly:{M:1.07,F:1.08}, Breast:{M:1.10,F:1.09} },
-                 '200': { Free:{M:1.10,F:1.06}, Back:{M:1.10,F:1.07}, Fly:{M:1.11,F:1.12}, Breast:{M:1.14,F:1.13} } }; // stop-rule: target × this
-const mmCruise25  = { Free:{M:[0.1277,0.1292],F:[0.1273,0.1283]}, Back:{M:[0.1275,0.1303],F:[0.1274,0.1291]}, Fly:{M:[0.1282,0.1295],F:[0.1276,0.1299]}, Breast:{M:[0.1279,0.1290],F:[0.1277,0.1289]} }; // 200 cruise 25 [median,max]
-const mmCruise50s = { Free:{M:[0.2553,0.2584],F:[0.2547,0.2566]}, Back:{M:[0.2550,0.2606],F:[0.2548,0.2582]}, Fly:{M:[0.2564,0.2589],F:[0.2553,0.2598]}, Breast:{M:[0.2558,0.2581],F:[0.2555,0.2577]} }; // 200 cruise 50 SCM
-const mmCruise50l = { Free:{M:[0.2552,0.2575],F:[0.2549,0.2573]}, Back:{M:[0.2548,0.2590],F:[0.2535,0.2565]}, Fly:{M:[0.2561,0.2589],F:[0.2559,0.2596]}, Breast:{M:[0.2559,0.2612],F:[0.2553,0.2578]} }; // 200 cruise 50 LCM
+ // 50 LCM basis, 200-pace
+ // 200 LCM first-50 fraction
+ // stop-rule: target × this
+ // 200 cruise 25 [median,max]
+ // 200 cruise 50 SCM
+ // 200 cruise 50 LCM
 const mmTestLabel = { '25scm':'25 SCM', '50scm':'50 SCM', '50lcm':'50 LCM' };
 const mmAmpSprint = { Free:{M:2.32,F:2.12}, Back:{M:2.17,F:1.97}, Fly:{M:1.96,F:1.75}, Breast:{M:1.81,F:1.71} }; // 100-pace target distance/stroke (m/cycle)
 const mmAmpCruise = { Free:{M:2.63,F:2.31}, Back:{M:2.38,F:2.16}, Fly:{M:2.03,F:1.79}, Breast:{M:2.41,F:2.33} }; // 200-pace target distance/stroke (m/cycle)
 const mmSI50 = { Free:{M:4.47,F:3.83}, Back:{M:3.74,F:3.10}, Fly:{M:3.70,F:3.08}, Breast:{M:2.59,F:2.20} }; // elite 50m-EVENT whole-race SI (Table A, Paris+Fukuoka finals = clean-window v×amp; stroke_index_elite_vs_renens.csv)
 const mmSI50low = { Free:{M:4.30,F:3.71}, Back:{M:3.65,F:3.04}, Fly:{M:3.62,F:3.02}, Breast:{M:2.52,F:2.13} }; // 50m floor = back-window (25-45 m) SI of the same 50 finals - the fatigue definition, consistent with the 100/200 floors (cross-check: field IQR-low of whole-race SI lands within ~1%)
 const mmAmp50 = { Free:{M:2.08,F:1.97}, Back:{M:1.97,F:1.82}, Fly:{M:1.86,F:1.69}, Breast:{M:1.53,F:1.43} }; // elite 50m-event amplitude m/cycle (60·v/SR over the 15-25/25-45 clean windows, 50m_sprint_data.csv)
-const mmSI = { '100': { Free:{M:4.68,F:3.86}, Back:{M:3.91,F:3.17}, Fly:{M:3.69,F:2.97}, Breast:{M:2.93,F:2.53} },
-               '200': { Free:{M:4.69,F:3.82}, Back:{M:3.81,F:3.19}, Fly:{M:3.40,F:2.74}, Breast:{M:3.44,F:3.04} } }; // elite SI whole-race avg (STROKE_INDEX_README Table A)
+ // elite SI whole-race avg (STROKE_INDEX_README Table A)
 const mmSIfresh = { '100': { Free:{M:4.96,F:4.04}, Back:{M:4.13,F:3.31}, Fly:{M:3.93,F:3.21}, Breast:{M:3.20,F:2.76} },
                     '200': { Free:{M:5.04,F:4.01}, Back:{M:4.10,F:3.37}, Fly:{M:3.76,F:3.05}, Breast:{M:3.73,F:3.34} } }; // 1st-50 fresh SI target
 const mmSIfloor = { '100': { Free:{M:4.26,F:3.53}, Back:{M:3.56,F:2.94}, Fly:{M:3.33,F:2.63}, Breast:{M:2.52,F:2.19} },
                     '200': { Free:{M:4.07,F:3.52}, Back:{M:3.34,F:2.85}, Fly:{M:2.98,F:2.38}, Breast:{M:2.61,F:2.48} } }; // FLOOR = SI of the last 25 of the FINAL lap (video zone stops ~5 m before the wall) = the worst stroking an elite still shows; set-modify trigger (Gaël 2026-07-15; was the full last-lap 15-45 window, ~2-5% higher)
-const predAmp = { // elite stroke length m/cycle (sprint basis): mean + shortest(min) = most strokes
-  Free: {M:{mean:2.324,min:2.080},F:{mean:2.124,min:2.050}}, Back: {M:{mean:2.167,min:1.820},F:{mean:1.966,min:1.790}},
-  Fly: {M:{mean:1.963,min:1.810},F:{mean:1.752,min:1.630}}, Breast: {M:{mean:1.805,min:1.560},F:{mean:1.714,min:1.570}} };
-const mmSI2ndHi = { Free:{M:4.60,F:3.72}, Back:{M:3.80,F:3.22}, Fly:{M:3.57,F:2.82}, Breast:{M:2.79,F:2.43} }; // elite 2nd-50 SI upper IQR (q75), STROKE_INDEX_README Table B
-const mmSI4thHi = { Free:{M:4.36,F:3.63}, Back:{M:3.55,F:3.15}, Fly:{M:3.15,F:2.49}, Breast:{M:3.09,F:2.79} }; // elite 4th-50 SI upper IQR (q75), Table C (200)
+
+ // elite 2nd-50 SI upper IQR (q75), STROKE_INDEX_README Table B
+ // elite 4th-50 SI upper IQR (q75), Table C (200)
 // 15-45m clean-window speed / race-avg speed, first 50 of event (Paris 2024 finals; sex-avg, sex-independent to <1%). Removes the dive's inflation of the raw average so targets reflect true surface pace. 50m of Back/Breast/Fly & all IM extrapolated (100-value minus the Free 50->100 dive gap ~0.06).
 const mmCleanR = { Free:{50:0.916,100:0.977,200:0.998}, Back:{50:0.91,100:0.968,200:1.005}, Breast:{50:0.92,100:0.975,200:0.994}, Fly:{50:0.92,100:0.978,200:1.023}, IM:{100:0.98,200:1.00} };
 // within the 15-45m window: segment speed / clean-window speed (Paris finals, ~stroke-independent). 15-25m runs ~2.5% hot off the breakout, 25-45m ~1.2% down as speed settles.
@@ -3539,50 +3434,6 @@ function effSegScore(mk, tCum, scCum, st, sx, scm) {
   const siE = mmSI50[st][sx], ampRef = mmAmp50[st][sx];
   return { si: si, pctE: siE > 0 ? si / siE * 100 : 0, pctG: ampRef > 0 ? dps / ampRef * 100 : 0 };
 }
-function renderEfficiency() {
-  const f = state.effForm;
-  const strokes = ['Free', 'Back', 'Breast', 'Fly'];
-  const secs = Math.max(0, f.t || 0);
-  const emin = Math.floor(secs / 60), esec = Math.floor(secs % 60), ehh = Math.round((secs - Math.floor(secs)) * 100);
-  const dist = f.dist === '200' ? '200' : (f.dist === '100' ? '100' : '50'), course = f.course === 'SCM' ? 'SCM' : 'LCM';
-  return `
-    <div class="statusbar"></div>
-    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
-      <div class="flex-1 min-w-0"><div class="text-lg font-semibold">Stroke Index</div><div class="text-xs text-muted truncate">targets & scoring · ${dist} pace</div></div>
-    </div>
-    <div class="scrollable px-5 py-4 space-y-5">
-      <div><div class="label-cap mb-2">Stroke</div><div class="flex gap-2 flex-wrap">${strokes.map((s) => `<span class="pill ${f.stroke === s ? 'active' : ''}" data-estroke="${s}">${s}</span>`).join('')}</div></div>
-      <div class="flex gap-3">
-        <div class="flex-1"><div class="label-cap mb-2">Sex</div><div class="seg-group"><div class="seg ${f.sex === 'M' ? 'active' : ''}" data-esex="M">Men</div><div class="seg ${f.sex === 'F' ? 'active' : ''}" data-esex="F">Women</div></div></div>
-        <div class="flex-1"><div class="label-cap mb-2">Distance</div><div class="seg-group"><div class="seg ${dist === '50' ? 'active' : ''}" data-effdist="50">50</div><div class="seg ${dist === '100' ? 'active' : ''}" data-effdist="100">100</div><div class="seg ${dist === '200' ? 'active' : ''}" data-effdist="200">200</div></div></div>
-      </div>
-      <div><div class="label-cap mb-2">Course</div><div class="seg-group"><div class="seg ${course === 'LCM' ? 'active' : ''}" data-effcourse="LCM">LCM</div><div class="seg ${course === 'SCM' ? 'active' : ''}" data-effcourse="SCM">SCM</div></div></div>
-      <div>
-        <div class="label-cap mb-2">Goal ${dist} m ${course} time <span class="text-faint normal-case">(optional for scoring)</span></div>
-        <div class="bg-gradient-to-br from-cyan-50 to-white border-2 border-cyan-200 rounded-2xl px-4 py-4 focus-within:border-cyan-500 transition">
-          <div class="flex items-end justify-center gap-1">
-            <div class="text-center"><input data-emin inputmode="numeric" maxlength="2" value="${emin}" class="time-seg" aria-label="Minutes" /><div class="time-seg-label">min</div></div>
-            <div class="time-seg-sep">:</div>
-            <div class="text-center"><input data-esec inputmode="numeric" maxlength="2" value="${String(esec).padStart(2, '0')}" class="time-seg" aria-label="Seconds" /><div class="time-seg-label">sec</div></div>
-            <div class="time-seg-sep">.</div>
-            <div class="text-center"><input data-ehh inputmode="numeric" maxlength="2" value="${String(ehh).padStart(2, '0')}" class="time-seg" aria-label="Hundredths" /><div class="time-seg-label">hund.</div></div>
-          </div>
-        </div>
-      </div>
-      <div id="eff-result">${effResultHtml()}</div>
-      <div class="bg-white border border-slate-200 rounded-2xl p-3">
-        <div class="label-cap text-muted mb-2">Save to swimmer</div>
-        <div class="flex gap-2 items-center">
-          <input data-toolname data-form="eff" value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="Swimmer name" class="flex-1 min-w-0 bg-slate-100 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300" />
-          <button class="px-4 py-2.5 bg-cyan-600 text-white rounded-xl text-sm font-semibold hover:bg-cyan-700 active:scale-95 transition flex-shrink-0" data-action="save-effunified">${state.reviewId ? 'Update' : 'Save'}</button>
-        </div>
-        <input data-eff-date type="date" value="${f.date || ''}" class="w-full bg-slate-100 rounded-xl px-3 py-2.5 text-sm outline-none mt-2" aria-label="Date" />
-      </div>
-    </div>
-  `;
-}
-
 // --- 50 m tool: history-derived Best (PB) + live readiness of today's 50 --------
 // Prior saved 50 m tests for this swimmer (excludes the entry being edited).
 function fiftyHistory(form) {
@@ -3752,62 +3603,6 @@ function fiftyResultHtml() {
   `;
 }
 
-function renderFifty() {
-  const f = state.fiftyForm;
-  const strokes = ['Free', 'Back', 'Breast', 'Fly'];
-  const secs = Math.max(0, f.seconds || 0);
-  const fmin = Math.floor(secs / 60), fsec = Math.floor(secs % 60), fhh = Math.round((secs - Math.floor(secs)) * 100);
-  return `
-    <div class="statusbar"></div>
-    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
-      <div class="flex-1 min-w-0">
-        <div class="text-lg font-semibold">50 m LCM splits</div>
-        <div class="text-xs text-muted truncate">Sub-splits, checkpoints, stroke rate</div>
-      </div>
-    </div>
-    <div class="scrollable px-5 py-4 space-y-6">
-      <div>
-        <div class="label-cap mb-2">Stroke</div>
-        <div class="flex gap-2 flex-wrap">
-          ${strokes.map(s => `<span class="pill ${f.stroke === s ? 'active' : ''}" data-fstroke="${s}">${s}</span>`).join('')}
-        </div>
-      </div>
-      <div>
-        <div class="label-cap mb-2">Sex</div>
-        <div class="seg-group" style="max-width:220px;">
-          <div class="seg ${f.sex === 'M' ? 'active' : ''}" data-fsex="M">Men</div>
-          <div class="seg ${f.sex === 'F' ? 'active' : ''}" data-fsex="F">Women</div>
-        </div>
-      </div>
-      <div>
-        <div class="label-cap mb-2">50 m LCM time</div>
-        <div class="bg-gradient-to-br from-cyan-50 to-white border-2 border-cyan-200 rounded-2xl px-4 py-5 focus-within:border-cyan-500 transition">
-          <div class="flex items-end justify-center gap-1">
-            <div class="text-center"><input data-fmin inputmode="numeric" maxlength="2" value="${fmin}" class="time-seg" aria-label="Minutes" /><div class="time-seg-label">min</div></div>
-            <div class="time-seg-sep">:</div>
-            <div class="text-center"><input data-fsec inputmode="numeric" maxlength="2" value="${String(fsec).padStart(2, '0')}" class="time-seg" aria-label="Seconds" /><div class="time-seg-label">sec</div></div>
-            <div class="time-seg-sep">.</div>
-            <div class="text-center"><input data-fhh inputmode="numeric" maxlength="2" value="${String(fhh).padStart(2, '0')}" class="time-seg" aria-label="Hundredths" /><div class="time-seg-label">hund.</div></div>
-          </div>
-        </div>
-      </div>
-      <div id="fifty-result" class="space-y-3">${fiftyResultHtml()}</div>
-      <div>
-        <div class="label-cap mb-2">Test date</div>
-        <input type="date" data-fifty-date value="${f.date || ''}" class="w-full bg-slate-100 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300" />
-      </div>
-      <div class="bg-white border border-slate-200 rounded-2xl p-4">
-        <div class="label-cap mb-2 text-muted">Save to a swimmer</div>
-        <div class="flex gap-2">
-          <input data-toolname data-form="fifty" value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="Swimmer name" class="flex-1 bg-slate-100 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300" />
-          <button class="px-4 py-2.5 bg-cyan-600 text-white rounded-xl text-sm font-semibold hover:bg-cyan-700 active:scale-95 transition" data-action="save-fifty">${state.reviewId ? 'Update' : 'Save'}</button>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
 // ----- Screen: Adjacent-events predictor -----
 function adjResultHtml() {
   const f = state.adjForm;
@@ -3837,74 +3632,6 @@ function adjResultHtml() {
   }
   if (!cards.length) return `<div class="bg-white border border-slate-200 rounded-2xl p-6 text-center"><div class="text-slate-700 font-semibold text-sm mb-1">No adjacent events on the ladder</div><div class="text-slate-500 text-sm leading-relaxed">There's no neighbouring ${f.stroke} ${f.pool} event with dual-ranked data for the ${f.distance} m. Try a different distance or stroke.</div></div>`;
   return cards.join('');
-}
-
-function renderAdjacent() {
-  const f = state.adjForm;
-  const strokes = ['Free', 'Back', 'Breast', 'Fly', 'IM'];
-  const distances = [50, 100, 200, 400, 800, 1500];
-  const secs = Math.max(0, f.seconds || 0);
-  const amin = Math.floor(secs / 60), asec = Math.floor(secs % 60), ahh = Math.round((secs - Math.floor(secs)) * 100);
-  return `
-    <div class="statusbar"></div>
-    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
-      <div class="flex-1 min-w-0">
-        <div class="text-lg font-semibold">Adjacent events</div>
-        <div class="text-xs text-muted truncate">Predict the next event up &amp; down from your main</div>
-      </div>
-    </div>
-    <div class="scrollable px-5 py-4 space-y-6">
-      <div>
-        <div class="label-cap mb-2">Main stroke</div>
-        <div class="flex gap-2 flex-wrap">
-          ${strokes.map(s => `<span class="pill ${f.stroke === s ? 'active' : ''}" data-astroke="${s}">${s}</span>`).join('')}
-        </div>
-      </div>
-      <div class="flex gap-3">
-        <div class="flex-1">
-          <div class="label-cap mb-2">Sex</div>
-          <div class="seg-group">
-            <div class="seg ${f.sex === 'M' ? 'active' : ''}" data-asex="M">Men</div>
-            <div class="seg ${f.sex === 'F' ? 'active' : ''}" data-asex="F">Women</div>
-          </div>
-        </div>
-        <div class="flex-1">
-          <div class="label-cap mb-2">Pool</div>
-          <div class="seg-group">
-            <div class="seg ${f.pool === 'LCM' ? 'active' : ''}" data-apool="LCM">LCM</div>
-            <div class="seg ${f.pool === 'SCM' ? 'active' : ''}" data-apool="SCM">SCM</div>
-          </div>
-        </div>
-      </div>
-      <div>
-        <div class="label-cap mb-2">Main distance</div>
-        <div class="flex gap-2 flex-wrap">
-          ${distances.map(d => `<span class="pill ${f.distance === d ? 'active' : ''}" data-adist="${d}">${d}</span>`).join('')}
-        </div>
-      </div>
-      <div>
-        <div class="label-cap mb-2">Your ${f.distance} m time</div>
-        <div class="bg-gradient-to-br from-cyan-50 to-white border-2 border-cyan-200 rounded-2xl px-4 py-5 focus-within:border-cyan-500 transition">
-          <div class="flex items-end justify-center gap-1">
-            <div class="text-center"><input data-amin inputmode="numeric" maxlength="2" value="${amin}" class="time-seg" aria-label="Minutes" /><div class="time-seg-label">min</div></div>
-            <div class="time-seg-sep">:</div>
-            <div class="text-center"><input data-asec inputmode="numeric" maxlength="2" value="${String(asec).padStart(2, '0')}" class="time-seg" aria-label="Seconds" /><div class="time-seg-label">sec</div></div>
-            <div class="time-seg-sep">.</div>
-            <div class="text-center"><input data-ahh inputmode="numeric" maxlength="2" value="${String(ahh).padStart(2, '0')}" class="time-seg" aria-label="Hundredths" /><div class="time-seg-label">hund.</div></div>
-          </div>
-        </div>
-      </div>
-      <div id="adj-result" class="space-y-3">${adjResultHtml()}</div>
-      <div class="bg-white border border-slate-200 rounded-2xl p-4">
-        <div class="label-cap mb-2 text-muted">Save to a swimmer</div>
-        <div class="flex gap-2">
-          <input data-toolname data-form="adj" value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="Swimmer name" class="flex-1 bg-slate-100 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300" />
-          <button class="px-4 py-2.5 bg-cyan-600 text-white rounded-xl text-sm font-semibold hover:bg-cyan-700 active:scale-95 transition" data-action="save-adj">${state.reviewId ? 'Update' : 'Save'}</button>
-        </div>
-      </div>
-    </div>
-  `;
 }
 
 // ----- Screen 2: Quick Calc form -----
@@ -4841,34 +4568,6 @@ function timeBoxes(key, seconds, distance) {
 // ----- Screen: Other tools -----
 // Everything that isn't Record Races or Training Pace. The converter and adjacent events used
 // to be private-only; they are in both builds now. The last two stay private.
-function renderOtherTools() {
-  const tool = (action, title, sub, glyph) => `
-    <button class="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3.5 text-left hover:border-cyan-300 hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm flex items-center justify-between gap-3" data-action="${action}">
-      <div>
-        <div class="font-bold text-slate-800 text-[15px]">${title}</div>
-        <div class="text-[11px] text-muted mt-0.5 leading-snug">${sub}</div>
-      </div>
-      <span class="text-cyan-600 text-xl leading-none flex-shrink-0">${glyph}</span>
-    </button>`;
-  return `
-    <div class="statusbar"></div>
-    <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back" aria-label="Back">‹</button>
-      <div class="flex-1 min-w-0">
-        <div class="text-lg font-semibold">Other tools</div>
-      </div>
-    </div>
-    <div class="scrollable bg-slate-50">
-      <div class="px-5 py-4 space-y-2">
-        ${PUBLIC_BUILD ? '' : `
-        ${tool('converter', 'Course converter', 'Convert a time between SCY, SCM &amp; LCM', '⇄')}
-        ${tool('adjacent', 'Adjacent events', 'Predict the event up &amp; down from your main', '↕')}
-        ${tool('fifty-splits', '50 m LCM splits', 'Sub-splits, checkpoints &amp; stroke rate', '½')}
-        ${tool('efficiency', 'Efficiency test', 'Stroke Index from a 15 m pure swim', '◇')}`}
-      </div>
-    </div>`;
-}
-
 // ===== Season targets =====
 // A target is a saved plan carrying isTarget. Plans predate this, so treat a missing kind as
 // 'plan' exactly as the rest of the app does.
@@ -5603,73 +5302,6 @@ function renderRaceCompare() {
 }
 
 // ----- Screen 5: Squad targets -----
-function renderSquadTargets() {
-  // Build per-swimmer 200 fly targets from their best events; fall back to a default for swimmers
-  // whose best isn't a 200, since the demo focuses on the squad-targets-for-event use case.
-  const event = { stroke: 'Fly', distance: 200, pool: 'LCM' };
-  const entries = swimmers.map(s => {
-    // Synthetic target: scale their best to a 200 fly using a simple ratio fudge
-    let target;
-    if (s.bestEvent.stroke === 'Fly' && s.bestEvent.distance === 100) {
-      target = s.bestEvent.time * 2.26; // approx 100→200 fly scaling
-    } else if (s.bestEvent.stroke === 'Fly' && s.bestEvent.distance === 200) {
-      target = s.bestEvent.time;
-    } else if (s.bestEvent.distance === 200) {
-      target = s.bestEvent.time * 1.07;
-    } else {
-      target = s.bestEvent.time * 0.55;
-    }
-    const r = predict(event.stroke, s.sex, event.pool, event.distance, target);
-    return { swimmer: s, target, splits: r?.splits || [0,0,0,0] };
-  }).sort((a, b) => a.target - b.target);
-
-  const cards = entries.map(e => `
-    <div class="bg-white rounded-2xl border border-slate-200 px-3.5 py-3.5 clickable" data-swimmer="${e.swimmer.id}">
-      <div class="flex items-center justify-between mb-2.5">
-        <div class="flex items-center gap-2.5">
-          <div class="w-9 h-9 rounded-full bg-cyan-50 text-cyan-800 font-bold flex items-center justify-center text-xs">${e.swimmer.initials}</div>
-          <span class="font-semibold text-[15px]">${e.swimmer.name}</span>
-        </div>
-        <div class="text-right">
-          <div class="label-cap text-muted">Target</div>
-          <div class="hero-time text-base mt-0.5">${formatTime(e.target)}</div>
-        </div>
-      </div>
-      <div class="grid grid-cols-4 gap-1.5 text-center">
-        ${e.splits.map((s, i) => `
-          <div class="bg-slate-50 rounded-lg py-2">
-            <div class="text-[9px] text-muted uppercase tracking-wide font-semibold">${i === 0 ? '1st 50' : i === e.splits.length - 1 ? 'Last' : (i + 1) + ordinal(i+1).slice(-2)}</div>
-            <div class="mono text-sm font-bold mt-0.5">${s.toFixed(1)}</div>
-          </div>
-        `).join('')}
-      </div>
-    </div>
-  `).join('');
-
-  return `
-    <div class="statusbar"></div>
-    <div class="px-5 pt-3 pb-3 bg-white">
-      <div class="flex items-center gap-3 mb-2">
-        <button class="w-10 h-10 rounded-full bg-slate-50 flex items-center justify-center text-slate-700 text-xl leading-none" data-action="back">‹</button>
-        <div class="flex-1 min-w-0">
-          <div class="text-lg font-semibold">Squad targets</div>
-          <div class="text-xs text-slate-500">Predicted splits for every swimmer</div>
-        </div>
-        <button class="w-10 h-10 rounded-full bg-slate-50 flex items-center justify-center text-slate-500" title="Export">⎙</button>
-      </div>
-      <div class="flex gap-2 overflow-x-auto pt-2 -mx-5 px-5 pb-1">
-        <span class="pill active">200 Fly</span>
-        <span class="pill">LCM</span>
-        <span class="pill">Stretch +1%</span>
-      </div>
-    </div>
-    <div class="scrollable bg-slate-50">
-      <div class="px-5 py-3"><div class="label-cap">${entries.length} swimmers · sorted by target time</div></div>
-      <div class="space-y-2 px-3 pb-4">${cards}</div>
-    </div>
-  `;
-}
-
 // ============================================================
 // EVENTS
 // ============================================================
@@ -6066,10 +5698,6 @@ function handleAction(action, el) {
     case 'import-menu-meet': navigate('import-meet'); break;
     case 'import-season-pick': triggerImportCsv(); break;
     case 'import-times-confirm': doImportTimes(); break;
-    case 'converter': navigate('converter'); break;
-    case 'efficiency': navigate('efficiency'); break;
-    case 'fifty-splits': navigate('fifty'); break;
-    case 'adjacent': navigate('adjacent'); break;
     case 'trends': navigate('trends'); break;
     case 'progress': navigate('progress'); break;
     // These sub-views live on the saved-swimmer screen. The coach reaches them from
@@ -6235,7 +5863,6 @@ function handleAction(action, el) {
       break;
     }
     case 'training-pace': state.tpShow = false; navigate('training-pace'); break;
-    case 'other-tools': navigate('other-tools'); break;
     case 'tp-show': state.tpShow = true; render(); break;
     case 'tp-download': {
       if (!tpPdfReady()) showToast('Preparing the PDF…');
@@ -6253,7 +5880,6 @@ function handleAction(action, el) {
         });
       break;
     }
-    case 'squad': navigate('squad-targets'); break;
     case 'settings': showToast('Settings — not in v1 mock'); break;
     case 'add-swimmer': showToast('Add swimmer — not in v1 mock'); break;
     case 'save': {
