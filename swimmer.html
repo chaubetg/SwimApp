@@ -67,6 +67,10 @@
         border: 0 !important; border-radius: 0 !important; box-shadow: none !important; overflow: visible !important; }
       .screen { height: auto !important; overflow: visible !important; animation: none !important; }
       .scrollable { overflow: visible !important; max-height: none !important; height: auto !important; }
+      /* Fit-to-one-page (body.print-fit, set by printPage): keep the card at its own
+         width instead of stretching it across the sheet, and let the JS zoom shrink it. */
+      body.print-fit .stage { display: block !important; }
+      body.print-fit .phone { width: 390px !important; margin: 0 auto !important; }
       /* Training Pace dedicated sheet: only the table, when body.print-tp is set. */
       body.print-tp * { visibility: hidden; }
       body.print-tp #tp-print, body.print-tp #tp-print * { visibility: visible; }
@@ -173,6 +177,11 @@
     /* iOS zooms the page when a focused input is under 16px — keep every input at 16px
        and let the box shrink instead. */
     input, select, textarea { font-size: 16px; }
+    /* ...but Tailwind's .text-sm (0,1,0) outranks the bare element selector above (0,0,1),
+       so 21 fields were still 14px and iOS zoomed on focus. Phone widths only. */
+    @media (max-width: 480px) {
+      input:not([type=checkbox]):not([type=radio]), select, textarea { font-size: 16px !important; }
+    }
     .toast {
       position: fixed; bottom: 32px; left: 50%; transform: translateX(-50%);
       background: #0f172a; color: white;
@@ -1414,6 +1423,32 @@ function back() {
   navigate(state.history.pop(), { skipHistory: true });
 }
 
+// Screens that must come out as a single sheet. Everything else prints at full
+// size over as many pages as its content needs.
+const ONE_PAGE_VIEWS = { 'race-analysis': 1 };
+
+// Fit the current screen onto one page by measuring it rather than guessing a
+// shrink factor: the card's true height is the fixed header plus the scroller's
+// entire content, and the page gives us Letter (1056px at 96dpi) less the 12mm
+// @page margins. Only ever shrinks — a short race still prints at 1:1.
+function printPage() {
+  const ph = document.getElementById('phone');
+  if (!ONE_PAGE_VIEWS[state.view] || !ph) { window.print(); return; }
+  const sc = ph.querySelector('.scrollable');
+  const full = sc ? (ph.clientHeight - sc.clientHeight + sc.scrollHeight) : ph.scrollHeight;
+  const avail = 1056 - 2 * 45;
+  const z = full > 0 ? Math.min(1, avail / full) : 1;
+  document.body.classList.add('print-fit');
+  ph.style.zoom = z;
+  const end = () => {
+    document.body.classList.remove('print-fit');
+    ph.style.zoom = '';
+    window.removeEventListener('afterprint', end);
+  };
+  window.addEventListener('afterprint', end);
+  window.print();
+}
+
 // Download / Print affordance for times screens. window.print() -> the browser
 // dialog's "Save as PDF" is the download; the @media print sheet styles the page.
 function printBtn() {
@@ -1621,7 +1656,7 @@ function renderImportMenu() {
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0"><div class="text-lg font-semibold">Import times</div><div class="text-xs text-muted">Where are the times coming from?</div></div>
     </div>
     <div class="scrollable px-5 py-4 space-y-3 bg-slate-50">
@@ -1636,7 +1671,7 @@ function renderImportSeason() {
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0"><div class="text-lg font-semibold">Import from a season</div><div class="text-xs text-muted">Hy-Tek Team Manager · total times only</div></div>
     </div>
     <div class="scrollable px-5 py-4 space-y-4 bg-slate-50">
@@ -1665,7 +1700,7 @@ function renderImportMeet() {
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0"><div class="text-lg font-semibold">Import from a swim meet</div><div class="text-xs text-muted">Coming soon</div></div>
     </div>
     <div class="scrollable px-5 py-4 space-y-4 bg-slate-50">
@@ -1684,7 +1719,7 @@ function renderImportPreview() {
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0"><div class="text-lg font-semibold">Import race times</div><div class="text-xs text-muted">Hy-Tek Top Times · total times only</div></div>
     </div>
     <div class="scrollable px-5 py-4 space-y-4 bg-slate-50">
@@ -2221,6 +2256,19 @@ function render() {
     // Return/"check" key: commit the search — refresh to the full current-settings table.
     tpq.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); tpq.blur(); render(); } });
   }
+  // Name the keyboard's return key. iOS draws a named action (search/done) as the
+  // prominent blue key; the unnamed default is a grey "return". Doing it here covers
+  // every field on every screen instead of 21 hand-edited tags.
+  // Enter also blurs, so the key does what its label promises — and dismissing the
+  // keyboard is what restores the page scale on any iOS that still zoomed.
+  const NO_HINT = { checkbox: 1, radio: 1, date: 1, range: 1, file: 1 };
+  host.querySelectorAll('input').forEach((el) => {
+    if (NO_HINT[(el.getAttribute('type') || 'text').toLowerCase()]) return;
+    const isSearch = el.hasAttribute('data-search') || el.hasAttribute('data-tp-search');
+    el.setAttribute('enterkeyhint', isSearch ? 'search' : 'done');
+    if (isSearch) return;                      // those two already commit on Enter
+    el.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); el.blur(); } });
+  });
 }
 
 // Icon + wordmark at the top of the main page — shared by the coach and swimmer homes.
@@ -2240,7 +2288,7 @@ function renderSwimmerSetup() {
   return `
     <div class="statusbar"></div>
     ${editing ? `<div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back" aria-label="Back">\u2039</button>
+      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back" aria-label="Back">\u2039</button>
       <div class="text-lg font-semibold">Your details</div>
     </div>` : scHeaderHtml()}
     <div class="scrollable px-5 py-4 space-y-4 bg-slate-50">
@@ -2546,7 +2594,7 @@ function renderSavedSwimmer() {
   const swHeader = (title) => `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="sw-view-back">‹</button>
+      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="sw-view-back">‹</button>
       <div class="flex-1 min-w-0"><div class="text-lg font-semibold truncate">${name}</div><div class="text-xs text-muted truncate">${title}</div></div>
       ${printBtn()}
     </div>`;
@@ -2569,7 +2617,7 @@ function renderSavedSwimmer() {
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0">
         <div class="text-lg font-semibold truncate">${name}</div>
         <div class="text-xs text-muted truncate">${swimmerTeam(sid) ? `<span class="text-cyan-700 font-medium">${swimmerTeam(sid).replace(/</g, '&lt;')}</span> · ` : ''}${subtitle}</div>
@@ -2659,7 +2707,7 @@ function renderBestTimes() {
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0">
         <div class="text-lg font-semibold truncate">Best times</div>
         <div class="text-xs text-muted truncate">${name}</div>
@@ -2729,7 +2777,7 @@ function renderTrends() {
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0">
         <div class="text-lg font-semibold truncate">${name}</div>
         <div class="text-xs text-muted">Race trends</div>
@@ -2947,7 +2995,7 @@ function renderProgress() {
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0">
         <div class="text-lg font-semibold truncate">${name}</div>
         <div class="text-xs text-muted">Progress over time</div>
@@ -3005,7 +3053,7 @@ function renderProgressGroup() {
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0">
         <div class="text-lg font-semibold truncate">${g.sig}</div>
         <div class="text-xs text-muted truncate">${name} · ${win !== 'all' ? entries.length + ' of ' + allEntries.length : allEntries.length} entries</div>
@@ -3038,7 +3086,7 @@ function renderSwimmerDetail() {
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0">
         <div class="text-lg font-semibold">${s.name}</div>
         <div class="text-xs text-muted">${s.sex === 'M' ? 'Men' : 'Women'}</div>
@@ -3648,7 +3696,7 @@ function renderQuickCalc() {
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0">
         <div class="text-lg font-semibold">Set target time</div>
         ${ctxLine ? `<div class="text-xs text-muted truncate">${ctxLine}</div>` : ''}
@@ -3905,7 +3953,7 @@ function renderPredictedSplits() {
     return `
       <div class="statusbar"></div>
       <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
-        <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+        <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button>
         <div class="text-lg font-semibold">Set target time</div>
       </div>
       <div class="p-8 text-center">
@@ -4086,7 +4134,7 @@ function renderPredictedSplits() {
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-2 flex items-center gap-3 bg-white">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back" aria-label="Back">‹</button>
+      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back" aria-label="Back">‹</button>
       <div class="flex-1 min-w-0">
         <div class="text-base font-semibold truncate">${state.swimmer ? state.swimmer.name : (state.form.name || 'Set target time')}</div>
         <div class="text-xs text-muted truncate">${r.distance} ${r.stroke} · ${r.pool} · ${r.sex === 'M' ? 'Men' : 'Women'}</div>
@@ -4129,10 +4177,7 @@ function renderPredictedSplits() {
       <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">
         <div class="px-4 py-3 border-b border-slate-100 flex items-center justify-between gap-2">
           <div class="label-cap text-muted">Splits</div>
-          <div class="flex items-center gap-2">
-            ${viewToggle}
-            <button class="px-3 py-2 rounded-lg bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 transition" data-action="copy-splits" title="Copy splits">Copy</button>
-          </div>
+          <div class="flex items-center gap-2">${viewToggle}</div>
         </div>
         ${(isIM && r.distance === 400) ? renderIM400Splits(r) : splitRows}
       </div>
@@ -4234,7 +4279,7 @@ function _legacyRaceAnalysis() {
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0">
         <div class="text-base font-semibold">${swimmer?.name || ''}</div>
         <div class="text-xs text-muted truncate">${race.distance} ${race.stroke} ${race.pool} · ${race.date}</div>
@@ -4926,7 +4971,7 @@ function renderTrainingPace() {
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white no-print">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back" aria-label="Back">‹</button>
+      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back" aria-label="Back">‹</button>
       <div class="flex-1 min-w-0">
         <div class="text-lg font-semibold">Training Pace</div>
       </div>
@@ -4970,7 +5015,7 @@ function renderRaceEntry() {
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0">
         <div class="text-lg font-semibold">Record Races</div>
         ${f.name ? `<div class="text-xs text-muted truncate">${f.name}</div>` : ''}
@@ -5221,7 +5266,7 @@ function renderRaceAnalysis() {
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back" aria-label="Back">‹</button>
+      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back" aria-label="Back">‹</button>
       <div class="flex-1 min-w-0">
         <div class="text-base font-semibold truncate">${race.name || 'Race'}</div>
         <div class="text-xs text-muted truncate">${race.distance} ${race.stroke} ${race.pool}${meetLabel(race) ? ' · ' + meetLabel(race) : ''}${race.date ? ' · ' + race.date : ''}</div>
@@ -5276,7 +5321,7 @@ function renderRaceCompare() {
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
-      <button class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-2xl leading-none hover:bg-slate-200 transition" data-action="back">‹</button>
+      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0">
         <div class="text-base font-semibold">${A.name || 'Compare'}</div>
         <div class="text-xs text-muted truncate">${A.distance} ${A.stroke} ${A.pool} · ${A.round} vs ${B.round}</div>
@@ -5837,7 +5882,7 @@ function handleAction(action, el) {
     // The race is finished with: go home. Edit is the only way back into the entry form, so
     // the two controls in that header no longer lead to the same screen.
     case 'home': navigate('roster'); break;
-    case 'print-page': window.print(); break;
+    case 'print-page': printPage(); break;
     case 'self-save': {
       const f = state.selfSetup || {};
       const nm = (f.name || '').trim();
@@ -5978,20 +6023,6 @@ function handleAction(action, el) {
     case 'splitview': {
       state.splitView = el?.getAttribute('data-mode') || '100';
       render();
-      break;
-    }
-    case 'copy-splits': {
-      const r = state.result;
-      if (!r) break;
-      const rows = buildDisplaySegments(r);
-      let cum = 0;
-      const header = `${r.distance} ${r.stroke} ${r.pool} ${r.sex === 'M' ? 'Men' : 'Women'} — target ${formatTime(r.targetSeconds)}`;
-      const lines = rows.map(row => { const c = row.count || 1; cum += row.time * c; return `${row.label}\t${formatTime(row.time)}${c > 1 ? ` (×${c})` : ''}\tcum ${formatTime(cum)}`; });
-      const text = header + '\n' + lines.join('\n');
-      const done = () => showToast('Splits copied');
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(done).catch(done);
-      } else { done(); }
       break;
     }
   }
