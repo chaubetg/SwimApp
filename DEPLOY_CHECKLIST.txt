@@ -2,17 +2,18 @@ DEPLOYING TO github.com/chaubetg/SwimApp  —  troubleshooting order
 
 WHAT "DEPLOYED" MEANS
   The repo root must contain these files, at the ROOT, not inside a folder:
-    .nojekyll  index.html  swimmer.html  pacer_19a0177a4f06.html  README.md
+    .nojekyll  index.html  coach.html  swimmer.html  pacer_19a0177a4f06.html  README.md
     manifest.webmanifest  manifest-swimmer.webmanifest  manifest-v3.webmanifest
     sw.js  icon-192.png  icon-512.png
 
   All three builds live in ONE repo on purpose — same origin, because browser
   storage is per-origin. Never split the swimmer build into its own repo.
 
-  THE THREE URLS
-    coach    https://chaubetg.github.io/SwimApp/
-    swimmer  https://chaubetg.github.io/SwimApp/swimmer.html
-    private  https://chaubetg.github.io/SwimApp/pacer_19a0177a4f06.html
+  THE URLS  (share the first one — it asks which you are)
+    front door  https://chaubetg.github.io/SwimApp/
+    coach       https://chaubetg.github.io/SwimApp/coach.html
+    swimmer     https://chaubetg.github.io/SwimApp/swimmer.html
+    private     https://chaubetg.github.io/SwimApp/pacer_19a0177a4f06.html
 
 1. CHECK IT ACTUALLY UPLOADED (most common cause)
    Open github.com/chaubetg/SwimApp and look at the file list.
@@ -37,7 +38,8 @@ WHAT "DEPLOYED" MEANS
 
 4. CONFIRM WHAT IS LIVE (don't trust a normal browser tab)
    Open each URL in a PRIVATE / INCOGNITO window. Check the tab title:
-     /SwimApp/               -> "Split Compass — Swim Split Predictor"
+     /SwimApp/               -> "Split Compass"  (front door, two buttons)
+     /SwimApp/coach.html     -> "Split Compass — Swim Split Predictor"
      /SwimApp/swimmer.html   -> "Split Compass — for swimmers"
    If either still reads "Split Compass — v3 (private preview)", that generated
    file is NOT live regardless of what the repo looks like.

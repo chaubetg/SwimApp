@@ -10,11 +10,12 @@ worker, second icon set and second manifest to maintain.
 
 THE FILES
 ---------
-  index.html                   COACH app        -> chaubetg.github.io/SwimApp/
-  swimmer.html                 SWIMMER app      -> .../SwimApp/swimmer.html
+  index.html                   FRONT DOOR "coach or swimmer?" -> the link you share
+  coach.html                   COACH app        -> .../coach.html
+  swimmer.html                 SWIMMER app      -> .../swimmer.html
   pacer_19a0177a4f06.html      PRIVATE full build (every tool)
   sw.js                        service worker — SEE THE CACHE WARNING BELOW
-  manifest.webmanifest         coach app identity
+  manifest.webmanifest         coach app identity (start_url coach.html)
   manifest-swimmer.webmanifest swimmer app identity
   manifest-v3.webmanifest      private build identity
   icon-192.png / icon-512.png  app icon (both sizes referenced)
@@ -38,10 +39,12 @@ WHAT TO UPLOAD, AND WHEN
 FIRST TIME / AFTER A LONG GAP:  upload everything above. Replace all.
 
 EVERY NORMAL UPDATE — these four change on basically every build:
-    index.html
+    coach.html
     swimmer.html
     pacer_19a0177a4f06.html
     sw.js                      <- the cache bump; without it nothing updates
+
+  index.html (the front door) only changes when you edit chooser.html.
 
 ONLY WHEN THEY CHANGE (rare, set-and-forget):
     the three manifests   — app name, icons, start_url
@@ -62,13 +65,15 @@ installed home-screen app can keep the old build for days. Two fixes:
 REGENERATING AFTER EDITS
 ------------------------
 The PRIVATE build in this folder is the editable source of truth. Never hand-edit
-index.html or swimmer.html — they are generated and your edits will be overwritten.
+coach.html, swimmer.html or index.html — they are generated and your edits will be
+overwritten. The front door's real source is chooser.html; edit that.
 
     edit SwimApp_deploy/pacer_19a0177a4f06.html
     node outputs/test_*.js                  (run the suites)
     python3 outputs/sync_deploy.py          (from the sw_database root)
 
-sync_deploy regenerates index.html AND swimmer.html from the private build,
+sync_deploy regenerates coach.html AND swimmer.html from the private build, copies
+chooser.html over index.html,
 refuses to run if either would differ by more than its three allowed lines, and
 bumps the sw.js cache.
 
