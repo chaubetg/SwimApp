@@ -1381,7 +1381,8 @@ const state = {
   saved: loadSaved(), // persisted split predictions, searchable by name
   search: '', // roster search query
   savedSid: null, // selected swimmer id on the saved-events menu
-  swimmerView: null, // null | 'races' | 'plans' | 'ranked' — swimmer sub-view
+  swimmerView: null, // null | 'races' | 'plans' — two tabs of one screen
+  btSort: 'event',   // 'event' | 'pts' — Best times sort (absorbed the old ranked screen)
   swimmerStroke: null, // selected stroke inside a swimmer sub-view
   reviewId: null, // id of a saved entry opened for review/edit (Save becomes Update)
   // --- Race analysis ---
@@ -2287,6 +2288,34 @@ function render() {
   });
 }
 
+// Line icons for the navigation card. Stroke-only and currentColor, so one cyan
+// class on the wrapper colours them; 18px reads cleanly on a phone without detail noise.
+const ICO = (d) => '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+  'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + d + '</svg>';
+const ICON_RACES = ICO('<circle cx="12" cy="13.5" r="7.5"/><path d="M12 10v3.5l2.4 1.8"/><path d="M9.5 2.5h5"/>');
+const ICON_BEST  = ICO('<path d="M7 4h10v4.5a5 5 0 0 1-10 0V4Z"/><path d="M7 5.5H4.6A2.4 2.4 0 0 0 7 9"/>' +
+                       '<path d="M17 5.5h2.4A2.4 2.4 0 0 1 17 9"/><path d="M12 13.5V17"/><path d="M8.5 20.5h7"/>');
+const ICON_TREND = ICO('<path d="M3 16.5 8.5 11l3.5 3.5L21 6"/><path d="M15 6h6v6"/>');
+
+// One card, hairline dividers, no border on the last row. Rows are built here rather
+// than with a `last:` variant so the markup does not depend on that utility existing.
+// Pass rows as [icon, title, subtitle, value, action]; falsy rows are dropped.
+function navCard(rows) {
+  const list = rows.filter(Boolean);
+  if (!list.length) return '';
+  const html = list.map(([icon, title, sub, val, action], i) => `
+      <button class="w-full px-4 py-3.5 flex items-center gap-3 text-left hover:bg-cyan-50/50 active:bg-cyan-50 transition${i < list.length - 1 ? ' border-b border-slate-100' : ''}" data-action="${action}">
+        <span class="w-9 h-9 rounded-xl bg-cyan-50 text-cyan-700 flex items-center justify-center flex-shrink-0">${icon}</span>
+        <span class="flex-1 min-w-0">
+          <span class="block font-semibold text-slate-800 text-[15px] truncate">${title}</span>
+          ${sub ? `<span class="block text-[11px] text-muted mt-0.5 truncate">${sub}</span>` : ''}
+        </span>
+        ${val ? `<span class="text-xs font-semibold text-slate-500 flex-shrink-0">${val}</span>` : ''}
+        <span class="text-slate-300 text-xl leading-none flex-shrink-0">›</span>
+      </button>`).join('');
+  return `<div class="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">${html}</div>`;
+}
+
 // Icon + wordmark at the top of the main page — shared by the coach and swimmer homes.
 const SC_BADGE = '<svg viewBox="0 0 512 512" width="34" height="34" class="flex-shrink-0" aria-hidden="true"><defs><linearGradient id="sc-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22d3ee"/><stop offset="0.55" stop-color="#0891b2"/><stop offset="1" stop-color="#0e5f74"/></linearGradient><clipPath id="sc-d"><circle cx="256" cy="256" r="196"/></clipPath></defs><rect width="512" height="512" rx="112" fill="url(#sc-g)"/><g transform="translate(256,256) scale(0.94) translate(-256,-256)"><circle cx="256" cy="256" r="196" fill="#0b4a5c" opacity="0.22"/><g clip-path="url(#sc-d)"><path d="M -10,352 C 60,306 120,398 206,352 S 370,306 470,352 L 490,520 L -10,520 Z" fill="#fff" opacity="0.22"/><path d="M -10,352 C 60,306 120,398 206,352 S 370,306 470,352" fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round"/></g><g clip-path="url(#sc-d)"><path d="M 20,386 C 90,344 150,428 236,386 S 400,344 500,386 L 520,520 L 20,520 Z" fill="#fff" opacity="0.4"/><path d="M 20,386 C 90,344 150,428 236,386 S 400,344 500,386" fill="none" stroke="#fff" stroke-width="13" stroke-linecap="round"/></g><circle cx="256" cy="256" r="196" fill="none" stroke="#fff" stroke-width="17"/><path d="M 256,106 C 280.3,181 310,230.6 310,256 L 202,256 C 202,230.6 231.7,181 256,106 Z" fill="#fff"/><path d="M 256,406 C 231.7,331 202,281.4 202,256 L 310,256 C 310,281.4 280.3,331 256,406 Z" fill="#fff" opacity="0.55"/><circle cx="256" cy="256" r="20" fill="#0e5f74"/></g></svg>';
 // Which edition the user is looking at. Small, muted, beside the wordmark.
@@ -2331,7 +2360,7 @@ function renderSwimmerHome() {
   const nm = selfName() || 'Me';
   const races = state.saved.filter((s) => s.sid === sid && s.kind === 'race');
   const plans = state.saved.filter((s) => s.sid === sid && (!s.kind || s.kind === 'plan'));
-  const tile = (action, title, sub) => `<button class="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3.5 text-left hover:border-cyan-300 hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm flex items-center justify-between gap-3" data-action="${action}"><div><div class="font-bold text-slate-800 text-[15px]">${title}</div><div class="text-[11px] text-muted mt-0.5 leading-snug">${sub}</div></div><span class="text-slate-300 text-2xl leading-none flex-shrink-0">\u203a</span></button>`;
+  const bestCount = races.length ? bestTimesFor(sid, { mode: 'all' }).length : 0;
   return `
     <div class="statusbar"></div>
     ${scHeaderHtml()}
@@ -2348,11 +2377,13 @@ function renderSwimmerHome() {
       </button>
     </div>
     <div class="scrollable px-5 pb-4 space-y-2">
-      ${races.length ? tile('sw-view-races', 'My races', `${races.length} recorded \u00b7 tap an event to see them`) : ''}
-      ${races.length ? tile('best-times', 'My best times', 'Fastest time in each event') : ''}
-      ${hasProgress(sid) ? tile('progress', 'Progress over time', 'How your times are trending') : ''}
-      ${races.length ? tile('sw-view-ranked', 'Ranked by AQUA points', 'Your strongest events, by World Aquatics points') : ''}
-      ${plans.length ? tile('sw-view-plans', 'My target times', `${plans.length} saved`) : ''}
+      ${navCard([
+        (races.length || plans.length) && [ICON_RACES, 'My races', plans.length ? 'Races and target times' : 'Grouped by event',
+          (races.length ? races.length + ' race' + (races.length === 1 ? '' : 's') : plans.length + ' target' + (plans.length === 1 ? '' : 's')), 'sw-view-races'],
+        races.length && [ICON_BEST, 'My best times', 'Fastest in each event',
+          bestCount + ' event' + (bestCount === 1 ? '' : 's'), 'best-times'],
+        hasProgress(sid) && [ICON_TREND, 'Progress over time', 'How your times are trending', '', 'progress'],
+      ])}
       ${!races.length && !plans.length ? `<div class="text-center text-sm text-muted px-6 py-10 leading-relaxed">Tap <span class="font-semibold text-cyan-700">Record Races</span> to enter a race and its splits, or <span class="font-semibold text-cyan-700">Set target time</span> to see the splits a goal time needs.</div>` : ''}
       <div class="pt-2 flex items-center justify-center gap-2 text-[11px] text-slate-400">
         <button class="font-semibold hover:text-cyan-700 transition" data-action="backup-json">Back up</button>
@@ -2614,20 +2645,24 @@ function renderSavedSwimmer() {
       <div class="flex-1 min-w-0"><div class="text-lg font-semibold truncate">${name}</div><div class="text-xs text-muted truncate">${title}</div></div>
       ${printBtn()}
     </div>`;
-  if (!editing && state.swimmerView === 'races') {
-    const ss = strokesIn(races); let sel = state.swimmerStroke; if (ss.indexOf(sel) < 0) sel = ss[0];
-    const rows = sel ? raceGroupsHtml(races.filter((s) => s.stroke === sel)) : '';
-    return `${swHeader('Past races')}${strokeTabs(races, sel)}<div class="scrollable px-3 pb-2 bg-slate-50">${rows || '<div class="p-8 text-center text-sm text-muted">No races.</div>'}</div>`;
-  }
-  if (!editing && state.swimmerView === 'plans') {
-    const ss = strokesIn(plans); let sel = state.swimmerStroke; if (ss.indexOf(sel) < 0) sel = ss[0];
-    const rows = sel ? predGroupsHtml(plans.filter((s) => s.stroke === sel), true) : '';
-    return `${swHeader('Set target time plans')}${strokeTabs(plans, sel)}<div class="scrollable px-3 pb-2 bg-slate-50">${rows || '<div class="p-8 text-center text-sm text-muted">No saved plans.</div>'}</div>`;
-  }
-  if (!editing && state.swimmerView === 'ranked') {
-    const list = bestTimesFor(sid, { mode: 'all' }).map(({ r, t }) => ({ r, t, pts: waPoints(t, r.stroke, r.distance, r.pool, r.sex) })).filter((x) => x.pts != null).sort((a, b) => b.pts - a.pts);
-    const rows = list.map((x, i) => `<div class="px-3 py-3 flex items-center gap-3 border-b border-slate-100"><div class="w-6 text-center text-sm font-bold text-slate-400">${i + 1}</div><div class="flex-1 min-w-0"><div class="font-semibold text-[15px]">${x.r.distance} ${x.r.stroke} <span class="text-xs font-normal text-muted">${x.r.pool}</span></div><div class="text-xs text-muted mt-0.5 mono">${formatTime(x.t)}</div></div><div class="text-right"><div class="mono font-bold text-[17px] text-cyan-800">${x.pts}</div><div class="text-[10px] text-faint">pts</div></div></div>`).join('');
-    return `${swHeader('Events by AQUA points')}<div class="scrollable px-3 pb-2 bg-slate-50">${rows || '<div class="p-8 text-center text-sm text-muted">No races with a World Aquatics base time yet.</div>'}</div>`;
+  if (!editing && (state.swimmerView === 'races' || state.swimmerView === 'plans')) {
+    // One screen, two tabs. The tabs only appear when there is something on both —
+    // a swimmer with races and no targets should not be shown an empty second tab.
+    let tab = state.swimmerView;
+    if (tab === 'races' && !races.length && plans.length) tab = 'plans';
+    if (tab === 'plans' && !plans.length && races.length) tab = 'races';
+    const both = races.length && plans.length;
+    const viewTabs = both ? `<div class="px-5 pb-2"><div class="seg-group">
+        <button class="seg ${tab === 'races' ? 'active' : ''}" data-action="sw-view-races">Races</button>
+        <button class="seg ${tab === 'plans' ? 'active' : ''}" data-action="sw-view-plans">Target times</button>
+      </div></div>` : '';
+    const arr = tab === 'plans' ? plans : races;
+    const ss = strokesIn(arr); let sel = state.swimmerStroke; if (ss.indexOf(sel) < 0) sel = ss[0];
+    const rows = !sel ? '' : (tab === 'plans'
+      ? predGroupsHtml(plans.filter((s) => s.stroke === sel), true)
+      : raceGroupsHtml(races.filter((s) => s.stroke === sel)));
+    const empty = tab === 'plans' ? 'No saved target times.' : 'No races.';
+    return `${swHeader(both ? 'Races and target times' : (tab === 'plans' ? 'Target times' : 'Past races'))}${viewTabs}${strokeTabs(arr, sel)}<div class="scrollable px-3 pb-2 bg-slate-50">${rows || `<div class="p-8 text-center text-sm text-muted">${empty}</div>`}</div>`;
   }
 
   return `
@@ -2646,13 +2681,13 @@ function renderSavedSwimmer() {
       <button class="w-full bg-white border border-slate-200 text-slate-700 rounded-xl py-3 text-sm font-semibold hover:bg-slate-50 active:scale-[0.99] transition" data-action="set-team">${swimmerTeam(sid) ? 'Change team (' + swimmerTeam(sid).replace(/</g, '&lt;') + ')' : 'Set team'}</button>
       <button class="w-full bg-rose-50 text-rose-700 border border-rose-200 rounded-xl py-3 text-sm font-semibold hover:bg-rose-100 active:scale-[0.99] transition flex items-center justify-center gap-2" data-del-swimmer="${sid}">${TRASH_SVG} Delete this swimmer</button>
     </div>` : `
-    ${hasProgress(sid) ? `<div class="px-5 pb-2"><button class="w-full bg-white border border-cyan-300 text-cyan-800 rounded-xl py-2.5 text-sm font-semibold hover:bg-cyan-50 active:scale-[0.99] transition" data-action="progress">📈 Progress over time</button></div>` : ''}
-    ${races.length ? `<div class="px-5 pb-2"><button class="w-full bg-white border border-amber-300 text-amber-800 rounded-xl py-2.5 text-sm font-semibold hover:bg-amber-50 active:scale-[0.99] transition" data-action="best-times">🏆 Best times</button></div>` : ''}
-    ${(races.length || plans.length) ? `<div class="px-5 pb-2 grid grid-cols-2 gap-2">
-      ${races.length ? `<button class="bg-white border border-cyan-300 text-cyan-800 rounded-xl py-2.5 text-sm font-semibold hover:bg-cyan-50 active:scale-[0.99] transition" data-action="sw-view-races">View past races</button>` : ''}
-      ${plans.length ? `<button class="bg-white border border-cyan-300 text-cyan-800 rounded-xl py-2.5 text-sm font-semibold hover:bg-cyan-50 active:scale-[0.99] transition" data-action="sw-view-plans">View Set target time</button>` : ''}
-    </div>` : ''}
-    ${races.length ? `<div class="px-5 pb-2"><button class="w-full bg-white border border-slate-200 text-slate-700 rounded-xl py-2.5 text-sm font-semibold hover:bg-slate-50 active:scale-[0.99] transition" data-action="sw-view-ranked">🏅 Ranked by AQUA points</button></div>` : ''}
+    ${(races.length || plans.length || hasProgress(sid)) ? `<div class="px-5 pb-2">${navCard([
+      (races.length || plans.length) && [ICON_RACES, 'Races', plans.length ? 'Races and target times' : 'Grouped by event',
+        (races.length ? races.length + ' race' + (races.length === 1 ? '' : 's') : plans.length + ' target' + (plans.length === 1 ? '' : 's')), 'sw-view-races'],
+      races.length && [ICON_BEST, 'Best times', 'Fastest in each event',
+        bestTimesFor(sid, { mode: 'all' }).length + ' events', 'best-times'],
+      hasProgress(sid) && [ICON_TREND, 'Progress over time', 'How the times are trending', '', 'progress'],
+    ])}</div>` : ''}
     <div class="px-5 pb-2 flex flex-wrap gap-2">
       <button class="bg-cyan-600 text-white rounded-xl px-3 py-2 text-xs font-semibold hover:bg-cyan-700 active:scale-[0.99] transition" data-action="add-race">+ Record Race</button>
       <button class="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99] transition" data-action="add-event">+ Set target time</button>
@@ -2711,15 +2746,30 @@ function renderBestTimes() {
   const chips = [['m1', '1 mo'], ['m3', '3 mo'], ['m6', '6 mo'], ['m9', '9 mo'], ['year', 'Year'], ['all', 'All']];
   const undated = races.filter(r => !r.date).length;
   const list = bestTimesFor(sid, f);
-  const rows = list.map(({ r, t }) => `
+  // Sorting by AQUA points replaces the old separate "Ranked by AQUA points" screen.
+  // It respects the window chips above, which the old screen never did.
+  const withPts = list.map(({ r, t }) => ({ r, t, pts: waPoints(t, r.stroke, r.distance, r.pool, r.sex) }));
+  const anyPts = withPts.some((x) => x.pts != null);
+  const sort = anyPts && state.btSort === 'pts' ? 'pts' : 'event';
+  const shown = sort === 'pts'
+    ? withPts.filter((x) => x.pts != null).sort((a, b) => b.pts - a.pts)
+    : withPts;
+  const rows = shown.map(({ r, t, pts }, i) => `
     <div class="px-3 py-3.5 flex items-center gap-3 clickable rounded-xl border-b border-slate-100" data-saved="${r.id}" style="min-height:56px;">
+      ${sort === 'pts' ? `<div class="w-6 text-center text-sm font-bold text-slate-400 flex-shrink-0">${i + 1}</div>` : ''}
       <div class="flex-1 min-w-0">
         <div class="font-semibold text-[15px]">${r.distance} ${r.stroke} <span class="text-xs font-normal text-muted">${r.pool}</span></div>
-        <div class="text-xs text-muted mt-0.5">${r.date || 'no date'}${meetLabel(r) ? ' · ' + meetLabel(r) : ''}</div>
+        <div class="text-xs text-muted mt-0.5">${sort === 'pts' ? `<span class="mono">${formatTime(t)}</span> · ` : ''}${r.date || 'no date'}${meetLabel(r) ? ' · ' + meetLabel(r) : ''}</div>
       </div>
-      <div class="mono font-bold text-[17px] text-cyan-800">${formatTime(t)}</div>
+      ${sort === 'pts'
+        ? `<div class="text-right flex-shrink-0"><div class="mono font-bold text-[17px] text-cyan-800">${pts}</div><div class="text-[10px] text-faint">pts</div></div>`
+        : `<div class="mono font-bold text-[17px] text-cyan-800">${formatTime(t)}</div>`}
       <span class="text-slate-300 text-2xl">›</span>
     </div>`).join('');
+  const sortSeg = anyPts ? `<div class="px-5 pb-2"><div class="seg-group">
+      <button class="seg ${sort === 'event' ? 'active' : ''}" data-btsort="event">By event</button>
+      <button class="seg ${sort === 'pts' ? 'active' : ''}" data-btsort="pts">By AQUA points</button>
+    </div></div>` : '';
   return `
     <div class="statusbar"></div>
     <div class="px-5 pt-3 pb-3 flex items-center gap-3">
@@ -2734,6 +2784,7 @@ function renderBestTimes() {
       ${chips.map(([k, l]) => `<span class="pill ${f.mode === k ? 'active' : ''}" data-btmode="${k}">${k === 'year' && f.mode === 'year' && f.year ? f.year : l}</span>`).join('')}
     </div>
     ${state.btYearOpen ? `<div class="px-5 pb-2 flex flex-wrap gap-2">${years.length ? years.map(y => `<span class="pill ${f.year === +y ? 'active' : ''}" data-btyear="${y}">${y}</span>`).join('') : '<span class="text-xs text-muted">No dated races yet</span>'}</div>` : ''}
+    ${sortSeg}
     <div class="scrollable px-3 pb-2 bg-slate-50">
       ${rows || `<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-6 m-2 text-center text-sm text-muted">No races ${f.mode === 'all' ? 'saved yet' : 'in this window'} — best times come from saved races.</div>`}
       ${f.mode !== 'all' && undated ? `<div class="px-3 py-2 text-xs text-muted">${undated} race${undated === 1 ? '' : 's'} without a date only count under “All”.</div>` : ''}
@@ -5798,6 +5849,8 @@ document.addEventListener('click', (e) => {
     }
     const by = e.target.closest('[data-btyear]');
     if (by) { state.btFilter = { mode: 'year', year: +by.getAttribute('data-btyear') }; state.btYearOpen = false; render(); return; }
+    const bs = e.target.closest('[data-btsort]');
+    if (bs) { state.btSort = bs.getAttribute('data-btsort'); render(); return; }
     const pm = e.target.closest('[data-progmetric]');
     if (pm) { state.progMetric = pm.getAttribute('data-progmetric'); render(); return; }
     const pw = e.target.closest('[data-progwindow]');
@@ -6123,7 +6176,6 @@ function handleAction(action, el) {
     // home, which needs an actual navigation or the tap does nothing.
     case 'sw-view-races': state.swimmerView = 'races'; state.swimmerStroke = null; openSwimmerView(); break;
     case 'sw-view-plans': state.swimmerView = 'plans'; state.swimmerStroke = null; openSwimmerView(); break;
-    case 'sw-view-ranked': state.swimmerView = 'ranked'; openSwimmerView(); break;
     // Back out of a sub-view: the swimmer returns to their home, since the coach-style
     // detail page underneath isn't part of their build.
     case 'sw-view-back':
