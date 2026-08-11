@@ -62,6 +62,15 @@ installed home-screen app can keep the old build for days. Two fixes:
   2. To check immediately: open in a private/incognito tab, which ignores the cache.
 
 
+THE COMMIT MESSAGE
+-----------------
+COMMIT_NOTES.txt (in the folder ABOVE this one, not in the repo) holds the
+message for the NEXT upload, already written. Copy what sits between the ====
+lines into GitHub's commit box. It is rewritten from scratch every time files
+change here, so it always describes exactly what you are about to upload — the
+running history stays in PACER_README.md.
+
+
 REGENERATING AFTER EDITS
 ------------------------
 The PRIVATE build in this folder is the editable source of truth. Never hand-edit
