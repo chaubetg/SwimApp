@@ -178,9 +178,15 @@
        and let the box shrink instead. */
     input, select, textarea { font-size: 16px; }
     /* ...but Tailwind's .text-sm (0,1,0) outranks the bare element selector above (0,0,1),
-       so 21 fields were still 14px and iOS zoomed on focus. Phone widths only. */
+       so 21 fields were still 14px and iOS zoomed on focus. Phone widths only.
+       This is a FLOOR, not a size: no !important, and the deliberately-large fields
+       are exempt. An earlier version used !important and crushed .time-seg from 40px
+       to 16px, which is how the Set target time entry ended up tiny on a phone.
+       Each :not() argument carries its own specificity, so this scores (0,6,1). */
     @media (max-width: 480px) {
-      input:not([type=checkbox]):not([type=radio]), select, textarea { font-size: 16px !important; }
+      input:not([type=checkbox]):not([type=radio]):not(.time-seg):not(.tb):not(.time-input):not(.hero-time),
+      select:not([multiple]),
+      textarea:not([readonly]) { font-size: 16px; }
     }
     .toast {
       position: fixed; bottom: 32px; left: 50%; transform: translateX(-50%);
