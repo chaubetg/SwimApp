@@ -1404,6 +1404,10 @@ function navigate(view, opts = {}) {
   if (view === 'roster') state.history.length = 0;
   state.view = view;
   state.editing = false; // leave edit mode whenever we change screens
+  // Abandoning the entry form unbinds it from the race it was editing. edit-race sets
+  // raceEditId and then navigates HERE, so only a move away can clear it; analyze-race
+  // has already consumed and cleared it by the time it navigates on.
+  if (view !== 'race-entry') state.raceEditId = null;
   state.reviewId = null; // default: a fresh open is a new entry (review-clicks pass reviewId in opts)
   state.cmpMode = null;  // comparisons start closed on every screen change
   if (view !== 'race-analysis') state.raceSaved = null; // the Saved chip belongs to the save that just happened
@@ -1519,6 +1523,34 @@ function exportAnalysisCsv() {
   const stamp = new Date().toISOString().slice(0, 10);
   downloadFile(`race_equation_analysis_${stamp}.csv`, csv, 'text/csv');
   showToast(`Exported ${state.saved.length} saved ${state.saved.length === 1 ? 'entry' : 'entries'}`);
+}
+
+// --- Best times CSV: exactly the rows on screen, with numeric seconds for sorting ---
+// Built from the same inputs the screen uses (bestTimesFor + btFilter + btSort) so the
+// file and the table can't disagree. Display time is kept too, for humans reading it.
+function exportBestTimesCsv() {
+  const sid = state.savedSid;
+  const f = state.btFilter || { mode: 'all', year: null };
+  const list = sid ? bestTimesFor(sid, f) : [];
+  if (!list.length) { showToast('Nothing to export'); return; }
+  const who = swimmerName(sid) || '';
+  const team = swimmerTeam(sid) || '';
+  const withPts = list.map(({ r, t }) => ({ r, t, pts: waPoints(t, r.stroke, r.distance, r.pool, r.sex) }));
+  const byPts = state.btSort === 'pts' && withPts.some((x) => x.pts != null);
+  const shown = byPts ? withPts.filter((x) => x.pts != null).sort((a, b) => b.pts - a.pts) : withPts;
+  const window = f.mode === 'all' ? 'all time' : (f.mode === 'year' ? String(f.year || 'year') : f.mode.replace('m', '') + ' months');
+  const lines = [['swimmer', 'team', 'distance_m', 'stroke', 'pool', 'sex',
+                  'best_time', 'best_time_s', 'date', 'meet', 'aqua_points', 'window', 'rank_by_points']];
+  shown.forEach((x, i) => lines.push([
+    who, team, x.r.distance, x.r.stroke, x.r.pool, x.r.sex === 'M' ? 'M' : 'F',
+    formatTime(x.t), x.t.toFixed(2), x.r.date || '', meetLabel(x.r) || '',
+    x.pts == null ? '' : x.pts, window, byPts ? i + 1 : '',
+  ]));
+  const csv = '﻿' + lines.map((row) => row.map(csvCell).join(',')).join('\r\n'); // BOM → Excel reads accents
+  const slug = (who.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')) || 'swimmer';
+  const stamp = new Date().toISOString().slice(0, 10);
+  downloadFile(`split_compass_best_times_${slug}_${stamp}.csv`, csv, 'text/csv');
+  showToast(`Exported ${shown.length} best ${shown.length === 1 ? 'time' : 'times'}`);
 }
 
 // --- Backup: lossless JSON of everything saved (exact round-trip for restore / device moves) ---
@@ -1773,13 +1805,14 @@ function importBackupData(text) {
 function deleteEvent(id) {
   const entry = state.saved.find(x => x.id === id);
   if (!entry) return;
-  const label = entry.kind === 'race' ? `${entry.round} ${entry.distance} ${entry.stroke} race`
+  const label = entry.kind === 'race' ? `${entry.round ? entry.round + ' ' : ''}${entry.distance} ${entry.stroke} race`
     : entry.kind === 'fifty' ? `50 m ${entry.stroke} splits`
     : entry.kind === 'adjacent' ? `${entry.distance} m ${entry.stroke} adjacent`
     : entry.kind === 'convert' ? `${entry.distance} m ${entry.stroke} conversion`
     : entry.kind === 'eff' ? `${entry.stroke} efficiency test`
     : `${entry.distance} ${entry.stroke} pace plan`;
-  if (!confirm(`Delete ${entry.name}'s ${label}?\n\nThis can't be undone.`)) return;
+  const whose = SWIMMER ? 'your' : `${entry.name}'s`;
+  if (!confirm(`Delete ${whose} ${label}?\n\nThis can't be undone.`)) return;
   const name = entry.name;
   state.saved = state.saved.filter(x => x.id !== id);
   persistSaved();
@@ -2322,8 +2355,14 @@ const SC_BADGE = '<svg viewBox="0 0 512 512" width="34" height="34" class="flex-
 const BUILD_LABEL = BUILD === 'swimmer' ? 'Swimmer' : (BUILD === 'public' ? 'Coach' : 'all features');
 function scHeaderHtml() {
   return '<div class="px-5 pt-2 pb-4 flex items-center justify-center gap-2">' + SC_BADGE +
-    '<div class="text-[28px] font-bold tracking-tight leading-none">Split Compass</div>' +
-    '<span class="text-[11px] font-semibold text-muted leading-none">(' + BUILD_LABEL + ')</span></div>';
+    '<div class="text-[28px] font-bold tracking-tight leading-none whitespace-nowrap">Split Compass</div>' +
+    // Tappable — the ONLY way back to the front door once a role is stored, because the
+    // chooser redirects on every later visit. Negative margin keeps the header the same
+    // height while the padding gives it a real tap target.
+    '<button class="text-[11px] font-semibold text-cyan-700 leading-none whitespace-nowrap ' +
+    'rounded-full px-2 py-2 -mx-2 -my-2 hover:bg-cyan-50 active:scale-95 transition" ' +
+    'data-action="switch-version" title="Switch version" ' +
+    'aria-label="Switch version \u2014 currently ' + BUILD_LABEL + '">(' + BUILD_LABEL + ')</button></div>';
 }
 // ----- Screen: swimmer build — first-run setup (who am I?) -----
 function renderSwimmerSetup() {
@@ -2389,6 +2428,8 @@ function renderSwimmerHome() {
         <button class="font-semibold hover:text-cyan-700 transition" data-action="backup-json">Back up</button>
         <span class="text-slate-200">\u00b7</span>
         <button class="font-semibold hover:text-cyan-700 transition" data-action="import-json">Restore</button>
+        <span class="text-slate-200">\u00b7</span>
+        <button class="font-semibold hover:text-cyan-700 transition" data-action="switch-version">Switch version</button>
       </div>
     </div>
     <div class="text-center text-[10px] text-faint py-2 flex-shrink-0">\u00a9 2026 Ga\u00ebl Chaubet \u00b7 All rights reserved</div>`;
@@ -2492,6 +2533,8 @@ function renderRoster() {
       <span class="uppercase tracking-wide text-faint text-[10px]">Data</span>
       <button class="font-semibold hover:text-cyan-700 transition" data-action="export-csv">Download CSV</button>
       <span class="text-slate-200">·</span>
+      <button class="font-semibold hover:text-cyan-700 transition" data-action="switch-version">Switch version</button>
+      <span class="text-slate-200">\u00b7</span>
       <button class="font-semibold hover:text-cyan-700 transition" data-action="backup-json">Backup</button>
       <span class="text-slate-200">·</span>
       <button class="font-semibold hover:text-cyan-700 transition" data-action="import-json">Import</button>
@@ -2643,9 +2686,14 @@ function renderSavedSwimmer() {
     <div class="px-5 pt-3 pb-3 flex items-center gap-3">
       <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="sw-view-back">‹</button>
       <div class="flex-1 min-w-0"><div class="text-lg font-semibold truncate">${name}</div><div class="text-xs text-muted truncate">${title}</div></div>
-      ${printBtn()}
-    </div>`;
-  if (!editing && (state.swimmerView === 'races' || state.swimmerView === 'plans')) {
+      <button class="text-sm font-semibold ${editing ? 'text-cyan-700' : 'text-slate-400'} hover:text-cyan-700 transition px-1 flex-shrink-0" data-action="toggle-edit">${editing ? 'Done' : 'Edit'}</button>
+      ${editing ? '' : printBtn()}
+    </div>
+    ${editing ? '<div class="px-5 pb-2 text-[11px] text-muted">Tap the bin on a row to delete it. Deleting can\u2019t be undone.</div>' : ''}`;
+  // NOT gated on `editing` any more — edit mode belongs ON this screen, since this is
+  // where the races are. Falling through to the detail page was why the swimmer build
+  // had no way to delete anything.
+  if (state.swimmerView === 'races' || state.swimmerView === 'plans') {
     // One screen, two tabs. The tabs only appear when there is something on both —
     // a swimmer with races and no targets should not be shown an empty second tab.
     let tab = state.swimmerView;
@@ -2662,6 +2710,8 @@ function renderSavedSwimmer() {
       ? predGroupsHtml(plans.filter((s) => s.stroke === sel), true)
       : raceGroupsHtml(races.filter((s) => s.stroke === sel)));
     const empty = tab === 'plans' ? 'No saved target times.' : 'No races.';
+    // Nothing left to edit — drop out of edit mode rather than showing a bare Done.
+    if (editing && !arr.length) state.editing = false;
     return `${swHeader(both ? 'Races and target times' : (tab === 'plans' ? 'Target times' : 'Past races'))}${viewTabs}${strokeTabs(arr, sel)}<div class="scrollable px-3 pb-2 bg-slate-50">${rows || `<div class="p-8 text-center text-sm text-muted">${empty}</div>`}</div>`;
   }
 
@@ -2778,6 +2828,7 @@ function renderBestTimes() {
         <div class="text-lg font-semibold truncate">Best times</div>
         <div class="text-xs text-muted truncate">${name}</div>
       </div>
+      ${rows ? '<button class="px-3 py-2 rounded-full bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="bt-csv" title="Download as a spreadsheet">CSV</button>' : ''}
       ${printBtn()}
     </div>
     <div class="px-5 pb-2 flex flex-wrap gap-2">
@@ -5370,10 +5421,14 @@ function renderRaceEntry() {
     <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
       <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button>
       <div class="flex-1 min-w-0">
-        <div class="text-lg font-semibold">Record Races</div>
+        <div class="text-lg font-semibold">${state.raceEditId ? 'Edit race' : 'Record Races'}</div>
         ${f.name ? `<div class="text-xs text-muted truncate">${f.name}</div>` : ''}
       </div>
     </div>
+    ${state.raceEditId ? `<div class="px-5 pb-3 -mt-1 bg-white">
+      <div class="rounded-xl bg-cyan-50 border border-cyan-200 px-3 py-2 text-[11px] text-cyan-900 leading-snug">
+        Editing a saved race \u2014 what you save here <span class="font-semibold">replaces</span> it. It won\u2019t be added as a second race.
+      </div></div>` : ''}
     <div class="scrollable px-5 py-4 space-y-5">
       <div>
         <div class="label-cap mb-2">Stroke</div>
@@ -5452,7 +5507,7 @@ function renderRaceEntry() {
     </div>
     <div class="border-t border-slate-200 px-5 py-4 pb-5 bg-white flex-shrink-0">
       <button class="w-full bg-cyan-600 text-white font-semibold rounded-xl py-4 text-base hover:bg-cyan-700 active:scale-[0.98] transition shadow-lg shadow-cyan-600/20" data-action="analyze-race">
-        Save &amp; Compare
+        ${state.raceEditId ? 'Update &amp; Compare' : 'Save &amp; Compare'}
       </button>
     </div>
   `;
@@ -6158,6 +6213,7 @@ function handleAction(action, el) {
       break;
     case 'toggle-edit': state.editing = !state.editing; render(); break;
     case 'export-csv': exportAnalysisCsv(); break;
+    case 'bt-csv': exportBestTimesCsv(); break;
     case 'backup-json': exportBackupJson(); break;
     case 'import-json': triggerImport(); break;
     case 'import-times-csv': navigate('import-menu'); break;
@@ -6308,6 +6364,9 @@ function handleAction(action, el) {
     // the two controls in that header no longer lead to the same screen.
     case 'home': navigate('roster'); break;
     case 'print-page': printPage(); break;
+    // Back to the coach-or-swimmer front door. ?switch is what stops index.html
+    // bouncing straight back here off the stored sc_start.
+    case 'switch-version': location.href = 'index.html?switch'; break;
     case 'self-save': {
       const f = state.selfSetup || {};
       const nm = (f.name || '').trim();

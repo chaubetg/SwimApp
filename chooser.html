@@ -63,10 +63,16 @@
     <h1>Split Compass</h1>
     <p class="sub">Split targets from elite race data &mdash; for the pool deck.</p>
 
-    <div class="install">
+    <div class="install" id="install-block">
       <h2>First, add it to your phone</h2>
       <div class="step"><span class="num">1</span><span class="steptxt">Tap <span class="k">&hellip;</span> or the <span class="k">Share</span> icon, scroll down, then <span class="k">Add to Home Screen</span>.</span></div>
       <div class="step"><span class="num">2</span><span class="steptxt">Open it from the new icon and pick below &mdash; it remembers, and goes straight there next time.</span></div>
+    </div>
+
+    <div class="install" id="switch-note" style="display:none">
+      <h2>Switching version</h2>
+      <div class="steptxt">Everything you&rsquo;ve saved stays on this phone either way &mdash; both versions
+      read the same store. The swimmer version shows one athlete, the coach version a whole squad.</div>
     </div>
 
     <a class="card" href="coach.html" data-role="coach">
@@ -89,6 +95,12 @@
       &copy; 2026 Ga&euml;l Chaubet &middot; All rights reserved.</p>
   </div>
   <script>
+    // Reached from the in-app switcher rather than cold: the install steps are moot.
+    if (/switch/.test(location.search + location.hash)) {
+      var ib = document.getElementById('install-block'), sn = document.getElementById('switch-note');
+      if (ib) ib.style.display = 'none';
+      if (sn) sn.style.display = 'block';
+    }
     document.querySelectorAll('a.card').forEach(function (a) {
       a.addEventListener('click', function () {
         try { localStorage.setItem('sc_start', a.getAttribute('data-role')); } catch (e) {}
