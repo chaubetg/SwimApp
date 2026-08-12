@@ -61,7 +61,7 @@
          flatten the phone frame, let the scroll area print at full length. */
       .no-print, .statusbar, #jumper, .wordmark, #toast-host { display: none !important; }
       [data-action="back"], [data-action="home"], [data-action="sw-view-back"],
-      [data-action="print-page"], [data-action="edit-race"], [data-action="edit-plan"],
+      [data-action="print-page"], [data-action="csv-page"], [data-action="edit-race"], [data-action="edit-plan"],
       [data-action="cmp-mode"] { display: none !important; }
       .stage { display: block !important; padding: 0 !important; margin: 0 !important; }
       .phone { width: 100% !important; height: auto !important; min-height: 0 !important;
@@ -1463,6 +1463,13 @@ function printPage() {
 
 // Download / Print affordance for times screens. window.print() -> the browser
 // dialog's "Save as PDF" is the download; the @media print sheet styles the page.
+// Same affordance as the print icon, different payload: the numbers on this screen as a
+// spreadsheet. Screens where the layout IS the output (race analysis, set target time)
+// show both.
+function csvBtn() {
+  return `<button class="no-print w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="csv-page" aria-label="Download this table as a CSV" title="Download CSV"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9.5h18M3 15h18M9 4v16"/></svg></button>`;
+}
+
 function printBtn() {
   return `<button class="no-print w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 text-xl leading-none hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="print-page" aria-label="Download or print this page" title="Download / Print">\u2913</button>`;
 }
@@ -1557,6 +1564,124 @@ function exportBestTimesCsv() {
   const stamp = new Date().toISOString().slice(0, 10);
   downloadFile(`split_compass_best_times_${slug}_${stamp}.csv`, csv, 'text/csv');
   showToast(`Exported ${shown.length} best ${shown.length === 1 ? 'time' : 'times'}`);
+}
+
+// --- One download button, one builder per screen -----------------------------------
+// Each returns { name, rows } where rows[0] is the header. Whatever is on the screen —
+// the selected tab, stroke, window and sort — is what lands in the file.
+function screenCsvModel() {
+  const num = (v) => (v == null || v === '' || isNaN(v)) ? '' : (+v).toFixed(2);
+  const slug = (s) => (String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')) || 'split_compass';
+  const stamp = new Date().toISOString().slice(0, 10);
+
+  if (state.view === 'race-analysis') {
+    const r = state.race; if (!r) return null;
+    const c = buildRaceComparison(r); if (!c) return null;
+    const sr = r.sr || {};
+    const defs = raceRowDefs(r.stroke, r.distance, r.pool);
+    const ev = `${r.distance} ${r.stroke}`;
+    const rows = [['swimmer', 'event', 'pool', 'meet', 'date', 'segment',
+                   'ideal', 'ideal_s', 'swam', 'swam_s', 'delta_s', 'cumulative_s', 'stroke_rate']];
+    let cum = 0;
+    c.rows.forEach((row, i) => {
+      const key = defs[i] ? defs[i].key : '';
+      if (row.actual != null && !/total/i.test(row.label)) cum += row.actual;
+      rows.push([r.name || '', ev, r.pool, meetLabel(r) || '', r.date || '', row.label,
+        row.pred != null ? formatTime(row.pred) : '', num(row.pred),
+        row.actual != null ? formatTime(row.actual) : '', num(row.actual),
+        row.actual != null ? (row.delta >= 0 ? '+' : '') + row.delta.toFixed(2) : '',
+        /total/i.test(row.label) ? num(c.actualTotal) : num(cum),
+        sr[key] != null ? sr[key] : '']);
+    });
+    return { name: `split_compass_race_${slug(r.name)}_${slug(ev)}_${r.date || stamp}.csv`, rows,
+             note: `${rows.length - 1} split rows` };
+  }
+
+  if (state.view === 'predicted-splits') {
+    const r = state.result; if (!r) return null;
+    const segs = buildDisplaySegments(r);
+    const ev = `${r.distance} ${r.stroke}`;
+    const rows = [['swimmer', 'event', 'pool', 'sex', 'target', 'target_s',
+                   'segment', 'reps', 'split', 'split_s', 'cumulative', 'cumulative_s']];
+    let cum = 0;
+    segs.forEach((s) => {
+      const n = s.count || 1; cum += s.time * n;
+      rows.push([state.form.name || '', ev, r.pool, r.sex === 'M' ? 'M' : 'F',
+        formatTime(r.targetSeconds), num(r.targetSeconds),
+        s.label, n, formatTime(s.time), num(s.time), formatTime(cum), num(cum)]);
+    });
+    return { name: `split_compass_target_${slug(state.form.name)}_${slug(ev)}_${stamp}.csv`, rows,
+             note: `${rows.length - 1} split rows` };
+  }
+
+  if (state.view === 'best-times') { exportBestTimesCsv(); return 'handled'; }
+
+  if (state.view === 'saved-swimmer') {
+    const sid = state.savedSid;
+    const all = state.saved.filter((s) => s.sid === sid);
+    if (!all.length) return null;
+    const who = swimmerName(sid) || '';
+    const tab = state.swimmerView === 'plans' ? 'plans' : 'races';
+    const stroke = state.swimmerStroke;
+    const pick = all.filter((s) => (tab === 'plans' ? (!s.kind || s.kind === 'plan') : s.kind === 'race')
+                                   && (!stroke || s.stroke === stroke));
+    if (!pick.length) return null;
+    if (tab === 'plans') {
+      const rows = [['swimmer', 'distance_m', 'stroke', 'pool', 'sex', 'target', 'target_s']];
+      pick.forEach((s) => rows.push([who, s.distance, s.stroke, s.pool, s.sex === 'M' ? 'M' : 'F',
+        formatTime(s.targetSeconds), num(s.targetSeconds)]));
+      return { name: `split_compass_targets_${slug(who)}_${stamp}.csv`, rows, note: `${pick.length} target times` };
+    }
+    const rows = [['swimmer', 'distance_m', 'stroke', 'pool', 'sex', 'time', 'time_s',
+                   'date', 'meet', 'round', 'aqua_points']];
+    pick.slice().sort((a, b) => (a.date || '').localeCompare(b.date || '')).forEach((s) => {
+      const c = buildRaceComparison(s); const t = c ? c.actualTotal : 0;
+      rows.push([who, s.distance, s.stroke, s.pool, s.sex === 'M' ? 'M' : 'F',
+        t > 0 ? formatTime(t) : '', num(t), s.date || '', s.competition || '', s.round || '',
+        t > 0 ? (waPoints(t, s.stroke, s.distance, s.pool, s.sex) ?? '') : '']);
+    });
+    return { name: `split_compass_races_${slug(who)}_${stamp}.csv`, rows, note: `${pick.length} races` };
+  }
+
+  if (state.view === 'progress') {
+    const sid = state.savedSid, who = swimmerName(sid) || '';
+    const groups = progGroups(sid);
+    if (!groups.length) return null;
+    const rows = [['swimmer', 'group', 'kind', 'entries', 'first', 'latest', 'change']];
+    groups.forEach((g) => {
+      const n = g.entries.length;
+      const a = progMetrics(g.entries[0]).find((m) => m.primary);
+      const b = progMetrics(g.entries[n - 1]).find((m) => m.primary);
+      const d = (a && b && a.value != null && b.value != null) ? b.value - a.value : null;
+      rows.push([who, g.sig, PROG_KINDS[g.kind] || g.kind, n, num(a && a.value), num(b && b.value),
+        d == null ? '' : (d >= 0 ? '+' : '') + d.toFixed(2)]);
+    });
+    return { name: `split_compass_progress_${slug(who)}_${stamp}.csv`, rows, note: `${groups.length} groups` };
+  }
+
+  if (state.view === 'progress-group' || state.view === 'training-pace') {
+    // Both screens render a real <table>; read it rather than recomputing, so the file
+    // matches the metric rows / stroke blocks exactly as filtered on screen.
+    const host = state.view === 'training-pace' ? document.getElementById('tp-print') : document.querySelector('#screen-container');
+    const table = host && host.querySelector('table');
+    if (!table) return null;
+    const cells = (tr) => [...tr.querySelectorAll('th,td')].map((c) => c.textContent.replace(/\s+/g, ' ').trim());
+    const rows = [...table.querySelectorAll('thead tr'), ...table.querySelectorAll('tbody tr')]
+      .map(cells).filter((r) => r.length);
+    if (rows.length < 2) return null;
+    const who = state.view === 'training-pace' ? 'training_pace' : slug(swimmerName(state.savedSid)) + '_' + slug(state.progGroup);
+    return { name: `split_compass_${slug(who)}_${stamp}.csv`, rows, note: `${rows.length - 1} rows` };
+  }
+  return null;
+}
+
+function exportScreenCsv() {
+  const m = screenCsvModel();
+  if (m === 'handled') return;                       // best times has its own builder
+  if (!m) { showToast('Nothing to download'); return; }
+  const csv = '﻿' + m.rows.map((row) => row.map(csvCell).join(',')).join('\r\n'); // BOM → Excel reads accents
+  downloadFile(m.name, csv, 'text/csv');
+  showToast(`Exported ${m.note}`);
 }
 
 // --- Backup: lossless JSON of everything saved (exact round-trip for restore / device moves) ---
@@ -2194,18 +2319,20 @@ function render() {
         el.addEventListener('focus', () => { if (grp._t0 == null) grp._t0 = state.raceForm.times.target; });
         // The time is complete the moment the hundredths box fills — refresh the splits right
         // then, instead of making the coach tap somewhere first.
+        // Fires on a KEYSTROKE, not on the value changing — re-typing the same time has to
+        // reset too. The flag is what stops a stray tap-in-tap-out wiping real splits.
         el.addEventListener('input', () => {
+          grp._edited = true;
           if (el !== hh || el.value.length !== 2 || state.view !== 'race-entry') return;
-          seedRaceTimes();
-          repaintRaceSplits();
+          resetRaceSplits();
         });
         el.addEventListener('blur', () => {
           setTimeout(() => {
             if (grp.contains(document.activeElement)) return;
-            const changed = state.raceForm.times.target !== grp._t0;
-            grp._t0 = null;
+            const edited = !!grp._edited;
+            grp._t0 = null; grp._edited = false;
             // Painted, never rendered — a redraw here is what used to move the screen.
-            if (changed && state.view === 'race-entry') { seedRaceTimes(); repaintRaceSplits(); }
+            if (edited && state.view === 'race-entry') resetRaceSplits();
           }, 0);
         });
       });
@@ -2693,7 +2820,7 @@ function renderSavedSwimmer() {
       <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="sw-view-back">‹</button>
       <div class="flex-1 min-w-0"><div class="text-lg font-semibold truncate">${name}</div><div class="text-xs text-muted truncate">${title}</div></div>
       <button class="text-sm font-semibold ${editing ? 'text-cyan-700' : 'text-slate-400'} hover:text-cyan-700 transition px-1 flex-shrink-0" data-action="toggle-edit">${editing ? 'Done' : 'Edit'}</button>
-      ${editing ? '' : printBtn()}
+      ${editing ? '' : csvBtn()}
     </div>
     ${editing ? '<div class="px-5 pb-2 text-[11px] text-muted">Tap the bin on a row to delete it. Deleting can\u2019t be undone.</div>' : ''}`;
   // NOT gated on `editing` any more — edit mode belongs ON this screen, since this is
@@ -2834,8 +2961,7 @@ function renderBestTimes() {
         <div class="text-lg font-semibold truncate">Best times</div>
         <div class="text-xs text-muted truncate">${name}</div>
       </div>
-      ${rows ? '<button class="px-3 py-2 rounded-full bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="bt-csv" title="Download as a spreadsheet">CSV</button>' : ''}
-      ${printBtn()}
+      ${csvBtn()}
     </div>
     <div class="px-5 pb-2 flex flex-wrap gap-2">
       ${chips.map(([k, l]) => `<span class="pill ${f.mode === k ? 'active' : ''}" data-btmode="${k}">${k === 'year' && f.mode === 'year' && f.year ? f.year : l}</span>`).join('')}
@@ -3124,7 +3250,7 @@ function renderProgress() {
         <div class="text-lg font-semibold truncate">${name}</div>
         <div class="text-xs text-muted">Progress over time</div>
       </div>
-      ${printBtn()}
+      ${csvBtn()}
     </div>
     <div class="scrollable px-5 py-3 space-y-2.5 bg-slate-50">
       ${cards || '<div class="text-center text-sm text-muted p-8">Save the same event, 50 m test, or efficiency test twice to see a trend.</div>'}
@@ -3182,7 +3308,7 @@ function renderProgressGroup() {
         <div class="text-lg font-semibold truncate">${g.sig}</div>
         <div class="text-xs text-muted truncate">${name} · ${win !== 'all' ? entries.length + ' of ' + allEntries.length : allEntries.length} entries</div>
       </div>
-      ${printBtn()}
+      ${csvBtn()}
     </div>
     <div class="scrollable px-5 py-3 space-y-3 bg-slate-50">
       ${g.kind === 'fifty' ? fatigueNote(sid, 'banner') : ''}
@@ -4521,7 +4647,7 @@ function renderPredictedSplits() {
         <div class="text-base font-semibold truncate">${state.swimmer ? state.swimmer.name : (state.form.name || 'Set target time')}</div>
         <div class="text-xs text-muted truncate">${r.distance} ${r.stroke} · ${r.pool} · ${r.sex === 'M' ? 'Men' : 'Women'}</div>
       </div>
-      <div class="flex items-center gap-1.5 flex-shrink-0">${printBtn()}
+      <div class="flex items-center gap-1.5 flex-shrink-0">${csvBtn()}${printBtn()}
         <button class="px-3 py-2 rounded-full bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 transition" data-action="edit-plan">Edit</button>
         ${state.planSaved
           ? '<button class="px-4 py-2.5 rounded-full bg-emerald-50 text-emerald-700 text-sm font-semibold" data-action="save">Saved ✓</button>'
@@ -4971,6 +5097,15 @@ function repaintRaceSplits() {
   Object.keys(t).forEach((k) => { if (k !== 'target' && t[k] != null) paintTimeBoxes(k, t[k]); });
 }
 
+// A re-entered time swam wins outright: every split goes back to the model's prediction
+// for that time. Clearing `touched` is what makes this a full reset rather than the partial
+// re-seed that only moved the boxes nobody had typed into.
+function resetRaceSplits() {
+  state.raceForm.touched = {};
+  seedRaceTimes();
+  repaintRaceSplits();
+}
+
 // A split the coach has typed into belongs to the coach: seedRaceTimes must never re-predict
 // over it. 'target' IS the time swam and 'total' mirrors it, so neither can be claimed.
 function markSplitTouched(key) {
@@ -5385,7 +5520,8 @@ function renderTrainingPace() {
       <div class="flex-1 min-w-0">
         <div class="text-lg font-semibold">Training Pace</div>
       </div>
-      ${rows && rows.length ? '<button class="px-3.5 py-2 rounded-full bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 transition flex-shrink-0" data-action="tp-download">Download</button>' : ''}
+      ${rows && rows.length ? '<button class="px-3 py-2 rounded-full bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 transition flex-shrink-0" data-action="csv-page">CSV</button>' : ''}
+      ${rows && rows.length ? '<button class="px-3 py-2 rounded-full bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 transition flex-shrink-0" data-action="tp-download">PDF</button>' : ''}
     </div>
     <div class="scrollable bg-slate-50">
       <div class="px-5 py-4 bg-white border-b border-slate-100 no-print">
@@ -5685,7 +5821,7 @@ function renderRaceAnalysis() {
         <div class="text-base font-semibold truncate">${race.name || 'Race'}</div>
         <div class="text-xs text-muted truncate">${race.distance} ${race.stroke} ${race.pool}${meetLabel(race) ? ' · ' + meetLabel(race) : ''}${race.date ? ' · ' + race.date : ''}</div>
       </div>
-      <div class="flex items-center gap-1.5 flex-shrink-0">${printBtn()}
+      <div class="flex items-center gap-1.5 flex-shrink-0">${csvBtn()}${printBtn()}
         ${state.raceSaved === 'saved' ? '<span class="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-[11px] font-semibold">Saved ✓</span>'
           : state.raceSaved === 'noname' ? '<span class="px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 text-[11px] font-semibold">Not saved · no name</span>'
           : state.raceSaved === 'notime' ? '<span class="px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 text-[11px] font-semibold">Not saved · no time</span>' : ''}
@@ -6220,6 +6356,7 @@ function handleAction(action, el) {
     case 'toggle-edit': state.editing = !state.editing; render(); break;
     case 'export-csv': exportAnalysisCsv(); break;
     case 'bt-csv': exportBestTimesCsv(); break;
+    case 'csv-page': exportScreenCsv(); break;
     case 'backup-json': exportBackupJson(); break;
     case 'import-json': triggerImport(); break;
     case 'import-times-csv': navigate('import-menu'); break;
