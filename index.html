@@ -39,7 +39,12 @@
     h1{font-size:27px;font-weight:700;letter-spacing:-.02em;margin:10px 0 3px}
     .sub{font-size:13.5px;color:#475569;margin:0 0 18px;line-height:1.5}
     .install{background:#ecfeff;border:1px solid #a5f3fc;border-radius:16px;padding:14px 15px;margin-bottom:16px;text-align:left}
-    .install h2{font-size:13.5px;font-weight:700;margin:0 0 9px;color:#0e5f74}
+    .install h2{font-size:15px;font-weight:700;margin:0 0 3px;color:#0e5f74}
+    .install h2 .first{font-size:17px;font-weight:800;letter-spacing:.04em}
+    .why{font-size:11.5px;color:#0e7490;margin:0 0 10px;line-height:1.5}
+    .plat{font-size:11px;font-weight:700;color:#0e5f74;letter-spacing:.05em;
+      text-transform:uppercase;margin:11px 0 6px}
+    .plat:first-of-type{margin-top:2px}
     .step{display:flex;align-items:baseline;gap:8px;margin:0 0 9px}
     .step:last-child{margin-bottom:0}
     .num{flex:0 0 22px;height:22px;border-radius:999px;background:#0891b2;color:#fff;font-size:12px;
@@ -64,9 +69,18 @@
     <p class="sub">Split targets from elite race data &mdash; for the pool deck.</p>
 
     <div class="install" id="install-block">
-      <h2>First, add it to your phone</h2>
-      <div class="step"><span class="num">1</span><span class="steptxt">Tap <span class="k">&hellip;</span> or the <span class="k">Share</span> icon, scroll down, then <span class="k">Add to Home Screen</span>.</span></div>
-      <div class="step"><span class="num">2</span><span class="steptxt">Open it from the new icon and pick below &mdash; it remembers, and goes straight there next time.</span></div>
+      <h2><span class="first">FIRST</span> &mdash; add it to your phone</h2>
+      <p class="why">Your times are saved on your phone, not on a server. Adding it to your
+        home screen is what keeps them safe &mdash; a browser tab can clear them after a week
+        of not visiting.</p>
+
+      <div class="plat">iPhone &amp; iPad &middot; Safari</div>
+      <div class="step"><span class="num">1</span><span class="steptxt">Tap the <span class="k">Share</span> icon at the bottom, scroll down, then <span class="k">Add to Home Screen</span>.</span></div>
+
+      <div class="plat">Android &middot; Chrome</div>
+      <div class="step"><span class="num">1</span><span class="steptxt">Tap <span class="k">&#8942;</span> at the top right, then <span class="k">Install app</span> (older phones say <span class="k">Add to Home screen</span>). If Chrome offers to install it for you, take that.</span></div>
+
+      <div class="step" style="margin-top:11px"><span class="num">2</span><span class="steptxt">Open it from the new icon and pick below &mdash; it remembers, and goes straight there next time.</span></div>
     </div>
 
     <div class="install" id="switch-note" style="display:none">
