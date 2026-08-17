@@ -1407,6 +1407,7 @@ const state = {
   race: null,       // the race object currently being analysed
   raceEditId: null, // id of a saved race being edited (Save updates in place)
   reflOpen: {},     // which reflection sections (and prompt hints) are expanded
+  stdForm: { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 100, seconds: 0, name: '' },
   compareIds: [],   // two saved-race ids to show side by side
   editing: false,   // roster / saved-swimmer delete mode toggle
   progGroup: null,  // selected progression signature
@@ -1625,6 +1626,24 @@ function screenCsvModel() {
              note: `${rows.length - 1} split rows` };
   }
 
+  if (state.view === 'standards') {
+    const f = state.stdForm;
+    const rows = standardRows(f);
+    if (!rows.length) return null;
+    const ev = `${f.distance} ${f.stroke}`;
+    const out = [['swimmer', 'event', 'sex', 'your_pool', 'your_time', 'your_time_s', 'standard',
+                  'organisation', 'standard_course', 'standard_time', 'standard_time_s',
+                  'your_time_in_that_course_s', 'converted_estimate', 'gap_s']];
+    rows.forEach((r) => out.push([
+      f.name || '', ev, f.sex, f.pool,
+      f.seconds > 0 ? formatTime(f.seconds) : '', f.seconds > 0 ? num(f.seconds) : '',
+      r.d.label, r.d.org, r.d.course, formatTime(r.target), num(r.target),
+      r.mine == null ? '' : num(r.mine), r.est ? 'yes' : 'no',
+      r.gap == null ? '' : (r.gap >= 0 ? '+' : '') + r.gap.toFixed(2),
+    ]));
+    return { name: `split_compass_standards_${slug(ev)}_${stamp}.csv`, rows: out,
+             note: `${rows.length} standards` };
+  }
   if (state.view === 'best-times') { exportBestTimesCsv(); return 'handled'; }
 
   if (state.view === 'saved-swimmer') {
@@ -2041,6 +2060,7 @@ function render() {
     case 'import-meet': html = renderImportMeet(); break;
     case 'import-preview': html = renderImportPreview(); break;
     case 'training-pace': html = renderTrainingPace(); break;
+    case 'standards': html = renderStandards(); break;
     default: html = '<div class="p-8 text-slate-500">Unknown view</div>';
   }
   host.innerHTML = html;
@@ -2278,22 +2298,27 @@ function render() {
     const key = grp.getAttribute('data-tkey');
     const mi = grp.querySelector('.tb-min'), se = grp.querySelector('.tb-sec'), hh = grp.querySelector('.tb-hh');
     if (!mi || !se || !hh) return;
+    const onStd = state.view === 'standards';
     const sync = () => {
       const m = parseInt(mi.value || '0', 10) || 0, s = parseInt(se.value || '0', 10) || 0, h = parseInt(hh.value || '0', 10) || 0;
-      state.raceForm.times[key] = m * 60 + s + h / 100;
+      const v = m * 60 + s + h / 100;
+      // Same boxes, two owners. Without this branch a standards lookup would be written
+      // into state.raceForm.times and marked as a split the coach had typed.
+      if (onStd) state.stdForm.seconds = v; else state.raceForm.times[key] = v;
     };
     [mi, se, hh].forEach((el) => {
       el.addEventListener('focus', () => el.select());
       el.addEventListener('input', () => {
-        const cap = (el === mi) ? minDigits(state.form.distance) : 2;
+        const cap = (el === mi) ? minDigits(onStd ? state.stdForm.distance : state.form.distance) : 2;
         el.value = el.value.replace(/\D/g, '').slice(0, cap);
         sync();
-        markSplitTouched(key);
+        if (!onStd) markSplitTouched(key);
         if (el === mi && el.value.length === cap) { se.focus(); se.select(); }
         else if (el === se && el.value.length === 2) { hh.focus(); hh.select(); }
         // The split is fully entered the moment the hundredths box fills — adjust the last
         // split right then, so it lands without the coach having to tap anywhere.
-        if (key !== 'target' && el === hh && el.value.length === 2) deriveLastSplit(key);
+        if (onStd) { if (el === hh && el.value.length === 2) render(); }
+        else if (key !== 'target' && el === hh && el.value.length === 2) deriveLastSplit(key);
       });
       el.addEventListener('blur', () => {
         if ((el === se || el === hh) && el.value !== '') el.value = el.value.padStart(2, '0');
@@ -2477,6 +2502,7 @@ const ICON_RACES = ICO('<circle cx="12" cy="13.5" r="7.5"/><path d="M12 10v3.5l2
 const ICON_BEST  = ICO('<path d="M7 4h10v4.5a5 5 0 0 1-10 0V4Z"/><path d="M7 5.5H4.6A2.4 2.4 0 0 0 7 9"/>' +
                        '<path d="M17 5.5h2.4A2.4 2.4 0 0 1 17 9"/><path d="M12 13.5V17"/><path d="M8.5 20.5h7"/>');
 const ICON_TREND = ICO('<path d="M3 16.5 8.5 11l3.5 3.5L21 6"/><path d="M15 6h6v6"/>');
+const ICON_FLAG  = ICO('<path d="M5 21V4"/><path d="M5 4.5h11l-2 3.5 2 3.5H5"/>');
 
 // One card, hairline dividers, no border on the last row. Rows are built here rather
 // than with a `last:` variant so the markup does not depend on that utility existing.
@@ -2678,6 +2704,7 @@ function renderSwimmerHome() {
         races.length && [ICON_BEST, 'My best times', 'Fastest in each event',
           bestCount + ' event' + (bestCount === 1 ? '' : 's'), 'best-times'],
         hasProgress(sid) && [ICON_TREND, 'Progress over time', 'How your times are trending', '', 'progress'],
+        [ICON_FLAG, 'Compare to standards', 'Olympic, Trials, U SPORTS cuts', '', 'standards'],
       ])}
       ${!races.length && !plans.length ? `<div class="text-center text-sm text-muted px-6 py-10 leading-relaxed">Tap <span class="font-semibold text-cyan-700">Record Races</span> to enter a race and its splits, or <span class="font-semibold text-cyan-700">Set target time</span> to see the splits a goal time needs.</div>` : ''}
       <div class="pt-2 flex items-center justify-center gap-2 text-[11px] text-slate-400">
@@ -2759,6 +2786,13 @@ function renderRoster() {
           <div class="text-[11px] text-muted mt-0.5 leading-snug">Split targets for a target time</div>
         </div>
         <span class="text-cyan-600 text-xl leading-none flex-shrink-0">⏱</span>
+      </button>
+      <button class="w-full bg-white border border-cyan-300 rounded-2xl px-4 py-3.5 text-left hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm flex items-center justify-between gap-3" data-action="standards">
+        <div>
+          <div class="font-bold text-slate-800 text-[15px]">Compare to standards</div>
+          <div class="text-[11px] text-muted mt-0.5 leading-snug">Olympic, Trials, U SPORTS &amp; Canadian Open cuts</div>
+        </div>
+        <span class="text-cyan-600 text-xl leading-none flex-shrink-0">⚑</span>
       </button>
     </div>
     ${PUBLIC_BUILD ? '' : `<div class="px-5 pb-2">
@@ -4057,6 +4091,9 @@ function adjResultHtml() {
 
 // ----- Screen 2: Quick Calc form -----
 function renderQuickCalc() {
+  // SCY is hidden for now (2026-08-17) — snap a remembered yards selection to SCM so
+  // nobody is stranded on a course with no button for it.
+  if (state.form.pool === 'SCY') state.form.pool = 'SCM';
   const f = state.form;
   const strokes = ['Free', 'Back', 'Breast', 'Fly', 'IM'];
   const distances = [50, 100, 200, 400, 800, 1500];
@@ -4095,7 +4132,6 @@ function renderQuickCalc() {
           <div class="seg-group">
             <div class="seg ${f.pool === 'LCM' ? 'active' : ''}" data-pool="LCM">LCM</div>
             <div class="seg ${f.pool === 'SCM' ? 'active' : ''}" data-pool="SCM">SCM</div>
-            <div class="seg ${f.pool === 'SCY' ? 'active' : ''}" data-pool="SCY">SCY</div>
           </div>
         </div>
       </div>
@@ -5248,10 +5284,151 @@ function tpBuildPdf() {
   doc.save(name + '.pdf');
 }
 
+
+// ===== Compare to standards ==================================================
+// Qualifying standards parsed from the official PDFs (outputs/build_time_standards_csv.py),
+// column-mapped by coordinate and checked against the World Aquatics base times — nothing
+// here is faster than a world record. Refresh each autumn: Swimming Canada reviews its
+// standards every August, and a stale standard is worse than no standard.
+const STD_AS_OF = 'World Aquatics Dec 2025 \u00b7 Swimming Canada Sept 2025';
+const STD_DEFS = [
+  { k: 'olyA',  label: 'Olympic A',      course: 'LCM', org: 'LA28' },
+  { k: 'olyB',  label: 'Olympic B',      course: 'LCM', org: 'LA28', note: 'A + 1.0%' },
+  { k: 'olyM',  label: 'Olympic minimum', course: 'LCM', org: 'LA28', note: 'already in the quota' },
+  { k: 'trSen', label: 'Trials Senior',  course: 'LCM', org: 'Swimming Canada' },
+  { k: 'trJun', label: 'Trials Junior',  course: 'LCM', org: 'Swimming Canada', note: 'birth years set each year' },
+  { k: 'trUS',  label: 'U SPORTS',       course: 'SCM', org: 'Swimming Canada' },
+  { k: 'coSCM', label: 'Canadian Open',  course: 'SCM', org: 'Swimming Canada' },
+  { k: 'coLCM', label: 'Canadian Open',  course: 'LCM', org: 'Swimming Canada' },
+];
+const stdTimes = {
+  M: {
+    Back: { 50: { coSCM: 27.09, coLCM: 27.9, trJun: 27.88, trSen: 27.22, trUS: 26.43, olyM: 25.35 }, 100: { coSCM: 57.89, coLCM: 59.63, trJun: 59.8, trSen: 57.91, trUS: 56.22, olyA: 53, olyB: 53.53 }, 200: { coSCM: 126.13, coLCM: 129.91, trJun: 131.31, trSen: 127.75, trUS: 124.03, olyA: 116.05, olyB: 117.21 } },
+    Breast: { 50: { coSCM: 29.41, coLCM: 30.29, trJun: 30.36, trSen: 29.38, trUS: 28.52, olyM: 27.71 }, 100: { coSCM: 64.36, coLCM: 66.29, trJun: 66.86, trSen: 64.42, trUS: 62.54, olyA: 59.27, olyB: 59.86 }, 200: { coSCM: 140.41, coLCM: 144.62, trJun: 146.22, trSen: 142.1, trUS: 137.96, olyA: 129.35, olyB: 130.64 } },
+    Fly: { 50: { coSCM: 25.14, coLCM: 25.89, trJun: 26.05, trSen: 25.19, trUS: 24.46, olyM: 23.55 }, 100: { coSCM: 55.3, coLCM: 56.96, trJun: 57.29, trSen: 55.28, trUS: 53.67, olyA: 51.06, olyB: 51.57 }, 200: { coSCM: 124.34, coLCM: 128.07, trJun: 129.7, trSen: 126.39, trUS: 122.71, olyA: 114.69, olyB: 115.84 } },
+    Free: { 50: { coSCM: 23.42, coLCM: 24.12, trJun: 24.34, trSen: 23.27, trUS: 22.59, olyA: 21.69, olyB: 21.91 }, 100: { coSCM: 51.07, coLCM: 52.6, trJun: 53.09, trSen: 51.09, trUS: 49.6, olyA: 47.86, olyB: 48.34 }, 200: { coSCM: 111.62, coLCM: 114.97, trJun: 116.47, trSen: 113, trUS: 109.71, olyA: 105.83, olyB: 106.89 }, 400: { coSCM: 239.01, coLCM: 246.18, trJun: 248.73, trSen: 241.69, trUS: 234.65, olyA: 225.46, olyB: 227.71 }, 800: { coSCM: 507.93, coLCM: 523.17, trJun: 519.36, trSen: 506.89, olyA: 467.04, olyB: 471.71 }, 1500: { coSCM: 966.66, coLCM: 995.66, trJun: 991.79, trSen: 978.02, trUS: 949.53, olyA: 891.62, olyB: 900.54 } },
+    IM: { 200: { coSCM: 126.94, coLCM: 130.75, trJun: 132.2, trSen: 127.63, trUS: 123.91, olyA: 117.54, olyB: 118.72 }, 400: { coSCM: 273.61, coLCM: 281.82, trJun: 284.47, trSen: 276.96, trUS: 268.89, olyA: 251.52, olyB: 254.04 } },
+  },
+  F: {
+    Back: { 50: { coSCM: 29.96, coLCM: 30.86, trJun: 30.58, trSen: 30.16, trUS: 28.96, olyM: 28.59 }, 100: { coSCM: 63.64, coLCM: 65.55, trJun: 65.39, trSen: 63.8, trUS: 61.4, olyA: 59.49, olyB: 60.08 }, 200: { coSCM: 137.89, coLCM: 142.03, trJun: 141.82, trSen: 139.21, trUS: 134.41, olyA: 128.95, olyB: 130.24 } },
+    Breast: { 50: { coSCM: 33.26, coLCM: 34.26, trJun: 33.95, trSen: 33.48, trUS: 32.48, olyM: 31.33 }, 100: { coSCM: 72.29, coLCM: 74.46, trJun: 74.37, trSen: 72.46, trUS: 70.46, olyA: 66.1, olyB: 66.76 }, 200: { coSCM: 157.33, coLCM: 162.05, trJun: 161.47, trSen: 157.81, trUS: 153.74, olyA: 143.49, olyB: 144.92 } },
+    Fly: { 50: { coSCM: 27.94, coLCM: 28.78, trJun: 28.68, trSen: 28.13, trUS: 27.43, olyM: 26.57 }, 100: { coSCM: 61.95, coLCM: 63.81, trJun: 63.43, trSen: 62.26, trUS: 60.54, olyA: 57.38, olyB: 57.95 }, 200: { coSCM: 137.87, coLCM: 142.01, trJun: 141.61, trSen: 139.43, trUS: 136.63, olyA: 128.15, olyB: 129.43 } },
+    Free: { 50: { coSCM: 26.36, coLCM: 27.15, trJun: 26.88, trSen: 26.3, trUS: 25.5, olyA: 24.56, olyB: 24.81 }, 100: { coSCM: 56.61, coLCM: 58.31, trJun: 58.3, trSen: 56.79, trUS: 55.19, olyA: 53.6, olyB: 54.14 }, 200: { coSCM: 122.47, coLCM: 126.14, trJun: 126.68, trSen: 123.73, trUS: 120.39, olyA: 116.43, olyB: 117.59 }, 400: { coSCM: 261.15, coLCM: 268.98, trJun: 266.87, trSen: 262.57, trUS: 256.17, olyA: 246.27, olyB: 248.73 }, 800: { coSCM: 542.58, coLCM: 558.86, trJun: 554.67, trSen: 546.54, trUS: 533.74, olyA: 506.71, olyB: 511.78 }, 1500: { coSCM: 1056.18, coLCM: 1087.87, trJun: 1068.37, trSen: 1061.18, olyA: 968.65, olyB: 978.34 } },
+    IM: { 200: { coSCM: 140.19, coLCM: 144.4, trJun: 143.27, trSen: 139.92, trUS: 136.72, olyA: 129.9, olyB: 131.2 }, 400: { coSCM: 297.84, coLCM: 306.78, trJun: 305.36, trSen: 300.92, trUS: 294.23, olyA: 277.33, olyB: 280.1 } },
+  },
+};
+
+// convRatios is LCM/SCM, so SCM -> LCM multiplies and LCM -> SCM divides. Returns null when
+// no paired-athlete ratio exists for that event rather than inventing one.
+function convertCourse(sec, stroke, sex, dist, from, to) {
+  if (from === to) return { s: sec, est: false };
+  const r = convRatios[stroke] && convRatios[stroke][sex] && convRatios[stroke][sex][dist];
+  if (!r || !r.mean) return null;
+  if (from === 'SCM' && to === 'LCM') return { s: sec * r.mean, est: true };
+  if (from === 'LCM' && to === 'SCM') return { s: sec / r.mean, est: true };
+  return null;
+}
+
+// One row per standard that exists for this event, each compared in ITS OWN course —
+// the swimmer's time is converted to meet the standard, never the other way round.
+function standardRows(f) {
+  const all = (stdTimes[f.sex] && stdTimes[f.sex][f.stroke] && stdTimes[f.sex][f.stroke][f.distance]) || {};
+  const out = [];
+  STD_DEFS.forEach((d) => {
+    const target = all[d.k];
+    if (target == null) return;
+    const mine = f.seconds > 0 ? convertCourse(f.seconds, f.stroke, f.sex, f.distance, f.pool, d.course) : null;
+    out.push({ d, target, mine: mine ? mine.s : null, est: mine ? mine.est : false,
+               gap: mine ? mine.s - target : null });
+  });
+  out.sort((a, b) => (a.gap == null || b.gap == null) ? a.target - b.target : a.gap - b.gap);
+  return out;
+}
+
+function renderStandards() {
+  const f = state.stdForm;
+  if (f.pool === 'SCY') f.pool = 'SCM';
+  const strokes = ['Free', 'Back', 'Breast', 'Fly', 'IM'];
+  const dists = [50, 100, 200, 400, 800, 1500].filter((d) =>
+    (stdTimes[f.sex] && stdTimes[f.sex][f.stroke] && stdTimes[f.sex][f.stroke][d] != null));
+  if (dists.length && dists.indexOf(f.distance) < 0) f.distance = dists[0];
+  const rows = standardRows(f);
+  const next = rows.find((r) => r.gap != null && r.gap > 0);
+  const cleared = rows.filter((r) => r.gap != null && r.gap <= 0).length;
+
+  const head = f.seconds > 0 && next
+    ? `<div class="bg-gradient-to-br from-cyan-50 to-white border border-cyan-200 rounded-2xl px-4 py-4 text-center">
+         <div class="label-cap text-cyan-800">Next standard</div>
+         <div class="hero-time text-4xl mt-1 text-cyan-900">${formatTime(next.gap)}</div>
+         <div class="text-[12px] text-cyan-800 mt-1">off ${next.d.label} <span class="text-muted">(${next.d.course})</span></div>
+         ${cleared ? `<div class="text-[11px] text-emerald-700 font-semibold mt-1.5">${cleared} standard${cleared === 1 ? '' : 's'} already met</div>` : ''}
+       </div>`
+    : f.seconds > 0
+      ? `<div class="bg-emerald-50 border border-emerald-200 rounded-2xl px-4 py-4 text-center">
+           <div class="text-sm font-bold text-emerald-800">Every standard on this list is met.</div>
+         </div>`
+      : `<div class="bg-white border border-dashed border-slate-200 rounded-2xl px-4 py-4 text-center text-sm text-muted">Enter a time to see where it sits.</div>`;
+
+  const rowHtml = rows.map((r) => {
+    const met = r.gap != null && r.gap <= 0;
+    const gapTxt = r.gap == null ? '' : (met ? '\u2212' + formatTime(-r.gap) : '+' + formatTime(r.gap));
+    return `<div class="px-4 py-3 flex items-center gap-3 border-b border-slate-100 last:border-0">
+      <div class="flex-1 min-w-0">
+        <div class="font-semibold text-[14px] ${met ? 'text-emerald-800' : 'text-slate-800'}">${r.d.label}
+          <span class="text-[11px] font-normal text-muted">${r.d.course}</span></div>
+        <div class="text-[11px] text-muted mt-0.5">${r.d.org}${r.d.note ? ' \u00b7 ' + r.d.note : ''}${r.est ? ' \u00b7 <span class="text-amber-700">your time converted, estimate</span>' : ''}</div>
+      </div>
+      <div class="text-right flex-shrink-0">
+        <div class="mono font-bold text-[15px] ${met ? 'text-emerald-700' : 'text-slate-700'}">${formatTime(r.target)}</div>
+        ${gapTxt ? `<div class="mono text-[11px] ${met ? 'text-emerald-700' : 'text-rose-600'}">${gapTxt}</div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+
+  const seg = (val, cur, attr, label) => `<div class="seg ${cur === val ? 'active' : ''}" data-${attr}="${val}">${label}</div>`;
+  return `
+    <div class="statusbar"></div>
+    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
+      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">\u2039</button><button class="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="home" aria-label="Home" title="Home"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/><path d="M9.5 20v-5.4h5V20"/></svg></button>
+      <div class="flex-1 min-w-0">
+        <div class="text-lg font-semibold truncate">Compare to standards</div>
+        ${f.name ? `<div class="text-xs text-muted truncate">${f.name}</div>` : ''}
+      </div>
+      ${csvBtn()}
+    </div>
+    <div class="scrollable px-5 py-3 space-y-4 bg-slate-50">
+      <div class="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+        <div>
+          <div class="label-cap mb-2">Stroke</div>
+          <div class="flex gap-2 flex-wrap">${strokes.map((s) => `<span class="pill ${f.stroke === s ? 'active' : ''}" data-stdstroke="${s}">${s}</span>`).join('')}</div>
+        </div>
+        <div class="flex gap-3">
+          ${SWIMMER ? '' : `<div class="flex-1"><div class="label-cap mb-2">Sex</div>
+            <div class="seg-group">${seg('M', f.sex, 'stdsex', 'Men')}${seg('F', f.sex, 'stdsex', 'Women')}</div></div>`}
+          <div class="flex-1"><div class="label-cap mb-2">Your pool</div>
+            <div class="seg-group">${seg('LCM', f.pool, 'stdpool', 'LCM')}${seg('SCM', f.pool, 'stdpool', 'SCM')}</div></div>
+        </div>
+        <div>
+          <div class="label-cap mb-2">Distance</div>
+          <div class="flex gap-2 flex-wrap">${dists.map((d) => `<span class="pill ${f.distance === d ? 'active' : ''}" data-stddist="${d}">${d}</span>`).join('')}</div>
+        </div>
+        <div class="flex items-center justify-between gap-3 pt-1">
+          <div class="label-cap text-cyan-800">Your time</div>
+          ${timeBoxes('stdtime', f.seconds, f.distance)}
+        </div>
+      </div>
+      ${head}
+      ${rows.length ? `<div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">${rowHtml}</div>`
+        : `<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-6 text-center text-sm text-muted">No published standard for this event.</div>`}
+      <div class="text-[10px] text-faint leading-snug px-1">Standards as published: ${STD_AS_OF}. Times in a different course to the standard are converted from paired-athlete ratios and are estimates \u2014 the official time is the one swum in that course. Junior eligibility depends on birth years set each year; this app does not know your age.</div>
+    </div>`;
+}
+
 // ----- Screen: Training Pace -----
 function renderTrainingPace() {
   const f = state.tpForm;
-  const pools = ['LCM', 'SCM', 'SCY'];
+  const pools = ['LCM', 'SCM'];          // SCY hidden 2026-08-17 — see patch_no_scy.py
+  if (f.pool === 'SCY') f.pool = 'SCM';
   const dists = tpDistances(f.pool);
   if (dists.length && dists.indexOf(f.distance) < 0) f.distance = dists[0];
 
@@ -5838,6 +6015,14 @@ document.addEventListener('click', (e) => {
     if (tps) { state.tpForm.stroke = tps.getAttribute('data-tp-stroke'); render(); return; }
     const tpx = e.target.closest('[data-tp-sex]');
     if (tpx) { state.tpForm.sexFilter = tpx.getAttribute('data-tp-sex'); render(); return; }
+    const sdk = e.target.closest('[data-stdstroke]');
+    if (sdk) { state.stdForm.stroke = sdk.getAttribute('data-stdstroke'); render(); return; }
+    const sdx = e.target.closest('[data-stdsex]');
+    if (sdx) { state.stdForm.sex = sdx.getAttribute('data-stdsex'); render(); return; }
+    const sdp = e.target.closest('[data-stdpool]');
+    if (sdp) { state.stdForm.pool = sdp.getAttribute('data-stdpool'); render(); return; }
+    const sdd = e.target.closest('[data-stddist]');
+    if (sdd) { state.stdForm.distance = +sdd.getAttribute('data-stddist'); render(); return; }
     const sws = e.target.closest('[data-sw-stroke]');
     if (sws) { state.swimmerStroke = sws.getAttribute('data-sw-stroke'); render(); return; }
     const sv = e.target.closest('[data-saved]');
@@ -6291,6 +6476,23 @@ function handleAction(action, el) {
         const node = document.querySelector(`[data-refl-sec="${s}"]`);
         if (node && node.scrollIntoView) { try { node.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (e) {} }
       }, 0);
+      break;
+    }
+    case 'standards': {
+      // Seed from whoever is on screen: a swimmer's best time in their most recent event
+      // beats making them retype something the app already knows.
+      const sid = state.savedSid || (SWIMMER ? selfSid() : null);
+      const f = state.stdForm;
+      if (sid) {
+        const best = bestTimesFor(sid, { mode: 'all' }).filter((x) => x.r.pool !== 'SCY');
+        if (best.length) {
+          const b = best[0];
+          f.stroke = b.r.stroke; f.distance = b.r.distance; f.pool = b.r.pool;
+          f.sex = b.r.sex; f.seconds = b.t; f.name = swimmerName(sid) || '';
+        } else { f.name = swimmerName(sid) || ''; }
+      }
+      if (SWIMMER) f.sex = selfSex() || f.sex;
+      navigate('standards');
       break;
     }
     case 'print-page': printPage(); break;
