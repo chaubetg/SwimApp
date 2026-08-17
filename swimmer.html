@@ -1407,7 +1407,7 @@ const state = {
   race: null,       // the race object currently being analysed
   raceEditId: null, // id of a saved race being edited (Save updates in place)
   reflOpen: {},     // which reflection sections (and prompt hints) are expanded
-  stdForm: { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 100, seconds: 0, name: '' },
+  stdForm: { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 100, seconds: 0, name: '', src: 'canada' },
   compareIds: [],   // two saved-race ids to show side by side
   editing: false,   // roster / saved-swimmer delete mode toggle
   progGroup: null,  // selected progression signature
@@ -3020,6 +3020,7 @@ function renderSavedSwimmer() {
     <div class="px-5 pb-2 space-y-2">
       <button class="w-full bg-white border border-slate-200 text-slate-700 rounded-xl py-3 text-sm font-semibold hover:bg-slate-50 active:scale-[0.99] transition" data-action="rename-swimmer">Rename swimmer</button>
       <button class="w-full bg-white border border-slate-200 text-slate-700 rounded-xl py-3 text-sm font-semibold hover:bg-slate-50 active:scale-[0.99] transition" data-action="set-team">${swimmerTeam(sid) ? 'Change team (' + swimmerTeam(sid).replace(/</g, '&lt;') + ')' : 'Set team'}</button>
+      <button class="w-full bg-white border border-slate-200 text-slate-700 rounded-xl py-3 text-sm font-semibold hover:bg-slate-50 active:scale-[0.99] transition" data-action="set-birthyear">${swimmerBirthYear(sid) ? 'Change birth year (' + swimmerBirthYear(sid) + ')' : 'Set birth year'}</button>
       <button class="w-full bg-rose-50 text-rose-700 border border-rose-200 rounded-xl py-3 text-sm font-semibold hover:bg-rose-100 active:scale-[0.99] transition flex items-center justify-center gap-2" data-del-swimmer="${sid}">${TRASH_SVG} Delete this swimmer</button>
     </div>` : `
     ${(races.length || plans.length || hasProgress(sid)) ? `<div class="px-5 pb-2">${navCard([
@@ -5286,6 +5287,88 @@ function tpBuildPdf() {
 }
 
 
+
+// ===== Rudolph points (DSV) ==================================================
+// Age- and sex-graded scoring, 1-20, where 20 is world-class for that age. Created by
+// Dr. Klaus Rudolph for the Deutscher Schwimm-Verband — NOT a Swiss table, despite how
+// widely Swiss and Austrian clubs use it. LONG COURSE: open at 20 points is 21.39 /
+// 46.90 / 1:55.49 against world records of 20.91 / 46.40 / 1:54.00.
+// This is the only comparison in the app that means anything to a ten-year-old.
+const RUD_AS_OF = 'Rudolph table, DSV 2025';
+const RUD_EVENTS = [['Free',50],['Free',100],['Free',200],['Free',400],['Free',800],['Free',1500],
+                    ['Breast',50],['Breast',100],['Breast',200],['Fly',50],['Fly',100],['Fly',200],
+                    ['Back',50],['Back',100],['Back',200],['IM',200],['IM',400]];
+// Rudolph Punkttabelle 2025 (DSV). Each entry is [time at 20 points in hundredths,
+// seconds lost per point in ten-thousandths] — the scale is linear to within 0.01s,
+// verified against all 8,160 published times. See outputs/parse_rudolph.py.
+const rudolph = {
+  'F|8': [[3512,5431],[7879,12185],[17713,27393],[37345,57750],[77600,120000],[148410,229500],[4438,6862],[9979,15431],[22361,34581],[3988,6166],[10282,15900],[23280,36000],[4050,6262],[9013,13937],[19231,29739],[20181,31207],[43650,67500]],
+  'F|9': [[3156,4882],[7072,10936],[15536,24024],[32669,50518],[67900,105000],[135800,210000],[4115,6363],[9096,14065],[19552,30236],[3548,5487],[8504,13152],[19711,30482],[3676,5685],[8086,12506],[17307,26763],[17618,27245],[39479,61052]],
+  'F|10': [[2939,4545],[6559,10142],[14322,22148],[30141,46610],[62678,96924],[125130,193500],[3715,5745],[8186,12658],[17663,27313],[3197,4944],[7305,11296],[17021,26319],[3412,5277],[7454,11528],[16184,25028],[16137,24954],[33869,52376]],
+  'F|11': [[2792,4317],[6130,9481],[13288,20548],[28256,43693],[58183,89972],[114240,176660],[3546,5484],[7696,11900],[16693,25813],[2973,4600],[6793,10506],[15247,23579],[3176,4912],[6888,10652],[14864,22987],[15036,23252],[31937,49388]],
+  'F|12': [[2684,4152],[5839,9031],[12774,19753],[26843,41510],[55839,86348],[107659,166484],[3346,5175],[7391,11431],[15852,24513],[2854,4413],[6436,9952],[14274,22075],[3033,4690],[6513,10071],[14119,21834],[14249,22036],[30355,46942]],
+  'F|13': [[2590,4007],[5644,8729],[12222,18900],[25795,39889],[53248,82342],[103151,159512],[3266,5052],[7098,10977],[15290,23645],[2742,4240],[6109,9448],[13618,21058],[2933,4536],[6302,9745],[13624,21066],[13805,21348],[29157,45088]],
+  'F|14': [[2543,3934],[5494,8494],[11903,18408],[25147,38887],[51592,79782],[100387,155237],[3186,4925],[6953,10752],[15000,23194],[2702,4179],[5948,9200],[13226,20452],[2879,4452],[6167,9537],[13306,20577],[13468,20825],[28605,44236]],
+  'F|15': [[2498,3863],[5407,8361],[11724,18131],[24750,38272],[50944,78781],[97491,150758],[3132,4844],[6801,10516],[14696,22724],[2644,4088],[5869,9076],[12970,20056],[2835,4385],[6086,9412],[13059,20193],[13231,20460],[28184,43584]],
+  'F|16': [[2483,3840],[5384,8325],[11602,17942],[24516,37912],[50385,77913],[96725,149576],[3102,4799],[6744,10430],[14506,22434],[2615,4044],[5814,8991],[12887,19929],[2815,4352],[6039,9339],[12957,20037],[13095,20252],[27841,43052]],
+  'F|17': [[2469,3817],[5367,8300],[11544,17852],[24438,37791],[50249,77706],[95545,147750],[3094,4785],[6722,10393],[14404,22275],[2590,4007],[5791,8955],[12866,19894],[2783,4304],[5989,9261],[12886,19925],[13043,20169],[27714,42856]],
+  'F|18': [[2454,3793],[5358,8287],[11495,17774],[24294,37566],[49827,77052],[95060,147000],[3080,4762],[6664,10307],[14356,22200],[2570,3977],[5723,8852],[12827,19836],[2774,4289],[5966,9224],[12785,19769],[13009,20116],[27596,42676]],
+  'F|open': [[2407,3721],[5246,8112],[11361,17569],[23910,36975],[49034,75827],[93437,144490],[3004,4645],[6552,10134],[14114,21824],[2538,3924],[5637,8716],[12526,19369],[2732,4224],[5860,9061],[12614,19507],[12872,19907],[27325,42255]],
+  'M|8': [[3368,5207],[7771,12016],[17120,26476],[37830,58500],[78570,121500],[149865,231752],[4518,6987],[10149,15693],[22601,34952],[3941,6093],[9215,14252],[25220,39000],[3961,6124],[8736,13509],[19348,29918],[20273,31352],[44135,68250]],
+  'M|9': [[3149,4869],[7051,10904],[15495,23961],[33269,51448],[69840,108000],[132890,205500],[4113,6360],[9166,14173],[19992,30915],[3551,5493],[8148,12600],[20952,32400],[3686,5700],[8122,12560],[17249,26675],[17526,27100],[38800,60000]],
+  'M|10': [[2927,4528],[6564,10152],[14144,21871],[29534,45670],[62625,96842],[118598,183400],[3770,5831],[8305,12842],[17825,27564],[3209,4963],[7304,11293],[17259,26689],[3396,5252],[7405,11452],[15935,24642],[16001,24744],[34204,52892]],
+  'M|11': [[2751,4254],[6016,9301],[13293,20556],[27864,43088],[58266,90100],[110386,170700],[3490,5399],[7706,11916],[16595,25663],[2949,4560],[6704,10366],[15116,23376],[3151,4872],[6891,10656],[14850,22964],[14816,22912],[31733,49071]],
+  'M|12': [[2568,3970],[5607,8669],[12432,19224],[25816,39921],[55172,85317],[104703,161912],[3238,5008],[7098,10977],[15365,23760],[2733,4228],[6189,9569],[13939,21555],[2927,4528],[6359,9834],[13799,21339],[13862,21436],[29637,45831]],
+  'M|13': [[2429,3756],[5326,8236],[11698,18090],[24891,38493],[52241,80787],[98953,153019],[3055,4724],[6672,10317],[14546,22493],[2592,4007],[5789,8952],[13000,20101],[2783,4304],[5984,9253],[13056,20190],[13124,20293],[27961,43239]],
+  'M|14': [[2345,3625],[5156,7975],[11325,17512],[24168,37375],[50287,77763],[95731,148037],[2936,4540],[6437,9954],[14015,21672],[2505,3872],[5596,8653],[12534,19383],[2697,4170],[5790,8953],[12598,19482],[12747,19712],[27172,42018]],
+  'M|15': [[2285,3534],[5005,7740],[10960,16948],[23406,36193],[49065,75872],[92979,143783],[2871,4440],[6294,9734],[13758,21276],[2444,3781],[5403,8355],[12128,18755],[2617,4048],[5643,8725],[12277,18987],[12343,19087],[26494,40969]],
+  'M|16': [[2258,3493],[4950,7655],[10816,16727],[22968,35517],[47738,73821],[90954,140652],[2828,4372],[6160,9527],[13368,20671],[2398,3707],[5298,8192],[11914,18423],[2551,3945],[5515,8529],[12042,18621],[12206,18876],[25949,40128]],
+  'M|17': [[2227,3444],[4881,7548],[10699,16545],[22657,35037],[46895,72517],[89576,138518],[2763,4272],[6073,9393],[13139,20317],[2372,3666],[5268,8147],[11725,18131],[2511,3884],[5418,8379],[11881,18372],[12036,18612],[25609,39600]],
+  'M|18': [[2194,3392],[4803,7428],[10576,16355],[22384,34613],[46520,71939],[89136,137840],[2717,4200],[5995,9270],[12992,20091],[2340,3618],[5150,7964],[11620,17969],[2475,3828],[5373,8307],[11743,18158],[11822,18282],[25331,39171]],
+  'M|open': [[2139,3307],[4690,7252],[10294,15918],[21770,33664],[45336,70108],[86480,133734],[2624,4058],[5771,8924],[12665,19587],[2267,3507],[5015,7755],[11332,17523],[2414,3734],[5217,8066],[11391,17613],[11549,17858],[24768,38300]],
+};
+
+
+// Birth year, not age: a stored age silently goes wrong on a birthday. Year alone is also
+// far less sensitive to hold than a full date of birth, which matters for a minor.
+function selfBirthYear() { try { const v = +localStorage.getItem('sc_self_birthyear'); return v > 1900 ? v : null; } catch (e) { return null; } }
+function setSelfBirthYear(y) { try { localStorage.setItem('sc_self_birthyear', y ? String(y) : ''); } catch (e) {} }
+function swimmerBirthYear(sid) { const e = entriesOf(sid); for (let i = e.length - 1; i >= 0; i--) { if (e[i].by > 1900) return e[i].by; } return null; }
+function setSwimmerBirthYear(sid, y) { const v = +y > 1900 ? +y : null; state.saved.forEach(s => { if (s.sid === sid) s.by = v; }); persistSaved(); }
+
+// German age-group convention (Jahrgang): the age you reach in the calendar year of the
+// swim, not your age on the day. Ages below 8 use the 8 table; above 18 uses "offen".
+function rudolphAge(birthYear, whenISO) {
+  if (!birthYear) return null;
+  const yr = (whenISO && /^\d{4}/.test(whenISO)) ? +whenISO.slice(0, 4) : new Date().getFullYear();
+  const a = yr - birthYear;
+  if (a < 8) return { key: '8', shown: a, clamped: 'young' };
+  if (a > 18) return { key: 'open', shown: a, clamped: 'open' };
+  return { key: String(a), shown: a };
+}
+
+// Score is continuous, displayed rounded DOWN: 13.8 means you have earned 13, and the
+// screen shows what 14 needs. Rounding up would hand out a level not yet swum.
+function rudolphScore(sex, ageKey, stroke, dist, lcmSeconds) {
+  const block = rudolph[sex + '|' + ageKey];
+  if (!block || !(lcmSeconds > 0)) return null;
+  let col = -1;
+  RUD_EVENTS.forEach(([s, d], i) => { if (s === stroke && d === +dist) col = i; });
+  if (col < 0) return null;
+  const t20 = block[col][0] / 100, step = block[col][1] / 10000;
+  // The table is published to hundredths and the compact form reproduces it to within
+  // 0.01s, so swimming EXACTLY the published time must award that point. Compare with a
+  // one-hundredth tolerance rather than trusting the reconstruction to the last digit.
+  const TOL = 0.011;
+  const raw = 20 - (lcmSeconds - t20) / step;
+  const pts = Math.max(0, Math.min(20, raw));
+  const whole = Math.max(0, Math.min(20, Math.floor(20 - (lcmSeconds - TOL - t20) / step)));
+  const nextP = whole >= 20 ? null : whole + 1;
+  return { raw, pts, whole, nextP,
+           nextTime: nextP == null ? null : t20 + (20 - nextP) * step,
+           atWhole: t20 + (20 - whole) * step, t20 };
+}
+
 // ===== Compare to standards ==================================================
 // Qualifying standards parsed from the official PDFs (outputs/build_time_standards_csv.py),
 // column-mapped by coordinate and checked against the World Aquatics base times — nothing
@@ -5293,14 +5376,14 @@ function tpBuildPdf() {
 // standards every August, and a stale standard is worse than no standard.
 const STD_AS_OF = 'World Aquatics Dec 2025 \u00b7 Swimming Canada Sept 2025';
 const STD_DEFS = [
-  { k: 'olyA',  label: 'Olympic A',      course: 'LCM', org: 'LA28' },
-  { k: 'olyB',  label: 'Olympic B',      course: 'LCM', org: 'LA28', note: 'A + 1.0%' },
-  { k: 'olyM',  label: 'Olympic minimum', course: 'LCM', org: 'LA28', note: 'already in the quota' },
-  { k: 'trSen', label: 'Trials Senior',  course: 'LCM', org: 'Swimming Canada' },
-  { k: 'trJun', label: 'Trials Junior',  course: 'LCM', org: 'Swimming Canada', note: 'birth years set each year' },
-  { k: 'trUS',  label: 'U SPORTS',       course: 'SCM', org: 'Swimming Canada' },
-  { k: 'coSCM', label: 'Canadian Open',  course: 'SCM', org: 'Swimming Canada' },
-  { k: 'coLCM', label: 'Canadian Open',  course: 'LCM', org: 'Swimming Canada' },
+  { k: 'olyA',  label: 'Olympic A',      course: 'LCM', org: 'LA28', src: 'world' },
+  { k: 'olyB',  label: 'Olympic B',      course: 'LCM', org: 'LA28', src: 'world', note: 'A + 1.0%' },
+  { k: 'olyM',  label: 'Olympic minimum', course: 'LCM', org: 'LA28', src: 'world', note: 'already in the quota' },
+  { k: 'trSen', label: 'Trials Senior',  course: 'LCM', org: 'Swimming Canada', src: 'canada' },
+  { k: 'trJun', label: 'Trials Junior',  course: 'LCM', org: 'Swimming Canada', src: 'canada', note: 'birth years set each year' },
+  { k: 'trUS',  label: 'U SPORTS',       course: 'SCM', org: 'Swimming Canada', src: 'canada' },
+  { k: 'coSCM', label: 'Canadian Open',  course: 'SCM', org: 'Swimming Canada', src: 'canada' },
+  { k: 'coLCM', label: 'Canadian Open',  course: 'LCM', org: 'Swimming Canada', src: 'canada' },
 ];
 const stdTimes = {
   M: {
@@ -5335,7 +5418,7 @@ function convertCourse(sec, stroke, sex, dist, from, to) {
 function standardRows(f) {
   const all = (stdTimes[f.sex] && stdTimes[f.sex][f.stroke] && stdTimes[f.sex][f.stroke][f.distance]) || {};
   const out = [];
-  STD_DEFS.forEach((d) => {
+  STD_DEFS.filter((d) => !f.src || f.src === 'all' || d.src === f.src).forEach((d) => {
     const target = all[d.k];
     if (target == null) return;
     const mine = f.seconds > 0 ? convertCourse(f.seconds, f.stroke, f.sex, f.distance, f.pool, d.course) : null;
@@ -5372,6 +5455,57 @@ function stdSyncBest() {
   f.best = b;
   f.seconds = b ? b.t : 0;
   f.auto = !!b;
+}
+
+// The birth year in play: this swimmer's, or the one being typed on screen.
+function stdBirthYear(f) {
+  if (SWIMMER) return selfBirthYear();
+  return f.sid ? swimmerBirthYear(f.sid) : null;
+}
+
+function rudolphCardHtml(f) {
+  const by = stdBirthYear(f);
+  if (!by) {
+    return `<div class="bg-white border border-cyan-200 rounded-2xl p-4 space-y-2">
+      <div class="font-semibold text-[15px] text-slate-800">What year were you born?</div>
+      <div class="text-[11px] text-muted leading-snug">Rudolph points are age-graded, so the score means nothing without it. Stored once — the year, not your date of birth — and it never needs changing.</div>
+      <div class="flex items-center gap-2 pt-1">
+        <input type="number" inputmode="numeric" min="1900" max="2030" data-stdby placeholder="e.g. 2012"
+          class="w-28 bg-slate-100 rounded-xl px-3 py-2.5 text-center mono font-bold text-[18px] text-cyan-800 outline-none focus:ring-2 focus:ring-cyan-300" />
+        <button class="px-4 py-2.5 rounded-xl bg-cyan-600 text-white text-sm font-semibold hover:bg-cyan-700 active:scale-95 transition" data-action="std-save-by">Save</button>
+      </div></div>`;
+  }
+  const when = (f.auto && f.best && f.best.date) ? f.best.date : '';
+  const age = rudolphAge(by, when);
+  const lcm = convertCourse(f.seconds, f.stroke, f.sex, f.distance, f.pool, 'LCM');
+  if (!(f.seconds > 0)) return `<div class="bg-white border border-dashed border-slate-200 rounded-2xl px-4 py-4 text-center text-sm text-muted">Enter a time to score it.</div>`;
+  if (!lcm) return `<div class="bg-white border border-dashed border-slate-200 rounded-2xl px-4 py-4 text-center text-sm text-muted">No conversion available for this event, so a short-course time can't be scored against a long-course table.</div>`;
+  const sc = rudolphScore(f.sex, age.key, f.stroke, f.distance, lcm.s);
+  if (!sc) return `<div class="bg-white border border-dashed border-slate-200 rounded-2xl px-4 py-4 text-center text-sm text-muted">The Rudolph table doesn't cover ${f.distance} ${f.stroke}.</div>`;
+  const band = sc.whole >= 18 ? 'world class' : sc.whole >= 14 ? 'national level'
+             : sc.whole >= 10 ? 'strong regional' : sc.whole >= 6 ? 'developing' : 'early days';
+  return `
+    <div class="bg-gradient-to-br from-cyan-50 to-white border border-cyan-200 rounded-2xl px-4 py-4 text-center">
+      <div class="label-cap text-cyan-800">Rudolph points</div>
+      <div class="hero-time text-5xl mt-1 text-cyan-900">${sc.whole}<span class="text-2xl text-cyan-700">/20</span></div>
+      <div class="text-[12px] text-cyan-800 mt-1">${band} for a ${age.shown}-year-old ${f.sex === 'M' ? 'boy' : 'girl'}</div>
+      ${age.clamped === 'open' ? `<div class="text-[11px] text-muted mt-1">Scored on the open table — the age tables stop at 18.</div>` : ''}
+      ${age.clamped === 'young' ? `<div class="text-[11px] text-muted mt-1">Scored on the 8-year-old table — the tables start at 8.</div>` : ''}
+      ${lcm.est ? `<div class="text-[11px] text-amber-700 mt-1">Your ${f.pool} time converted to long course — estimate.</div>` : ''}
+    </div>
+    <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+      <div class="px-4 py-3 flex items-center gap-3 border-b border-slate-100">
+        <div class="flex-1 min-w-0"><div class="font-semibold text-[14px] text-slate-800">You swam</div>
+          <div class="text-[11px] text-muted mt-0.5">${f.pool === 'LCM' ? 'long course' : f.pool + ' · shown as long course'}</div></div>
+        <div class="mono font-bold text-[15px] text-slate-700">${formatTime(lcm.s)}</div>
+      </div>
+      ${sc.nextP != null ? `<div class="px-4 py-3 flex items-center gap-3">
+        <div class="flex-1 min-w-0"><div class="font-semibold text-[14px] text-cyan-900">${sc.nextP} points needs</div>
+          <div class="text-[11px] text-muted mt-0.5">${formatTime(lcm.s - sc.nextTime)} faster</div></div>
+        <div class="mono font-bold text-[15px] text-cyan-800">${formatTime(sc.nextTime)}</div>
+      </div>` : `<div class="px-4 py-3 text-[13px] font-semibold text-emerald-800">20 out of 20 — world class for this age.</div>`}
+    </div>
+    <div class="text-[10px] text-faint leading-snug px-1">${RUD_AS_OF}. 20 points is world-class level for that age, benchmarked against the world top-ten average. Age is the age reached in the calendar year of the swim (Jahrgang). The table is long course.</div>`;
 }
 
 function renderStandards() {
@@ -5426,6 +5560,11 @@ function renderStandards() {
       ${csvBtn()}
     </div>
     <div class="scrollable px-5 py-3 space-y-4 bg-slate-50">
+      <div class="seg-group">
+        <button class="seg ${f.src === 'canada' ? 'active' : ''}" data-stdsrc="canada">Canada</button>
+        <button class="seg ${f.src === 'world' ? 'active' : ''}" data-stdsrc="world">World</button>
+        <button class="seg ${f.src === 'rudolph' ? 'active' : ''}" data-stdsrc="rudolph">Rudolph</button>
+      </div>
       <div class="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
         <div>
           <div class="label-cap mb-2">Stroke</div>
@@ -5449,10 +5588,11 @@ function renderStandards() {
           ? `<div class="text-[11px] text-cyan-800 leading-snug -mt-1">Your best ${f.distance} ${f.stroke} ${f.pool}${f.best.date ? ' \u00b7 ' + f.best.date : ''}${f.best.meet ? ' \u00b7 ' + f.best.meet : ''}. Type over it to try another time.</div>`
           : (stdBestFor(f) ? '' : `<div class="text-[11px] text-muted leading-snug -mt-1">No recorded ${f.distance} ${f.stroke} ${f.pool} \u2014 type a time to compare.</div>`)}
       </div>
+      ${f.src === 'rudolph' ? rudolphCardHtml(f) : `
       ${head}
       ${rows.length ? `<div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">${rowHtml}</div>`
         : `<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-6 text-center text-sm text-muted">No published standard for this event.</div>`}
-      <div class="text-[10px] text-faint leading-snug px-1">Standards as published: ${STD_AS_OF}. Times in a different course to the standard are converted from paired-athlete ratios and are estimates \u2014 the official time is the one swum in that course. Junior eligibility depends on birth years set each year; this app does not know your age.</div>
+      <div class="text-[10px] text-faint leading-snug px-1">Standards as published: ${STD_AS_OF}. Times in a different course to the standard are converted from paired-athlete ratios and are estimates \u2014 the official time is the one swum in that course. Junior eligibility depends on birth years set each year; this app does not know your age.</div>`}
     </div>`;
 }
 
@@ -6047,6 +6187,8 @@ document.addEventListener('click', (e) => {
     if (tps) { state.tpForm.stroke = tps.getAttribute('data-tp-stroke'); render(); return; }
     const tpx = e.target.closest('[data-tp-sex]');
     if (tpx) { state.tpForm.sexFilter = tpx.getAttribute('data-tp-sex'); render(); return; }
+    const sds = e.target.closest('[data-stdsrc]');
+    if (sds) { state.stdForm.src = sds.getAttribute('data-stdsrc'); render(); return; }
     const sdk = e.target.closest('[data-stdstroke]');
     if (sdk) { state.stdForm.stroke = sdk.getAttribute('data-stdstroke'); stdSyncBest(); render(); return; }
     const sdx = e.target.closest('[data-stdsex]');
@@ -6463,6 +6605,18 @@ function handleAction(action, el) {
       showToast(`Renamed to ${nn}`);
       break;
     }
+    case 'set-birthyear': {
+      const sid = state.savedSid; if (!sid) break;
+      const cur = swimmerBirthYear(sid);
+      const y = prompt('Birth year (for age-graded Rudolph points)', cur || '');
+      if (y === null) break;
+      const n = +String(y).trim();
+      if (!(n > 1900 && n < 2100)) { showToast('Enter a four-digit year'); break; }
+      setSwimmerBirthYear(sid, n);
+      render();
+      showToast(`Birth year set to ${n}`);
+      break;
+    }
     case 'set-team': {
       const sid = state.savedSid; if (!sid) break;
       const cur = swimmerTeam(sid);
@@ -6527,6 +6681,16 @@ function handleAction(action, el) {
       if (SWIMMER) f.sex = selfSex() || f.sex;
       stdSyncBest();
       navigate('standards');
+      break;
+    }
+    case 'std-save-by': {
+      const el2 = document.querySelector('[data-stdby]');
+      const y = el2 ? +el2.value : 0;
+      if (!(y > 1900 && y < 2100)) { showToast('Enter a four-digit birth year'); break; }
+      if (SWIMMER) setSelfBirthYear(y);
+      else if (state.stdForm.sid) setSwimmerBirthYear(state.stdForm.sid, y);
+      else { showToast('Open this from a swimmer to save their birth year'); break; }
+      render();
       break;
     }
     case 'print-page': printPage(); break;
