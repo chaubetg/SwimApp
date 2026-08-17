@@ -2320,7 +2320,8 @@ function render() {
       const v = m * 60 + s + h / 100;
       // Same boxes, two owners. Without this branch a standards lookup would be written
       // into state.raceForm.times and marked as a split the coach had typed.
-      if (onStd) state.stdForm.seconds = v; else state.raceForm.times[key] = v;
+      if (onStd) { state.stdForm.seconds = v; state.stdForm.auto = false; }
+      else state.raceForm.times[key] = v;
     };
     [mi, se, hh].forEach((el) => {
       el.addEventListener('focus', () => el.select());
@@ -5647,13 +5648,41 @@ function standardRows(f) {
   return out;
 }
 
+// Their fastest recorded swim for this exact event, or null. Uses the same
+// buildRaceComparison total the rest of the app trusts, so it can never disagree with
+// what Best times shows.
+function stdBestFor(f) {
+  const sid = f.sid || state.savedSid || (SWIMMER ? selfSid() : null);
+  if (!sid) return null;
+  const races = state.saved.filter((s) => s.kind === 'race' && s.sid === sid
+    && s.stroke === f.stroke && s.pool === f.pool && +s.distance === +f.distance && s.sex === f.sex);
+  let best = null;
+  races.forEach((s) => {
+    const c = buildRaceComparison(s);
+    const t = c ? c.actualTotal : 0;
+    if (t > 0 && (!best || t < best.t)) best = { t, date: s.date || '', meet: meetLabel(s) || '' };
+  });
+  return best;
+}
+
+// Called whenever the event changes. Pulls their best time in for the new event, or
+// clears the box — a leftover time from the previous event would be measured against
+// these standards as though it were real.
+function stdSyncBest() {
+  const f = state.stdForm;
+  const b = stdBestFor(f);
+  f.best = b;
+  f.seconds = b ? b.t : 0;
+  f.auto = !!b;
+}
+
 function renderStandards() {
   const f = state.stdForm;
   if (f.pool === 'SCY') f.pool = 'SCM';
   const strokes = ['Free', 'Back', 'Breast', 'Fly', 'IM'];
   const dists = [50, 100, 200, 400, 800, 1500].filter((d) =>
     (stdTimes[f.sex] && stdTimes[f.sex][f.stroke] && stdTimes[f.sex][f.stroke][d] != null));
-  if (dists.length && dists.indexOf(f.distance) < 0) f.distance = dists[0];
+  if (dists.length && dists.indexOf(f.distance) < 0) { f.distance = dists[0]; stdSyncBest(); }
   const rows = standardRows(f);
   const next = rows.find((r) => r.gap != null && r.gap > 0);
   const cleared = rows.filter((r) => r.gap != null && r.gap <= 0).length;
@@ -5718,6 +5747,9 @@ function renderStandards() {
           <div class="label-cap text-cyan-800">Your time</div>
           ${timeBoxes('stdtime', f.seconds, f.distance)}
         </div>
+        ${f.auto && f.best
+          ? `<div class="text-[11px] text-cyan-800 leading-snug -mt-1">Your best ${f.distance} ${f.stroke} ${f.pool}${f.best.date ? ' \u00b7 ' + f.best.date : ''}${f.best.meet ? ' \u00b7 ' + f.best.meet : ''}. Type over it to try another time.</div>`
+          : (stdBestFor(f) ? '' : `<div class="text-[11px] text-muted leading-snug -mt-1">No recorded ${f.distance} ${f.stroke} ${f.pool} \u2014 type a time to compare.</div>`)}
       </div>
       ${head}
       ${rows.length ? `<div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">${rowHtml}</div>`
@@ -6385,13 +6417,13 @@ document.addEventListener('click', (e) => {
     const tpx = e.target.closest('[data-tp-sex]');
     if (tpx) { state.tpForm.sexFilter = tpx.getAttribute('data-tp-sex'); render(); return; }
     const sdk = e.target.closest('[data-stdstroke]');
-    if (sdk) { state.stdForm.stroke = sdk.getAttribute('data-stdstroke'); render(); return; }
+    if (sdk) { state.stdForm.stroke = sdk.getAttribute('data-stdstroke'); stdSyncBest(); render(); return; }
     const sdx = e.target.closest('[data-stdsex]');
-    if (sdx) { state.stdForm.sex = sdx.getAttribute('data-stdsex'); render(); return; }
+    if (sdx) { state.stdForm.sex = sdx.getAttribute('data-stdsex'); stdSyncBest(); render(); return; }
     const sdp = e.target.closest('[data-stdpool]');
-    if (sdp) { state.stdForm.pool = sdp.getAttribute('data-stdpool'); render(); return; }
+    if (sdp) { state.stdForm.pool = sdp.getAttribute('data-stdpool'); stdSyncBest(); render(); return; }
     const sdd = e.target.closest('[data-stddist]');
-    if (sdd) { state.stdForm.distance = +sdd.getAttribute('data-stddist'); render(); return; }
+    if (sdd) { state.stdForm.distance = +sdd.getAttribute('data-stddist'); stdSyncBest(); render(); return; }
     const sws = e.target.closest('[data-sw-stroke]');
     if (sws) { state.swimmerStroke = sws.getAttribute('data-sw-stroke'); render(); return; }
     const sv = e.target.closest('[data-saved]');
@@ -6856,15 +6888,17 @@ function handleAction(action, el) {
       // beats making them retype something the app already knows.
       const sid = state.savedSid || (SWIMMER ? selfSid() : null);
       const f = state.stdForm;
+      f.sid = sid || null;
+      f.name = sid ? (swimmerName(sid) || '') : '';
       if (sid) {
-        const best = bestTimesFor(sid, { mode: 'all' }).filter((x) => x.r.pool !== 'SCY');
-        if (best.length) {
-          const b = best[0];
-          f.stroke = b.r.stroke; f.distance = b.r.distance; f.pool = b.r.pool;
-          f.sex = b.r.sex; f.seconds = b.t; f.name = swimmerName(sid) || '';
-        } else { f.name = swimmerName(sid) || ''; }
+        // Open on their most recent event rather than an arbitrary default.
+        const races = state.saved.filter((s) => s.kind === 'race' && s.sid === sid && s.pool !== 'SCY');
+        races.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+        const last = races[races.length - 1];
+        if (last) { f.stroke = last.stroke; f.distance = last.distance; f.pool = last.pool; f.sex = last.sex; }
       }
       if (SWIMMER) f.sex = selfSex() || f.sex;
+      stdSyncBest();
       navigate('standards');
       break;
     }
