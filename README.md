@@ -34,6 +34,19 @@ Mia Brown    58.40 (FR)     28.03    30.37   13.60   14.43   14.73   15.64
 
 Targets come from each swimmer's best time, or their most recent — your choice.
 
+**Team vs standards** answers the September question: pick an event and see every swimmer who
+has raced it, ranked, with how far each one is from each qualifying cut. Canada, World and
+Rudolph points are toggles rather than tabs, so you can put a U SPORTS cut beside an Olympic B
+beside a 1–20 age-graded score in the same row. Under the cut shows green; a comparison that
+crossed courses is marked as an estimate.
+
+```
+Swimmer           Best     Trials Sen   U SPORTS   Rudolph
+Men · cut                       51.09      49.60         20
+Tegan O Neill    50.62          −0.47     ~−0.70         14
+Marcus Delacroix 52.91          +1.82     ~+1.51         13
+```
+
 ### For swimmers
 
 One athlete: your own races and splits, your target times, your best times and how they are

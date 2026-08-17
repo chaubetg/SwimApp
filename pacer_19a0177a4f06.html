@@ -95,6 +95,22 @@
       transition: background 0.1s, transform 0.05s;
       min-height: 44px;
     }
+    /* Compact pill: same control, sized so a five-stroke or six-distance row fits on one
+       line at 390px instead of orphaning IM and 1500 onto rows of their own. */
+    .pill-sm { padding: 9px 11px; font-size: 13px; min-height: 40px; }
+    /* Team vs standards can be ten columns wide, so it scrolls sideways — and a gap with no
+       name against it is useless. Pin the swimmer column to the left edge. Each row paints
+       its own background behind the pinned cell, or the numbers would slide underneath it. */
+    .ts-table th:first-child, .ts-table td:first-child {
+      position: sticky; left: 0; z-index: 2; background: #ffffff;
+      /* Bounded, or a long name overflows the pinned cell and prints on top of the first
+         column of numbers. Names wrap onto a second line rather than being cut in half. */
+      min-width: 116px; max-width: 134px;
+    }
+    .ts-table tr.ts-cut th:first-child, .ts-table tr.ts-cut td:first-child { background: #f8fafc; }
+    .ts-table th:first-child::after, .ts-table td:first-child::after {
+      content: ''; position: absolute; top: 0; right: 0; bottom: -1px; width: 1px; background: #e2e8f0;
+    }
     .pill:hover { background: #e2e8f0; }
     .pill:active { transform: scale(0.97); }
     .pill.active { background: #0e7490; color: white; }
@@ -1388,6 +1404,10 @@ const state = {
   fiftyOpen: {}, // 50m tool: which metric rows are expanded for SR/SC input
   tpForm: { pool: 'SCM', distance: 50, basis: 'best', stroke: 'Free', q: '' }, // Training Pace picker
   tpShow: false,  // the table appears once "Show Training Table" is pressed
+  // Team vs standards: which cut sets are on, and the event they are read at. Canada is
+  // on by default because that is the ladder most of the squad is actually on.
+  tsForm: { stroke: 'Free', distance: 100, pool: 'LCM', sexFilter: 'all', q: '',
+            src: { canada: true, world: false, rudolph: false } },
   adjForm: { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 100, seconds: 0, name: '' }, // adjacent-events predictor
   form: {
     stroke: 'Free', sex: 'M', pool: 'LCM', distance: 200,
@@ -1645,6 +1665,34 @@ function screenCsvModel() {
     return { name: `split_compass_standards_${slug(ev)}_${stamp}.csv`, rows: out,
              note: `${rows.length} standards` };
   }
+  if (state.view === 'team-standards') {
+    const m = teamStdModel();
+    if (!m.rows.length || (!m.cols.length && !m.rud)) return null;
+    const f = m.f, ev = `${f.distance} ${f.stroke}`;
+    // A column is an estimate for EVERY row when its course differs from the pool on screen,
+    // so the warning belongs in the header rather than repeated down the column.
+    const head = ['swimmer', 'sex', 'event', 'pool', 'best_time', 'best_time_s', 'date'];
+    m.cols.forEach((d) => {
+      const tag = slug(d.label) + '_' + d.course.toLowerCase();
+      const conv = d.course === f.pool ? '' : '_converted_estimate';
+      head.push(tag + '_cut_s', tag + '_gap_s' + conv);
+    });
+    if (m.rud) head.push('rudolph_points' + (f.pool === 'LCM' ? '' : '_converted_estimate'));
+    const out = [head];
+    m.rows.forEach((r) => {
+      const line = [r.name, r.sex, ev, f.pool, formatTime(r.t), num(r.t), r.date || ''];
+      m.cols.forEach((d) => {
+        const t = teamStdTarget(r.sex, f, d.k), c = teamStdCell(r, d, f);
+        line.push(t == null ? '' : num(t),
+          (c && c.gap != null) ? (c.gap >= 0 ? '+' : '') + c.gap.toFixed(2) : '');
+      });
+      if (m.rud) { const c = teamRudCell(r, f); line.push(c && c.pts != null ? c.pts : ''); }
+      out.push(line);
+    });
+    return { name: `split_compass_team_standards_${slug(ev)}_${f.pool.toLowerCase()}_${stamp}.csv`,
+             rows: out, note: `${m.rows.length} swimmer${m.rows.length === 1 ? '' : 's'}` };
+  }
+
   if (state.view === 'best-times') { exportBestTimesCsv(); return 'handled'; }
 
   if (state.view === 'saved-swimmer') {
@@ -2076,6 +2124,7 @@ function render() {
     case 'import-preview': html = renderImportPreview(); break;
     case 'training-pace': html = renderTrainingPace(); break;
     case 'standards': html = renderStandards(); break;
+    case 'team-standards': html = renderTeamStandards(); break;
     case 'other-tools': html = renderOtherTools(); break;
     default: html = '<div class="p-8 text-slate-500">Unknown view</div>';
   }
@@ -2487,6 +2536,17 @@ function render() {
     selfN.addEventListener('input', () => { (state.selfSetup = state.selfSetup || {}).name = selfN.value; });
     selfN.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); selfN.blur(); } });
   }
+  const tsq = host.querySelector('[data-ts-search]');
+  if (tsq) {
+    tsq.addEventListener('input', () => {
+      state.tsForm.q = tsq.value; const q = tsq.value.trim();
+      // Hide rather than re-render: re-rendering on every keystroke would drop the keyboard.
+      host.querySelectorAll('.ts-row').forEach((row) => {
+        row.style.display = nameMatches(row.getAttribute('data-name') || '', q) ? '' : 'none';
+      });
+    });
+    tsq.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); tsq.blur(); render(); } });
+  }
   const tpq = host.querySelector('[data-tp-search]');
   if (tpq) {
     tpq.addEventListener('input', () => {
@@ -2504,7 +2564,7 @@ function render() {
   const NO_HINT = { checkbox: 1, radio: 1, date: 1, range: 1, file: 1 };
   host.querySelectorAll('input').forEach((el) => {
     if (NO_HINT[(el.getAttribute('type') || 'text').toLowerCase()]) return;
-    const isSearch = el.hasAttribute('data-search') || el.hasAttribute('data-tp-search');
+    const isSearch = el.hasAttribute('data-search') || el.hasAttribute('data-tp-search') || el.hasAttribute('data-ts-search');
     el.setAttribute('enterkeyhint', isSearch ? 'search' : 'done');
     if (isSearch) return;                      // those two already commit on Enter
     el.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); el.blur(); } });
@@ -2810,6 +2870,13 @@ function renderRoster() {
           <div class="text-[11px] text-muted mt-0.5 leading-snug">Olympic, Trials, U SPORTS &amp; Canadian Open cuts</div>
         </div>
         <span class="text-cyan-600 text-xl leading-none flex-shrink-0">⚑</span>
+      </button>
+      <button class="w-full bg-white border border-cyan-300 rounded-2xl px-4 py-3.5 text-left hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm flex items-center justify-between gap-3" data-action="team-standards">
+        <div>
+          <div class="font-bold text-slate-800 text-[15px]">Team vs standards</div>
+          <div class="text-[11px] text-muted mt-0.5 leading-snug">One event, every swimmer, gap to each cut</div>
+        </div>
+        <span class="text-cyan-600 text-xl leading-none flex-shrink-0">▤</span>
       </button>
     </div>
     ${PUBLIC_BUILD ? '' : `<div class="px-5 pb-2">
@@ -5810,6 +5877,221 @@ function rudolphCardHtml(f) {
     <div class="text-[10px] text-faint leading-snug px-1">${RUD_AS_OF}. 20 points is world-class level for that age, benchmarked against the world top-ten average. Age is the age reached in the calendar year of the swim (Jahrgang). The table is long course.</div>`;
 }
 
+// ===== Team vs standards =====================================================
+// The Training Pace table with the splits replaced by one column per standard: read down a
+// column to see who is closest to a cut, read across a row to see one swimmer against all of
+// them. Sources toggle independently so the table is only as wide as the question being asked.
+const TS_SEXES = ['M', 'F'];
+
+// Every swimmer's FASTEST swim at exactly this event, fastest first. The ranking is by the
+// time as swum, never by a converted one, so the order is always a like-for-like comparison.
+function teamStdRows(f) {
+  const by = {};
+  state.saved.forEach((s) => {
+    if (s.kind !== 'race' || !s.sid) return;
+    if (s.stroke !== f.stroke || +s.distance !== +f.distance || s.pool !== f.pool) return;
+    const c = buildRaceComparison(s);
+    const t = c ? c.actualTotal : 0;
+    if (!(t > 0)) return;
+    const cur = by[s.sid];
+    if (!cur || t < cur.t) by[s.sid] = { sid: s.sid, t, date: s.date || '', sex: s.sex === 'F' ? 'F' : 'M' };
+  });
+  return Object.keys(by).map((sid) => Object.assign(by[sid], { name: swimmerName(sid) || '—' }))
+    .sort((a, b) => a.t - b.t);
+}
+
+// The UNION of the standards across the sexes on screen. Men and women do not always have the
+// same set at an event, and a per-sex column list would shift the columns halfway down the
+// table; a standard a sex does not have renders blank instead.
+function teamStdCols(f, sexes) {
+  const has = {};
+  sexes.forEach((sx) => {
+    const all = (stdTimes[sx] && stdTimes[sx][f.stroke] && stdTimes[sx][f.stroke][f.distance]) || {};
+    Object.keys(all).forEach((k) => { has[k] = 1; });
+  });
+  // In the order the chips are read, not the order STD_DEFS happens to be declared: with
+  // Canada selected, a coach should not have to scroll past three Olympic columns to reach it.
+  const order = { canada: 0, world: 1 };
+  return STD_DEFS.filter((d) => f.src[d.src] && has[d.k])
+    .map((d, i) => ({ d, i }))
+    .sort((a, b) => (order[a.d.src] - order[b.d.src]) || (a.i - b.i))
+    .map((x) => x.d);
+}
+
+function teamStdTarget(sex, f, k) {
+  const all = (stdTimes[sex] && stdTimes[sex][f.stroke] && stdTimes[sex][f.stroke][f.distance]) || {};
+  return all[k] == null ? null : all[k];
+}
+
+// One cell: how far this swimmer is from this cut, measured in the CUT's course — the swimmer's
+// time moves to meet the standard, never the other way round, exactly as on the single-swimmer
+// screen. `est` marks a cell whose comparison went through a course conversion.
+function teamStdCell(r, d, f) {
+  const target = teamStdTarget(r.sex, f, d.k);
+  if (target == null) return null;
+  const mine = convertCourse(r.t, f.stroke, r.sex, f.distance, f.pool, d.course);
+  if (!mine) return { blocked: true };
+  return { gap: mine.s - target, est: mine.est };
+}
+
+// Rudolph is a score out of 20, not a gap, so it is its own column. It needs a birth year and a
+// long-course time; without either the cell says which is missing rather than inventing one.
+function teamRudCell(r, f) {
+  const by = swimmerBirthYear(r.sid);
+  if (!by) return { noBy: true };
+  const lcm = convertCourse(r.t, f.stroke, r.sex, f.distance, f.pool, 'LCM');
+  if (!lcm) return { blocked: true };
+  const age = rudolphAge(by, r.date);
+  const sc = rudolphScore(r.sex, age.key, f.stroke, f.distance, lcm.s);
+  if (!sc) return { blocked: true };
+  return { pts: sc.whole, est: lcm.est, age: age.shown };
+}
+
+function teamStdDistances(f) {
+  return [50, 100, 200, 400, 800, 1500].filter((d) =>
+    TS_SEXES.some((sx) => stdTimes[sx] && stdTimes[sx][f.stroke] && stdTimes[sx][f.stroke][d] != null));
+}
+
+// One model, two consumers: the screen and the CSV. Sharing it is what stops a download from
+// quietly disagreeing with the table it was taken from.
+function teamStdModel() {
+  const f = state.tsForm;
+  if (f.pool === 'SCY') f.pool = 'SCM';
+  const dists = teamStdDistances(f);
+  if (dists.length && dists.indexOf(f.distance) < 0) f.distance = dists[0];
+  const all = teamStdRows(f);
+  const sexesPresent = TS_SEXES.filter((sx) => all.some((r) => r.sex === sx));
+  const sxf = (f.sexFilter && sexesPresent.indexOf(f.sexFilter) >= 0) ? f.sexFilter : 'all';
+  const q = (f.q || '').trim();
+  const rows = all.filter((r) => (sxf === 'all' || r.sex === sxf) && nameMatches(r.name, q));
+  const sexes = TS_SEXES.filter((sx) => rows.some((r) => r.sex === sx));
+  return { f, dists, all, rows, sexes, sexesPresent, sxf, q,
+           cols: teamStdCols(f, sexes), rud: !!f.src.rudolph };
+}
+
+function renderTeamStandards() {
+  const m = teamStdModel();
+  const f = m.f;
+  const strokes = ['Free', 'Back', 'Breast', 'Fly', 'IM'];
+  const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  const chip = (on) => `px-3 py-2 rounded-xl text-xs font-semibold border transition ${on
+    ? 'bg-cyan-600 text-white border-cyan-600'
+    : 'bg-white text-slate-700 border-slate-200 hover:border-cyan-300'}`;
+
+  let anyEst = false, noYear = 0;
+  let body = '';
+  if (!m.all.length) {
+    body = `<div class="px-4 py-10 text-center text-sm text-muted">No recorded ${f.distance} m ${f.stroke} ${f.pool} times yet.<br><span class="text-xs">Record a race at this event and the swimmer appears here.</span></div>`;
+  } else if (!m.rows.length) {
+    body = `<div class="px-4 py-10 text-center text-sm text-muted">${m.q ? 'No swimmer matches “' + esc(m.q) + '”.' : 'No swimmers in this filter.'}</div>`;
+  } else if (!m.cols.length && !m.rud) {
+    body = `<div class="px-4 py-10 text-center text-sm text-muted">No published standard for ${f.distance} m ${f.stroke} in the sets you have selected.</div>`;
+  } else {
+    const headRow = `<tr class="text-[10px] uppercase tracking-wide text-faint border-b-2 border-slate-400">
+        <th class="text-left font-semibold py-1.5 pl-3">Swimmer</th>
+        <th class="text-right font-semibold px-2">Best</th>
+        ${m.cols.map((d) => `<th class="text-right font-semibold px-2 whitespace-nowrap">${d.label}<span class="text-slate-300"> ${d.course}</span></th>`).join('')}
+        ${m.rud ? '<th class="text-right font-semibold px-2 whitespace-nowrap">Rudolph</th>' : ''}
+      </tr>`;
+
+    // The cut itself, once per sex block. Repeating it in every cell would be noise; a coach
+    // reads the cut at the top of the block and the gaps underneath it.
+    const cutRow = (sx, opensBlock) => `<tr class="ts-cut bg-slate-50 ${opensBlock ? 'border-t-2 border-slate-400' : ''}">
+        <td class="py-1.5 pl-3 text-[10px] font-bold uppercase tracking-wide text-slate-500 whitespace-nowrap">${sx === 'M' ? 'Men' : 'Women'}${m.cols.length ? ' · cut' : ''}</td>
+        <td></td>
+        ${m.cols.map((d) => { const t = teamStdTarget(sx, f, d.k);
+          return `<td class="text-right px-2 mono text-[12px] font-bold text-slate-500 whitespace-nowrap">${t == null ? '' : formatTime(t)}</td>`; }).join('')}
+        ${m.rud ? '<td class="text-right px-2 mono text-[12px] font-bold text-slate-500">20</td>' : ''}
+      </tr>`;
+
+    const rowHtml = (r) => {
+      const cells = m.cols.map((d) => {
+        const c = teamStdCell(r, d, f);
+        if (!c) return '<td class="px-2"></td>';
+        if (c.blocked) return '<td class="text-right px-2 text-[12px] text-slate-300">—</td>';
+        if (c.est) anyEst = true;
+        const met = c.gap <= 0;
+        return `<td class="text-right px-2 mono text-[13px] whitespace-nowrap ${met ? 'text-emerald-700 font-bold' : 'text-rose-600'}">${c.est ? '~' : ''}${met ? '−' : '+'}${formatTime(Math.abs(c.gap))}</td>`;
+      }).join('');
+      let rc = '';
+      if (m.rud) {
+        const c = teamRudCell(r, f);
+        if (c.noBy) { noYear++; rc = '<td class="text-right px-2 text-[10px] text-amber-600 whitespace-nowrap">no year</td>'; }
+        else if (c.blocked) rc = '<td class="text-right px-2 text-[12px] text-slate-300">—</td>';
+        else { if (c.est) anyEst = true;
+          rc = `<td class="text-right px-2 mono text-[13px] font-bold text-cyan-800">${c.est ? '~' : ''}${c.pts}</td>`; }
+      }
+      return `<tr class="ts-row border-t border-slate-100 clickable" data-tsrow="${r.sid}" data-name="${esc(r.name)}">
+        <td class="py-2 pl-3">
+          <div class="font-semibold text-[13px] leading-tight">${esc(r.name)}</div>
+          ${r.date ? `<div class="text-[10px] text-faint leading-none mt-0.5">${r.date}</div>` : ''}
+        </td>
+        <td class="text-right px-2 mono text-[13px] font-bold text-cyan-800 whitespace-nowrap">${formatTime(r.t)}</td>
+        ${cells}${rc}
+      </tr>`;
+    };
+
+    let trs = '';
+    m.sexes.forEach((sx, bi) => {
+      trs += cutRow(sx, bi > 0);
+      m.rows.filter((r) => r.sex === sx).forEach((r) => { trs += rowHtml(r); });
+    });
+    body = `<div class="overflow-x-auto"><table class="w-full tp-table ts-table"><thead>${headRow}</thead><tbody>${trs}</tbody></table></div>`;
+  }
+
+  const seg = (val, cur, attr, label) => `<div class="seg ${cur === val ? 'active' : ''}" data-${attr}="${val}">${label}</div>`;
+  const srcChips = [['canada', 'Canada'], ['world', 'World'], ['rudolph', 'Rudolph']]
+    .map(([k, l]) => `<button class="${chip(!!f.src[k])}" data-tssrc="${k}">${l}</button>`).join(' ');
+  const search = m.all.length
+    ? `<input type="text" data-ts-search value="${esc(f.q)}" placeholder="Search swimmer" class="w-full bg-slate-100 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300 placeholder:text-muted" />` : '';
+
+  const notes = [];
+  if (anyEst) notes.push('A <span class="mono">~</span> means the comparison crossed courses — that swimmer’s ' + f.pool + ' time converted to the standard’s course. It is an estimate; the official time is the one swum in that course.');
+  if (noYear) notes.push(noYear + ' swimmer' + (noYear === 1 ? ' has' : 's have') + ' no birth year, so there is no Rudolph score. Tap the row to set it.');
+  if (m.cols.length) notes.push('Standards as published: ' + STD_AS_OF + '. Junior eligibility depends on birth years set each year.');
+  if (m.rud) notes.push(RUD_AS_OF + '. 20 is world-class for that age; age is the age reached in the calendar year of the swim. The table is long course.');
+
+  return `
+    <div class="statusbar"></div>
+    <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
+      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back" aria-label="Back">‹</button><button class="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="home" aria-label="Home" title="Home"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/><path d="M9.5 20v-5.4h5V20"/></svg></button>
+      <div class="flex-1 min-w-0">
+        <div class="text-lg font-semibold truncate">Team vs standards</div>
+        <div class="text-xs text-muted truncate">${f.distance} m ${f.stroke} · ${f.pool}</div>
+      </div>
+      ${m.rows.length && (m.cols.length || m.rud) ? csvBtn() : ''}
+    </div>
+    <div class="scrollable bg-slate-50">
+      <div class="mx-3 mt-3 bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+        <div>
+          <div class="label-cap mb-2">Standards <span class="font-normal text-faint normal-case tracking-normal">· tap to add or remove columns</span></div>
+          <div class="flex flex-wrap gap-1.5">${srcChips}</div>
+        </div>
+        <div>
+          <div class="label-cap mb-2">Stroke</div>
+          <div class="flex gap-1.5 flex-wrap">${strokes.map((s) => `<span class="pill pill-sm ${f.stroke === s ? 'active' : ''}" data-tsstroke="${s}">${s}</span>`).join('')}</div>
+        </div>
+        <div>
+          <div class="label-cap mb-2">Pool${m.sexesPresent.length > 1 ? ' <span class="text-faint">and who</span>' : ''}</div>
+          <div class="flex gap-2">
+            <div class="seg-group flex-shrink-0">${seg('LCM', f.pool, 'tspool', 'LCM')}${seg('SCM', f.pool, 'tspool', 'SCM')}</div>
+            ${m.sexesPresent.length > 1 ? `<div class="seg-group flex-1 min-w-0">${seg('all', m.sxf, 'ts-sex', 'All')}${seg('M', m.sxf, 'ts-sex', 'M')}${seg('F', m.sxf, 'ts-sex', 'F')}</div>` : ''}
+          </div>
+        </div>
+        <div>
+          <div class="label-cap mb-2">Distance</div>
+          <div class="flex gap-1.5 flex-wrap">${m.dists.map((d) => `<span class="pill pill-sm ${f.distance === d ? 'active' : ''}" data-tsdist="${d}">${d}</span>`).join('')}</div>
+        </div>
+        ${search}
+      </div>
+      <div class="m-3 bg-white rounded-2xl border border-slate-200 overflow-hidden">
+        ${m.rows.length && (m.cols.length || m.rud) ? `<div class="px-3 pt-3 pb-1"><div class="text-[15px] font-bold text-slate-900">${f.distance} m ${f.stroke} ${f.pool} — ${m.cols.length ? 'gap to the cut' : 'Rudolph points'}</div></div>` : ''}
+        ${body}
+      </div>
+      <div class="px-4 pb-5 space-y-1.5">${notes.map((n) => `<div class="text-[10px] text-faint leading-snug">${n}</div>`).join('')}</div>
+    </div>`;
+}
+
 function renderStandards() {
   const f = state.stdForm;
   if (f.pool === 'SCY') f.pool = 'SCM';
@@ -6566,6 +6848,38 @@ document.addEventListener('click', (e) => {
     if (sdp) { state.stdForm.pool = sdp.getAttribute('data-stdpool'); stdSyncBest(); render(); return; }
     const sdd = e.target.closest('[data-stddist]');
     if (sdd) { state.stdForm.distance = +sdd.getAttribute('data-stddist'); stdSyncBest(); render(); return; }
+    // Team vs standards pickers. The source chips toggle rather than switch — one, two or all
+    // three sets of columns at once — but the last one on cannot be turned off, because an
+    // empty table is never what the tap meant.
+    const tss = e.target.closest('[data-tssrc]');
+    if (tss) {
+      const k = tss.getAttribute('data-tssrc'), sset = state.tsForm.src;
+      if (sset[k] && Object.keys(sset).filter((x) => sset[x]).length === 1) {
+        showToast('Keep at least one set of standards on'); return;
+      }
+      sset[k] = !sset[k]; render(); return;
+    }
+    const tsk = e.target.closest('[data-tsstroke]');
+    if (tsk) { state.tsForm.stroke = tsk.getAttribute('data-tsstroke'); render(); return; }
+    const tsp = e.target.closest('[data-tspool]');
+    if (tsp) { state.tsForm.pool = tsp.getAttribute('data-tspool'); render(); return; }
+    const tsd = e.target.closest('[data-tsdist]');
+    if (tsd) { state.tsForm.distance = +tsd.getAttribute('data-tsdist'); render(); return; }
+    const tsx = e.target.closest('[data-ts-sex]');
+    if (tsx) { state.tsForm.sexFilter = tsx.getAttribute('data-ts-sex'); render(); return; }
+    // A row is a doorway: the same swimmer at the same event on the single-swimmer screen,
+    // which is where every standard, the birth-year box and the Rudolph detail live.
+    const tsr = e.target.closest('[data-tsrow]');
+    if (tsr) {
+      const sid = tsr.getAttribute('data-tsrow'), tf = state.tsForm, g = state.stdForm;
+      const row = teamStdRows(tf).find((x) => x.sid === sid);
+      g.sid = sid; g.name = swimmerName(sid) || '';
+      g.stroke = tf.stroke; g.distance = tf.distance; g.pool = tf.pool;
+      if (row) g.sex = row.sex;
+      g.src = (tf.src.rudolph && !tf.src.canada && !tf.src.world) ? 'rudolph'
+            : (tf.src.canada ? 'canada' : (tf.src.world ? 'world' : 'rudolph'));
+      stdSyncBest(); navigate('standards'); return;
+    }
     const sws = e.target.closest('[data-sw-stroke]');
     if (sws) { state.swimmerStroke = sws.getAttribute('data-sw-stroke'); render(); return; }
     const sv = e.target.closest('[data-saved]');
@@ -7035,6 +7349,22 @@ function handleAction(action, el) {
         const node = document.querySelector(`[data-refl-sec="${s}"]`);
         if (node && node.scrollIntoView) { try { node.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (e) {} }
       }, 0);
+      break;
+    }
+    case 'team-standards': {
+      // Open on the event the squad has actually raced most rather than an arbitrary default,
+      // so the first thing on screen is a table with swimmers in it.
+      const tallies = {};
+      state.saved.forEach((s) => {
+        if (s.kind !== 'race' || !s.sid || s.pool === 'SCY') return;
+        const k = s.stroke + '|' + s.distance + '|' + s.pool;
+        tallies[k] = (tallies[k] || 0) + 1;
+      });
+      const top = Object.keys(tallies).sort((a, b) => tallies[b] - tallies[a])[0];
+      if (top) { const p = top.split('|');
+        state.tsForm.stroke = p[0]; state.tsForm.distance = +p[1]; state.tsForm.pool = p[2]; }
+      state.tsForm.q = '';
+      navigate('team-standards');
       break;
     }
     case 'standards': {
