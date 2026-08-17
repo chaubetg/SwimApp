@@ -1144,9 +1144,6 @@ function selfName() {
   try { return localStorage.getItem('sc_self_name') || ''; } catch (e) { return ''; }
 }
 function setSelfName(nm) { try { localStorage.setItem('sc_self_name', nm); } catch (e) {} }
-// Does this swimmer want the reflection sections? Off unless they chose them.
-function reflectOn() { try { return localStorage.getItem('sc_self_reflect') === '1'; } catch (e) { return false; } }
-function setReflectOn(v) { try { localStorage.setItem('sc_self_reflect', v ? '1' : '0'); } catch (e) {} }
 // Point the entry forms at the one athlete, so nothing can be filed under another name.
 function seedSelf() {
   if (!SWIMMER) return;
@@ -1451,7 +1448,7 @@ function back() {
 
 // Screens that must come out as a single sheet. Everything else prints at full
 // size over as many pages as its content needs.
-const ONE_PAGE_VIEWS = { 'race-analysis': 1 };
+const ONE_PAGE_VIEWS = { 'predicted-splits': 1 };
 
 // Fit the current screen onto one page by measuring it rather than guessing a
 // shrink factor: the card's true height is the fixed header plus the scroller's
@@ -2379,7 +2376,10 @@ function render() {
   host.querySelectorAll('[data-refl]').forEach((el) => {
     const k = el.getAttribute('data-refl');
     el.addEventListener('input', () => {
-      (state.raceForm.reflect = state.raceForm.reflect || {})[k] = el.type === 'range' ? +el.value : el.value;
+      // The race is already saved by the time these render, so write straight through.
+      const r = state.race; if (!r) return;
+      (r.reflect = r.reflect || {})[k] = el.type === 'range' ? +el.value : el.value;
+      if (state.saved.some((s) => s.id === r.id)) persistSaved();
       if (el.type === 'range') {
         const out = host.querySelector(`[data-refl-out="${k}"]`);
         if (out) out.textContent = el.value;
@@ -2444,11 +2444,6 @@ function render() {
     // Return/"check" key: commit the search — refresh to the full current-settings list.
     search.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); search.blur(); render(); } });
   }
-  const selfR = host.querySelectorAll('[data-self-reflect]');
-  selfR.forEach((b) => b.addEventListener('click', () => {
-    (state.selfSetup = state.selfSetup || {}).reflect = b.getAttribute('data-self-reflect') === '1';
-    render();
-  }));
   const selfN = host.querySelector('[data-self-name]');
   if (selfN) {
     selfN.addEventListener('input', () => { (state.selfSetup = state.selfSetup || {}).name = selfN.value; });
@@ -2524,7 +2519,7 @@ function scHeaderHtml() {
 // ----- Screen: swimmer build — first-run setup (who am I?) -----
 function renderSwimmerSetup() {
   const editing = !!selfSid();   // already set up -> this is "edit", not first run
-  const f = state.selfSetup || (state.selfSetup = { name: '', sex: 'M', reflect: reflectOn() });
+  const f = state.selfSetup || (state.selfSetup = { name: '', sex: 'M' });
   const sexBtn = (v, l) => `<button class="flex-1 rounded-xl py-3 text-sm font-semibold transition ${f.sex === v ? 'bg-cyan-600 text-white shadow' : 'bg-white border border-slate-200 text-slate-700'}" data-self-sex="${v}">${l}</button>`;
   return `
     <div class="statusbar"></div>
@@ -2544,17 +2539,6 @@ function renderSwimmerSetup() {
           <div class="flex gap-2">${sexBtn('M', 'Men')}${sexBtn('F', 'Women')}</div>
           <div class="text-[11px] text-muted mt-1.5 leading-snug">Split targets come from elite race data, which differs by sex \u2014 pick the one that matches you.</div>
         </div>
-        <div>
-          <div class="label-cap mb-2">What do you want to use it for?</div>
-          <div class="space-y-2">
-            ${[[false, 'Just my splits and times', 'Record races, set targets, watch your progress.'],
-               [true, 'Splits + reflect on my races', 'Adds optional questions after each race \u2014 technique, nutrition, and where your head was.']]
-              .map(([v, t, d]) => `<button class="w-full text-left rounded-xl px-3.5 py-3 border transition ${!!f.reflect === v ? 'bg-cyan-50 border-cyan-400' : 'bg-white border-slate-200 hover:border-cyan-300'}" data-self-reflect="${v ? '1' : '0'}">
-                <div class="font-semibold text-[14px] text-slate-800">${t}</div>
-                <div class="text-[11px] text-muted mt-0.5 leading-snug">${d}</div></button>`).join('')}
-          </div>
-          <div class="text-[11px] text-muted mt-1.5 leading-snug">You can change this any time, and reflecting is always optional \u2014 it never stops you saving a race.</div>
-        </div>
       </div>
       <button class="w-full bg-cyan-600 text-white font-semibold rounded-xl py-4 text-base hover:bg-cyan-700 active:scale-[0.98] transition shadow-lg shadow-cyan-600/20" data-action="self-save">${editing ? 'Save changes' : 'Get started'}</button>
       ${editing ? `<div class="text-[11px] text-muted text-center leading-snug px-2">Applies to every race you have already saved \u2014 including the split targets, if you change the pacing model.</div>`
@@ -2565,27 +2549,27 @@ function renderSwimmerSetup() {
 // Three sections, each collapsible, each capped at four questions. The LAST question of
 // every section is the forward-looking one, and it is the one that echoes back next time.
 const REFL_SECTIONS = [
-  { key: 'race', title: 'Race & technique', sub: 'What happened in the water.',
+  { key: 'race', title: 'Reflect on your race?', sub: 'Technique, and how the body felt in the water.',
     fields: [
       { k: 'r_well', label: 'What did you do well technically?', rows: 3, max: 300,
         hint: 'Start, breakout, turns, stroke count, finish — name the parts that went right.' },
-      { k: 'r_warm', label: 'Warmup', rows: 3, max: 300,
-        hint: 'What you did · when it finished · how your body felt on the blocks.' },
+      { k: 'r_body', label: 'How did your body feel during the race?', rows: 2, max: 250,
+        hint: 'Where it felt easy, where it went. Legs, arms, breathing, the last 15.' },
       { k: 'r_less', label: 'Anything to remove or do less of next time?', rows: 2, max: 250, echo: 1,
         hint: 'One technical habit to drop. Be specific about where in the race it showed up.' },
     ] },
-  { key: 'nutr', title: 'Nutrition', sub: 'What you ate and drank, and when.',
+  { key: 'nutr', title: 'Reflect on warmup & nutrition?', sub: 'What you did and ate beforehand, and when.',
     fields: [
-      { k: 'n_food', label: 'Food', rows: 3, max: 400,
+      { k: 'r_warm', label: 'Warmup', rows: 3, max: 300,
+        hint: 'What you did · when it finished · how your body felt on the blocks.' },
+      { k: 'n_food', label: 'Food and drink', rows: 3, max: 400,
         hint: 'What you ate · how long before the race · how it felt during the swim.' },
       { k: 'n_caff', label: 'Caffeine', rows: 2, max: 250,
         hint: 'Type (coffee, gel, gum, drink — and the brand) · how much · how many minutes before.' },
-      { k: 'n_keep', label: 'What would you keep next time?', rows: 2, max: 250,
-        hint: 'The part of the routine that worked.' },
-      { k: 'n_drop', label: 'What would you remove next time?', rows: 2, max: 250, echo: 1,
-        hint: 'The part that did not.' },
+      { k: 'n_keep', label: 'What would you keep, and what would you drop, next time?', rows: 3, max: 300, echo: 1,
+        hint: 'Warmup and food both. The part of the routine that worked, and the part that did not.' },
     ] },
-  { key: 'mind', title: 'Where was your head?', sub: 'Two minutes. There are no wrong answers here.',
+  { key: 'mind', title: 'Reflect on your mental performance?', sub: 'Two minutes. There are no wrong answers here.',
     fields: [
       { k: 'm_conf', type: 'slider', label: 'How confident did you feel right before your race?',
         hint: '1 = full of doubt · 10 = certain.' },
@@ -2600,17 +2584,20 @@ const REFL_SECTIONS = [
 
 // The same swimmer's previous saved race — where the echo comes from.
 function lastReflect(key) {
-  const sid = selfSid();
+  const cur = state.race || {};
+  const sid = cur.sid || selfSid();
   const races = state.saved.filter((s) => s.kind === 'race' && s.sid === sid && s.reflect
-    && s.id !== state.raceEditId && (s.reflect[key] || '').trim());
+    && s.id !== cur.id && (s.date || '') <= (cur.date || '9999')
+    && String(s.reflect[key] == null ? '' : s.reflect[key]).trim());
   races.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   const r = races[races.length - 1];
   return r ? { text: r.reflect[key], date: r.date || '', ev: `${r.distance} ${r.stroke}` } : null;
 }
 
 function reflectSectionsHtml() {
-  const rf = state.raceForm || {};
-  const v = rf.reflect || (rf.reflect = {});
+  const r = state.race;
+  if (!r) return '';
+  const v = r.reflect || (r.reflect = {});
   const open = state.reflOpen || (state.reflOpen = {});
   const esc = (s) => String(s == null ? '' : s).replace(/</g, '&lt;');
   const hintHtml = (f) => `<button class="w-5 h-5 rounded-full bg-slate-100 text-slate-500 text-[11px] font-bold flex items-center justify-center flex-shrink-0 hover:bg-slate-200" data-refl-hint="${f.k}" aria-label="What to write here">?</button>`;
@@ -2664,9 +2651,9 @@ function reflectSectionsHtml() {
     </div>`;
   };
 
-  return `<div>
-      <div class="label-cap mb-2">Reflect on my race <span class="text-faint" style="text-transform:none;letter-spacing:0;font-weight:400;">(all optional)</span></div>
-      <div class="space-y-2">${REFL_SECTIONS.map(sec).join('')}</div>
+  return `<div class="space-y-2">
+      <div class="text-[11px] text-muted px-1 leading-snug">All optional \u2014 and saved as you type. You can come back to this any time from My races.</div>
+      ${REFL_SECTIONS.map(sec).join('')}
     </div>`;
 }
 
@@ -5492,11 +5479,10 @@ function renderRaceEntry() {
         <div class="label-cap mb-2">Stroke rate</div>
         <div class="bg-white border border-slate-200 rounded-2xl px-4 py-1">${extraSrRows}</div>
       </div>` : ''}
-      ${(SWIMMER && reflectOn()) ? '' : `<div>
+      <div>
         <div class="label-cap mb-2">Race notes</div>
         <textarea data-race-notes rows="3" placeholder="Race plan and what you executed &#8212; breakout, turns, stroke count, where you moved." class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-sm outline-none focus:ring-2 focus:ring-cyan-300 resize-none">${(rf.notes || '').replace(/</g, '&lt;')}</textarea>
-      </div>`}
-      ${(SWIMMER && reflectOn()) ? reflectSectionsHtml() : ''}
+      </div>
       ${SWIMMER ? '' : `<div>
         <div class="label-cap mb-2">Search or Add Swimmer</div>
         <div class="relative">
@@ -5680,7 +5666,7 @@ function renderRaceAnalysis() {
         <div class="text-base font-semibold truncate">${race.name || 'Race'}</div>
         <div class="text-xs text-muted truncate">${race.distance} ${race.stroke} ${race.pool}${meetLabel(race) ? ' · ' + meetLabel(race) : ''}${race.date ? ' · ' + race.date : ''}</div>
       </div>
-      <div class="flex items-center gap-1.5 flex-shrink-0">${csvBtn()}${printBtn()}
+      <div class="flex items-center gap-1.5 flex-shrink-0">${csvBtn()}
         ${state.raceSaved === 'saved' ? '<span class="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-[11px] font-semibold">Saved ✓</span>'
           : state.raceSaved === 'noname' ? '<span class="px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 text-[11px] font-semibold">Not saved · no name</span>'
           : state.raceSaved === 'notime' ? '<span class="px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 text-[11px] font-semibold">Not saved · no time</span>' : ''}
@@ -5700,6 +5686,7 @@ function renderRaceAnalysis() {
       ${race.notes ? `<div class="bg-white rounded-2xl border border-slate-200 p-4"><div class="label-cap text-muted mb-1">Notes</div><div class="text-sm text-slate-700 leading-relaxed" style="white-space:pre-wrap;">${(race.notes || '').replace(/</g, '&lt;')}</div></div>` : ''}
       ${cmpButtons}
       ${bestCard}
+      ${SWIMMER ? reflectSectionsHtml() : ''}
     </div>
   `;
 }
@@ -6315,7 +6302,6 @@ function handleAction(action, el) {
       let sid = selfSid();
       if (!sid) { sid = newSid(); setSelfSid(sid); }
       try { localStorage.setItem('sc_self_sex', f.sex || 'M'); } catch (e) {}
-      setReflectOn(!!f.reflect);
       setSelfName(nm);
       // Apply to existing entries too, so a correction actually repairs saved races —
       // a wrong sex silently skews every split prediction until it is fixed.
@@ -6329,7 +6315,7 @@ function handleAction(action, el) {
     case 'self-edit': {
       // Open the setup screen prefilled. Reset the draft here (not in render) so a
       // re-entry always starts from what is actually stored, without clobbering typing.
-      state.selfSetup = { name: selfName(), sex: selfSex() || 'M', reflect: reflectOn() };
+      state.selfSetup = { name: selfName(), sex: selfSex() || 'M' };
       navigate('swimmer-setup');
       break;
     }
