@@ -2627,7 +2627,7 @@ function reflectSectionsHtml() {
   const sec = (s) => {
     const isOpen = !!open[s.key];
     const n = filled(s);
-    return `<div class="bg-white border border-cyan-200 rounded-2xl overflow-hidden">
+    return `<div class="bg-white border border-cyan-200 rounded-2xl overflow-hidden" data-refl-sec="${s.key}">
       <button class="w-full px-4 py-3 flex items-center gap-3 text-left bg-cyan-50 hover:bg-cyan-100 active:bg-cyan-100 transition" data-action="refl-toggle" data-sec="${s.key}">
         <span class="flex-1 min-w-0">
           <span class="block font-semibold text-cyan-900 text-[14px]">${s.title}</span>
@@ -2640,8 +2640,11 @@ function reflectSectionsHtml() {
     </div>`;
   };
 
-  return `<div class="space-y-2">
-      <div class="text-[11px] text-muted px-1 leading-snug">All optional \u2014 and saved as you type. You can come back to this any time from My races.</div>
+  return `<div class="space-y-2 pt-1">
+      <div class="px-1">
+        <div class="text-[15px] font-bold text-cyan-900">Reflect on this race</div>
+        <div class="text-[11px] text-muted leading-snug mt-0.5">All optional, and saved as you type \u2014 come back to it any time from My races.</div>
+      </div>
       ${REFL_SECTIONS.map(sec).join('')}
     </div>`;
 }
@@ -5468,10 +5471,10 @@ function renderRaceEntry() {
         <div class="label-cap mb-2">Stroke rate</div>
         <div class="bg-white border border-slate-200 rounded-2xl px-4 py-1">${extraSrRows}</div>
       </div>` : ''}
-      <div>
+      ${SWIMMER ? '' : `<div>
         <div class="label-cap mb-2">Race notes</div>
         <textarea data-race-notes rows="3" placeholder="Race plan and what you executed &#8212; breakout, turns, stroke count, where you moved." class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-sm outline-none focus:ring-2 focus:ring-cyan-300 resize-none">${(rf.notes || '').replace(/</g, '&lt;')}</textarea>
-      </div>
+      </div>`}
       ${SWIMMER ? '' : `<div>
         <div class="label-cap mb-2">Search or Add Swimmer</div>
         <div class="relative">
@@ -6101,7 +6104,10 @@ function handleAction(action, el) {
       }
       // Open on the best-time comparison — that is the question a coach asks the second
       // the race is in. Only from this path: opening an old race from a list starts closed.
-      navigate('race-analysis', { cmpMode: 'best' });
+      // Open the first reflection section on arrival: this is the moment the swimmer has
+      // just seen the result, and a folded row at the bottom of the screen gets missed.
+      // Reopening an old race from a list leaves everything collapsed.
+      navigate('race-analysis', { cmpMode: 'best', reflOpen: SWIMMER ? { race: true } : {} });
       break;
     }
     case 'save-race': {
@@ -6276,8 +6282,15 @@ function handleAction(action, el) {
     case 'refl-toggle': {
       const s = el?.getAttribute('data-sec'); if (!s) break;
       state.reflOpen = state.reflOpen || {};
-      state.reflOpen[s] = !state.reflOpen[s];
+      const opening = !state.reflOpen[s];
+      state.reflOpen[s] = opening;
       render();
+      // render() keeps the scroll position when redrawing the same screen, so an opened
+      // section unfolds below the fold and the tap looks like it did nothing.
+      if (opening) setTimeout(() => {
+        const node = document.querySelector(`[data-refl-sec="${s}"]`);
+        if (node && node.scrollIntoView) { try { node.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (e) {} }
+      }, 0);
       break;
     }
     case 'print-page': printPage(); break;
