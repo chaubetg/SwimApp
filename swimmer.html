@@ -80,6 +80,11 @@
       body.print-tp #tp-print { position: absolute; left: 0; top: 0; width: 100%; padding: 0; }
       body.print-tp #tp-print table { width: 100%; border-collapse: collapse; }
       body.print-tp #tp-print th, body.print-tp #tp-print td { padding: 3px 6px; }
+      /* The pinned swimmer column is a phone affordance; on paper it is just a column. */
+      body.print-tp #tp-print th:first-child, body.print-tp #tp-print td:first-child {
+        position: static; min-width: 0; max-width: none; background: transparent;
+      }
+      body.print-tp #tp-print th:first-child::after, body.print-tp #tp-print td:first-child::after { display: none; }
       body.print-tp #tp-print tr { break-inside: avoid; page-break-inside: avoid; }
       body.print-tp #tp-print thead { display: table-header-group; }
     }
@@ -1402,6 +1407,7 @@ const state = {
   fiftyForm: { stroke: 'Free', sex: 'M', seconds: 0, name: '', best: {}, sr: {}, sc: {}, date: '' }, // 50m LCM split calculator
   fiftyOpen: {}, // 50m tool: which metric rows are expanded for SR/SC input
   tpForm: { pool: 'SCM', distance: 50, basis: 'best', stroke: 'Free', q: '' }, // Training Pace picker
+  hdrMore: false,   // the printer menu — closed by navigating, Escape, or a tap outside
   tpShow: false,  // the table appears once "Show Training Table" is pressed
   // Team vs standards: which cut sets are on, and the event they are read at. Canada is
   // on by default because that is the ladder most of the squad is actually on.
@@ -1437,6 +1443,7 @@ const state = {
 
 function navigate(view, opts = {}) {
   const { skipHistory, ...rest } = opts;
+  state.hdrMore = false;          // a menu left open across a screen change is a ghost
   if (!skipHistory && state.view !== view) state.history.push(state.view);
   // The main page is the root: nothing can sit behind it, so no path can build up a loop.
   if (view === 'roster') state.history.length = 0;
@@ -1898,10 +1905,7 @@ function renderImportMenu() {
     </button>`;
   return `
     <div class="statusbar"></div>
-    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button><button class="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="home" aria-label="Home" title="Home"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/><path d="M9.5 20v-5.4h5V20"/></svg></button>
-      <div class="flex-1 min-w-0"><div class="text-lg font-semibold">Import times</div><div class="text-xs text-muted">Where are the times coming from?</div></div>
-    </div>
+    ${screenHeader({ title: `Import times`, sub: `Where are the times coming from?` })}
     <div class="scrollable px-5 py-4 space-y-3 bg-slate-50">
       ${card('import-menu-season', 'Import from a season', 'A whole season of top times from Hy-Tek Team Manager — total times only. Feeds Best Times and Training Pace.')}
       ${card('import-menu-meet', 'Import from a swim meet', 'A single meet’s results, with splits where available.', 'Soon')}
@@ -1913,10 +1917,7 @@ function renderImportSeason() {
   const field = (k, v) => `<div class="flex justify-between gap-3 py-1.5 border-b border-slate-100 last:border-0"><span class="text-[12px] text-muted">${k}</span><span class="text-[12px] font-semibold text-slate-700 text-right">${v}</span></div>`;
   return `
     <div class="statusbar"></div>
-    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button><button class="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="home" aria-label="Home" title="Home"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/><path d="M9.5 20v-5.4h5V20"/></svg></button>
-      <div class="flex-1 min-w-0"><div class="text-lg font-semibold">Import from a season</div><div class="text-xs text-muted">Hy-Tek Team Manager · total times only</div></div>
-    </div>
+    ${screenHeader({ title: `Import from a season`, sub: `Hy-Tek Team Manager · total times only` })}
     <div class="scrollable px-5 py-4 space-y-4 bg-slate-50">
       <div class="bg-white border border-slate-200 rounded-2xl p-4">
         <div class="label-cap text-muted mb-1">Where it comes from</div>
@@ -1942,10 +1943,7 @@ function renderImportSeason() {
 function renderImportMeet() {
   return `
     <div class="statusbar"></div>
-    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button><button class="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="home" aria-label="Home" title="Home"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/><path d="M9.5 20v-5.4h5V20"/></svg></button>
-      <div class="flex-1 min-w-0"><div class="text-lg font-semibold">Import from a swim meet</div><div class="text-xs text-muted">Coming soon</div></div>
-    </div>
+    ${screenHeader({ title: `Import from a swim meet`, sub: `Coming soon` })}
     <div class="scrollable px-5 py-4 space-y-4 bg-slate-50">
       <div class="bg-white border border-slate-200 rounded-2xl p-4">
         <div class="text-[13px] text-slate-600 leading-relaxed">This will import the results of a single meet — including per-lap splits where the results file has them — so a race comes in with its full shape, not just the total time.</div>
@@ -1961,10 +1959,7 @@ function renderImportPreview() {
   const skipLine = (n, label) => n ? `<div class="flex justify-between text-sm"><span class="text-muted">${label}</span><span class="mono text-slate-600">${n}</span></div>` : '';
   return `
     <div class="statusbar"></div>
-    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button><button class="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="home" aria-label="Home" title="Home"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/><path d="M9.5 20v-5.4h5V20"/></svg></button>
-      <div class="flex-1 min-w-0"><div class="text-lg font-semibold">Import race times</div><div class="text-xs text-muted">Hy-Tek Top Times · total times only</div></div>
-    </div>
+    ${screenHeader({ title: `Import race times`, sub: `Hy-Tek Top Times · total times only` })}
     <div class="scrollable px-5 py-4 space-y-4 bg-slate-50">
       <div class="bg-white border border-slate-200 rounded-2xl p-4">
         <div class="text-center mb-3"><div class="hero-time text-3xl leading-none">${P.importable.length}</div><div class="text-xs text-muted mt-1">swims ready · ${P.nSwimmers} swimmer${P.nSwimmers === 1 ? '' : 's'}</div></div>
@@ -2564,6 +2559,10 @@ const ICON_BEST  = ICO('<path d="M7 4h10v4.5a5 5 0 0 1-10 0V4Z"/><path d="M7 5.5
                        '<path d="M17 5.5h2.4A2.4 2.4 0 0 1 17 9"/><path d="M12 13.5V17"/><path d="M8.5 20.5h7"/>');
 const ICON_TREND = ICO('<path d="M3 16.5 8.5 11l3.5 3.5L21 6"/><path d="M15 6h6v6"/>');
 const ICON_FLAG  = ICO('<path d="M5 21V4"/><path d="M5 4.5h11l-2 3.5 2 3.5H5"/>');
+const ICON_IMPORT = ICO('<path d="M12 3v11"/><path d="m8 10.5 4 4 4-4"/><path d="M4 17.5v2a1.5 1.5 0 0 0 1.5 1.5h13a1.5 1.5 0 0 0 1.5-1.5v-2"/>');
+const ICON_TIMER = ICO('<circle cx="12" cy="13.5" r="7.5"/><path d="M12 10v3.5l2.4 1.8"/><path d="M9.5 2.5h5"/>');
+const ICON_TABLE = ICO('<rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="M3 10h18"/><path d="M9.5 10v9.5"/>');
+const ICON_TOOLS = ICO('<circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.2 5.2l2.1 2.1M16.7 16.7l2.1 2.1M18.8 5.2l-2.1 2.1M7.3 16.7l-2.1 2.1"/>');
 
 // One card, hairline dividers, no border on the last row. Rows are built here rather
 // than with a `last:` variant so the markup does not depend on that utility existing.
@@ -2606,10 +2605,7 @@ function renderSwimmerSetup() {
   const sexBtn = (v, l) => `<button class="flex-1 rounded-xl py-3 text-sm font-semibold transition ${f.sex === v ? 'bg-cyan-600 text-white shadow' : 'bg-white border border-slate-200 text-slate-700'}" data-self-sex="${v}">${l}</button>`;
   return `
     <div class="statusbar"></div>
-    ${editing ? `<div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back" aria-label="Back">\u2039</button><button class="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="home" aria-label="Home" title="Home"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/><path d="M9.5 20v-5.4h5V20"/></svg></button>
-      <div class="text-lg font-semibold">Your details</div>
-    </div>` : scHeaderHtml()}
+    ${editing ? `${screenHeader({ title: `Your details` })}` : scHeaderHtml()}
     <div class="scrollable px-5 py-4 space-y-4 bg-slate-50">
       ${editing ? '' : `<div class="text-center text-sm text-muted leading-relaxed px-2">Record your races and splits, and set target times for the events you swim.</div>`}
       <div class="bg-white border border-slate-200 rounded-2xl p-4 space-y-4">
@@ -2658,6 +2654,14 @@ const REFL_SECTIONS = [
       { k: 'm_next', label: 'What mental tool will you use differently, or do again, next race?', rows: 3, max: 250, echo: 1,
         hint: 'For example: breathing · self-talk · hyping up or calming down with music · visualising.' },
     ] },
+  // No questions. Some swimmers do not want to be asked anything — they want a page. Kept
+  // last so the prompted sections stay the path of least resistance for everyone else.
+  { key: 'free', title: 'Just write?', sub: 'No prompts. Anything you want to remember about today.',
+    free: 1,
+    fields: [
+      { k: 'f_note', type: 'free', rows: 8, max: 2000,
+        placeholder: 'Whatever you want to say about today \u2014 the race, the meet, the day around it. Nobody else reads this.' },
+    ] },
 ];
 
 // The same swimmer's previous saved race — where the echo comes from.
@@ -2699,6 +2703,12 @@ function reflectSectionsHtml() {
           class="w-16 h-14 bg-slate-100 rounded-xl text-center mono font-bold text-[22px] text-cyan-800 outline-none focus:ring-2 focus:ring-cyan-300" aria-label="${f.label}" />
       </div>`;
     }
+    // No label row and no hint button: a prompt above a box you were given BECAUSE you did
+    // not want prompts would undo the point of it.
+    if (f.type === 'free') {
+      return `<textarea data-refl="${f.k}" rows="${f.rows}" maxlength="${f.max}" placeholder="${String(f.placeholder || '').replace(/"/g, '&quot;')}"
+        class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-sm leading-relaxed outline-none focus:ring-2 focus:ring-cyan-300 resize-none placeholder:text-muted">${esc(v[f.k])}</textarea>`;
+    }
     if (f.type === 'three') {
       const rows = [0, 1, 2].map((i) => `<input type="text" maxlength="${f.max}" value="${String(v[f.k + i] || '').replace(/"/g, '&quot;')}" data-refl="${f.k}${i}" placeholder="${i + 1}." class="w-full bg-slate-100 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300" />`).join('');
       return `<div>${head}${hint}<div class="space-y-2">${rows}</div></div>`;
@@ -2720,7 +2730,7 @@ function reflectSectionsHtml() {
           <span class="block font-semibold text-cyan-900 text-[14px]">${s.title}</span>
           <span class="block text-[11px] text-cyan-700 mt-0.5">${s.sub}</span>
         </span>
-        ${n ? `<span class="text-[11px] font-semibold text-cyan-700 flex-shrink-0">${n} answered</span>` : ''}
+        ${n ? `<span class="text-[11px] font-semibold text-cyan-700 flex-shrink-0">${s.free ? 'written' : n + ' answered'}</span>` : ''}
         <span class="text-cyan-700 text-base font-bold flex-shrink-0">${isOpen ? '\u2013' : '+'}</span>
       </button>
       ${isOpen ? `<div class="px-4 pb-4 pt-3 space-y-4 border-t border-cyan-100">${s.fields.map(field).join('')}</div>` : ''}
@@ -2778,6 +2788,55 @@ function renderSwimmerHome() {
     </div>
     <div class="text-center text-[10px] text-faint py-2 flex-shrink-0">\u00a9 2026 Ga\u00ebl Chaubet \u00b7 All rights reserved</div>`;
 }
+
+// ===== One header for every screen ==========================================
+// Back and home are always there. A primary action and the printer sit on the top row; a
+// secondary action gets the left of a second row, diagonally opposite the printer's menu so
+// the two can never be read as one list. Screens with no exports get no printer and no second
+// row, which is most of them.
+const HDR_BACK = '<button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition flex-shrink-0" data-action="back" aria-label="Back">‹</button>';
+const HDR_HOME = '<button class="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="home" aria-label="Home" title="Home"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/><path d="M9.5 20v-5.4h5V20"/></svg></button>';
+const HDR_PRINT_SVG = '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 9V3.5h10V9"/><path d="M7 18H5.5A2.5 2.5 0 0 1 3 15.5v-4A2.5 2.5 0 0 1 5.5 9h13a2.5 2.5 0 0 1 2.5 2.5v4a2.5 2.5 0 0 1-2.5 2.5H17"/><rect x="7" y="14.5" width="10" height="6" rx="1"/><circle cx="17.5" cy="12" r="0.6" fill="currentColor"/></svg>';
+
+// A labelled pill, not a pencil: "Edit" says what it does and a pencil makes you guess.
+function hdrEditBtn(action, label) {
+  return `<button class="no-print px-3.5 py-2 rounded-full bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="${action}">${label || 'Edit'}</button>`;
+}
+
+function screenHeader(o) {
+  const ex = (o.exports || []).filter(Boolean);
+  const cls = o.cls ? ' ' + o.cls : '';
+  const printer = ex.length
+    ? `<button class="no-print w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="hdr-more" aria-label="Download or print" title="Download or print" aria-expanded="${state.hdrMore ? 'true' : 'false'}">${HDR_PRINT_SVG}</button>`
+    : '';
+  // The title steps down one size whenever the top row carries anything at all. Measured at
+  // 390px: "Compare to standards" clips at text-lg once the printer takes its 40 px, and a
+  // swimmer's name plus a Save button clips well before that. text-base clears both.
+  const titleCls = (o.primary || ex.length) ? 'text-base' : 'text-lg';
+  // A second row only earns its height when the top row is genuinely full. With no primary
+  // action and no printer there is room, and nothing for the secondary to be confused with.
+  const inlineSecondary = !!o.secondary && !o.primary && !ex.length;
+  const rowSecondary = !!o.secondary && !inlineSecondary;
+  const menu = (ex.length && state.hdrMore)
+    ? `<div class="px-5 pb-3 -mt-1 no-print" data-hdr-menu>
+         <div class="ml-auto w-44 bg-white border border-slate-200 rounded-2xl shadow-lg overflow-hidden">
+           ${ex.map((e, i) => `<button class="w-full px-4 py-3 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50${i < ex.length - 1 ? ' border-b border-slate-100' : ''}" data-action="${e[0]}">${e[1]}</button>`).join('')}
+         </div>
+       </div>`
+    : '';
+  return `
+    <div class="px-5 pt-3 ${rowSecondary ? 'pb-1.5' : 'pb-3'} flex items-center gap-2${cls}">
+      ${HDR_BACK}${HDR_HOME}
+      <div class="flex-1 min-w-0" data-hdr-title>
+        <div class="${titleCls} font-semibold truncate">${o.title}</div>
+        ${o.sub ? `<div class="text-xs text-muted truncate">${o.sub}</div>` : ''}
+      </div>
+      ${inlineSecondary ? o.secondary : ''}${o.primary || ''}${printer}
+    </div>
+    ${rowSecondary ? `<div class="px-5 pb-2.5 flex items-center${cls}">${o.secondary}</div>` : ''}
+    ${menu}`;
+}
+
 // ----- Screen 1: Roster -----
 function renderRoster() {
   // One row per swimmer (by stable id, so same-name swimmers don't merge), alphabetical.
@@ -2835,43 +2894,13 @@ function renderRoster() {
       </button>
     </div>
     <div class="px-5 pb-2">
-      <button class="w-full bg-white border border-cyan-300 rounded-2xl px-4 py-3.5 text-left hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm flex items-center justify-between gap-3" data-action="import-times-csv">
-        <div><div class="font-bold text-slate-800 text-[15px]">Import times</div><div class="text-[11px] text-muted mt-0.5 leading-snug">Load a meet CSV \u2014 updates best times</div></div>
-        <span class="text-cyan-600 text-xl leading-none flex-shrink-0">\u2925</span>
-      </button>
+      ${navCard([
+        [ICON_IMPORT, 'Import times', 'Load a meet CSV \u2014 updates best times', '', 'import-times-csv'],
+        [ICON_TIMER, 'Set target time', 'Split targets for a target time', '', 'quick-calc'],
+        [ICON_TABLE, 'Team vs standards', 'Every swimmer, gap to each cut', '', 'team-standards'],
+        !PUBLIC_BUILD && [ICON_TOOLS, 'Other tools', 'Converter, adjacent events, 50 m, efficiency', '', 'other-tools'],
+      ])}
     </div>
-    <div class="px-5 pb-2">
-      <button class="w-full bg-white border border-cyan-300 rounded-2xl px-4 py-3.5 text-left hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm flex items-center justify-between gap-3" data-action="quick-calc">
-        <div>
-          <div class="font-bold text-slate-800 text-[15px]">Set target time</div>
-          <div class="text-[11px] text-muted mt-0.5 leading-snug">Split targets for a target time</div>
-        </div>
-        <span class="text-cyan-600 text-xl leading-none flex-shrink-0">⏱</span>
-      </button>
-      <button class="w-full bg-white border border-cyan-300 rounded-2xl px-4 py-3.5 text-left hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm flex items-center justify-between gap-3" data-action="standards">
-        <div>
-          <div class="font-bold text-slate-800 text-[15px]">Compare to standards</div>
-          <div class="text-[11px] text-muted mt-0.5 leading-snug">Olympic, Trials, U SPORTS &amp; Canadian Open cuts</div>
-        </div>
-        <span class="text-cyan-600 text-xl leading-none flex-shrink-0">⚑</span>
-      </button>
-      <button class="w-full bg-white border border-cyan-300 rounded-2xl px-4 py-3.5 text-left hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm flex items-center justify-between gap-3" data-action="team-standards">
-        <div>
-          <div class="font-bold text-slate-800 text-[15px]">Team vs standards</div>
-          <div class="text-[11px] text-muted mt-0.5 leading-snug">One event, every swimmer, gap to each cut</div>
-        </div>
-        <span class="text-cyan-600 text-xl leading-none flex-shrink-0">▤</span>
-      </button>
-    </div>
-    ${PUBLIC_BUILD ? '' : `<div class="px-5 pb-2">
-      <button class="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3.5 text-left hover:border-cyan-300 hover:bg-cyan-50/40 active:scale-[0.99] transition shadow-sm flex items-center justify-between gap-3" data-action="other-tools">
-        <div>
-          <div class="font-bold text-slate-800 text-[15px]">Other tools</div>
-          <div class="text-[11px] text-muted mt-0.5 leading-snug">Course converter, adjacent events, 50 m splits, efficiency</div>
-        </div>
-        <span class="text-slate-300 text-2xl leading-none flex-shrink-0">›</span>
-      </button>
-    </div>`}
     <div class="px-5 pb-1">
       <div class="bg-slate-100 rounded-xl px-3.5 py-3 flex items-center gap-2">
         <span class="text-muted">⌕</span>
@@ -2887,18 +2916,18 @@ function renderRoster() {
       <span class="label-cap">Saved swimmers</span>
       <button class="text-xs font-semibold ${editing ? 'text-cyan-700' : 'text-slate-400'} hover:text-cyan-700 transition" data-action="toggle-edit">${editing ? 'Done' : 'Edit'}</button>
     </div>
-    <div class="px-5 pb-1 flex items-center gap-2 text-[11px] text-slate-400">
-      <span class="uppercase tracking-wide text-faint text-[10px]">Data</span>
-      <button class="font-semibold hover:text-cyan-700 transition" data-action="export-csv">Download CSV</button>
-      <span class="text-slate-200">·</span>
-      <button class="font-semibold hover:text-cyan-700 transition" data-action="switch-version">Switch version</button>
-      <span class="text-slate-200">\u00b7</span>
-      <button class="font-semibold hover:text-cyan-700 transition" data-action="backup-json">Backup</button>
-      <span class="text-slate-200">·</span>
-      <button class="font-semibold hover:text-cyan-700 transition" data-action="import-json">Import</button>
-    </div>` : ''}
+` : ''}
     <div class="scrollable px-3 pb-4">
       ${hasSaved ? `<div>${savedRows}</div>` : emptyState}
+      <div class="pt-3 pb-1 flex items-center justify-center gap-2 text-[11px] text-slate-400 flex-wrap">
+        <button class="font-semibold hover:text-cyan-700 transition" data-action="backup-json">Back up</button>
+        <span class="text-slate-200">\u00b7</span>
+        <button class="font-semibold hover:text-cyan-700 transition" data-action="import-json">Restore</button>
+        <span class="text-slate-200">\u00b7</span>
+        <button class="font-semibold hover:text-cyan-700 transition" data-action="export-csv">Download CSV</button>
+        <span class="text-slate-200">\u00b7</span>
+        <button class="font-semibold hover:text-cyan-700 transition" data-action="switch-version">Switch version</button>
+      </div>
     </div>
     <div class="text-center text-[10px] text-faint py-2 flex-shrink-0">© 2026 Gaël Chaubet · All rights reserved</div>
   `;
@@ -3039,15 +3068,17 @@ function renderSavedSwimmer() {
     effs.length ? `${effs.length} efficiency` : '',
   ].filter(Boolean).join(' · ') || 'no saved items';
 
+  // The races / target-times sub-views share this. Same builder as everywhere else, so the
+  // printer and the Edit/Done toggle land where they do on every other screen.
   const swHeader = (title) => `
     <div class="statusbar"></div>
-    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="sw-view-back">‹</button><button class="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="home" aria-label="Home" title="Home"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/><path d="M9.5 20v-5.4h5V20"/></svg></button>
-      <div class="flex-1 min-w-0"><div class="text-lg font-semibold truncate">${name}</div><div class="text-xs text-muted truncate">${title}</div></div>
-      <button class="text-sm font-semibold ${editing ? 'text-cyan-700' : 'text-slate-400'} hover:text-cyan-700 transition px-1 flex-shrink-0" data-action="toggle-edit">${editing ? 'Done' : 'Edit'}</button>
-      ${editing ? '' : csvBtn()}
-    </div>
-    ${editing ? '<div class="px-5 pb-2 text-[11px] text-muted">Tap the bin on a row to delete it. Deleting can\u2019t be undone.</div>' : ''}`;
+    ${screenHeader({
+      title: `${name}`,
+      sub: `${title}`,
+      secondary: `<button class="text-sm font-semibold ${editing ? 'text-cyan-700' : 'text-slate-400'} hover:text-cyan-700 transition px-1 flex-shrink-0" data-action="toggle-edit">${editing ? 'Done' : 'Edit'}</button>`,
+      exports: editing ? [] : [['csv-page', 'Download CSV']],
+    })}
+    ${editing ? `<div class="px-5 pb-2 text-[11px] text-muted">Tap the bin on a row to delete it. Deleting can\u2019t be undone.</div>` : ''}`;
   // NOT gated on `editing` any more — edit mode belongs ON this screen, since this is
   // where the races are. Falling through to the detail page was why the swimmer build
   // had no way to delete anything.
@@ -3075,14 +3106,11 @@ function renderSavedSwimmer() {
 
   return `
     <div class="statusbar"></div>
-    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button><button class="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="home" aria-label="Home" title="Home"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/><path d="M9.5 20v-5.4h5V20"/></svg></button>
-      <div class="flex-1 min-w-0">
-        <div class="text-lg font-semibold truncate">${name}</div>
-        <div class="text-xs text-muted truncate">${swimmerTeam(sid) ? `<span class="text-cyan-700 font-medium">${swimmerTeam(sid).replace(/</g, '&lt;')}</span> · ` : ''}${subtitle}</div>
-      </div>
-      <button class="text-sm font-semibold ${editing ? 'text-cyan-700' : 'text-slate-400'} hover:text-cyan-700 transition px-1" data-action="toggle-edit">${editing ? 'Done' : 'Edit'}</button>
-    </div>
+    ${screenHeader({
+      title: `${name}`,
+      sub: `${swimmerTeam(sid) ? `<span class="text-cyan-700 font-medium">${swimmerTeam(sid).replace(/</g, '&lt;')}</span> · ` : ''}${subtitle}`,
+      secondary: `<button class="text-sm font-semibold ${editing ? 'text-cyan-700' : 'text-slate-400'} hover:text-cyan-700 transition px-1 flex-shrink-0" data-action="toggle-edit">${editing ? 'Done' : 'Edit'}</button>`,
+    })}
     ${editing ? `
     <div class="px-5 pb-2 space-y-2">
       <button class="w-full bg-white border border-slate-200 text-slate-700 rounded-xl py-3 text-sm font-semibold hover:bg-slate-50 active:scale-[0.99] transition" data-action="rename-swimmer">Rename swimmer</button>
@@ -3181,14 +3209,7 @@ function renderBestTimes() {
     </div></div>` : '';
   return `
     <div class="statusbar"></div>
-    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button><button class="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="home" aria-label="Home" title="Home"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/><path d="M9.5 20v-5.4h5V20"/></svg></button>
-      <div class="flex-1 min-w-0">
-        <div class="text-lg font-semibold truncate">Best times</div>
-        <div class="text-xs text-muted truncate">${name}</div>
-      </div>
-      ${csvBtn()}
-    </div>
+    ${screenHeader({ title: `Best times`, sub: `${name}`, exports: [['csv-page', 'Download CSV']] })}
     <div class="px-5 pb-2 flex flex-wrap gap-2">
       ${chips.map(([k, l]) => `<span class="pill ${f.mode === k ? 'active' : ''}" data-btmode="${k}">${k === 'year' && f.mode === 'year' && f.year ? f.year : l}</span>`).join('')}
     </div>
@@ -3252,13 +3273,7 @@ function renderTrends() {
 
   return `
     <div class="statusbar"></div>
-    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button><button class="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="home" aria-label="Home" title="Home"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/><path d="M9.5 20v-5.4h5V20"/></svg></button>
-      <div class="flex-1 min-w-0">
-        <div class="text-lg font-semibold truncate">${name}</div>
-        <div class="text-xs text-muted">Race trends</div>
-      </div>
-    </div>
+    ${screenHeader({ title: `${name}`, sub: `Race trends` })}
     <div class="scrollable px-5 py-3 space-y-3 bg-slate-50">
       ${cards || '<div class="text-center text-sm text-muted p-8">Save at least two races in the same event to see a trend.</div>'}
       <div class="text-center text-[10px] text-faint leading-snug">A descending line means dropping time (getting faster) · dashed = target</div>
@@ -3470,14 +3485,7 @@ function renderProgress() {
   }).join('');
   return `
     <div class="statusbar"></div>
-    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button><button class="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="home" aria-label="Home" title="Home"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/><path d="M9.5 20v-5.4h5V20"/></svg></button>
-      <div class="flex-1 min-w-0">
-        <div class="text-lg font-semibold truncate">${name}</div>
-        <div class="text-xs text-muted">Progress over time</div>
-      </div>
-      ${csvBtn()}
-    </div>
+    ${screenHeader({ title: `${name}`, sub: `Progress over time`, exports: [['csv-page', 'Download CSV']] })}
     <div class="scrollable px-5 py-3 space-y-2.5 bg-slate-50">
       ${cards || '<div class="text-center text-sm text-muted p-8">Save the same event, 50 m test, or efficiency test twice to see a trend.</div>'}
     </div>
@@ -3528,14 +3536,7 @@ function renderProgressGroup() {
   }).join('');
   return `
     <div class="statusbar"></div>
-    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button><button class="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="home" aria-label="Home" title="Home"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/><path d="M9.5 20v-5.4h5V20"/></svg></button>
-      <div class="flex-1 min-w-0">
-        <div class="text-lg font-semibold truncate">${g.sig}</div>
-        <div class="text-xs text-muted truncate">${name} · ${win !== 'all' ? entries.length + ' of ' + allEntries.length : allEntries.length} entries</div>
-      </div>
-      ${csvBtn()}
-    </div>
+    ${screenHeader({ title: `${g.sig}`, sub: `${name} · ${win !== 'all' ? entries.length + ' of ' + allEntries.length : allEntries.length} entries`, exports: [['csv-page', 'Download CSV']] })}
     <div class="scrollable px-5 py-3 space-y-3 bg-slate-50">
       ${g.kind === 'fifty' ? fatigueNote(sid, 'banner') : ''}
       ${winToggle}
@@ -3561,13 +3562,7 @@ function renderSwimmerDetail() {
 
   return `
     <div class="statusbar"></div>
-    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button><button class="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="home" aria-label="Home" title="Home"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/><path d="M9.5 20v-5.4h5V20"/></svg></button>
-      <div class="flex-1 min-w-0">
-        <div class="text-lg font-semibold">${s.name}</div>
-        <div class="text-xs text-muted">${s.sex === 'M' ? 'Men' : 'Women'}</div>
-      </div>
-    </div>
+    ${screenHeader({ title: `${s.name}`, sub: `${s.sex === 'M' ? 'Men' : 'Women'}` })}
     <div class="scrollable px-5 py-3 space-y-3 bg-slate-50">
       <div class="bg-white border border-slate-200 rounded-2xl p-4">
         <div class="label-cap mb-2 text-muted">Best time</div>
@@ -4174,13 +4169,7 @@ function renderQuickCalc() {
 
   return `
     <div class="statusbar"></div>
-    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button><button class="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="home" aria-label="Home" title="Home"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/><path d="M9.5 20v-5.4h5V20"/></svg></button>
-      <div class="flex-1 min-w-0">
-        <div class="text-lg font-semibold">Set target time</div>
-        ${ctxLine ? `<div class="text-xs text-muted truncate">${ctxLine}</div>` : ''}
-      </div>
-    </div>
+    ${screenHeader({ title: `Set target time`, sub: `${ctxLine}` })}
     <div class="scrollable px-5 py-4 space-y-6">
       <div>
         <div class="label-cap mb-2">Stroke</div>
@@ -4430,10 +4419,7 @@ function renderPredictedSplits() {
     const avail = availableEventsFor(state.form.stroke);
     return `
       <div class="statusbar"></div>
-      <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
-        <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button><button class="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="home" aria-label="Home" title="Home"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/><path d="M9.5 20v-5.4h5V20"/></svg></button>
-        <div class="text-lg font-semibold">Set target time</div>
-      </div>
+      ${screenHeader({ title: `Set target time`, cls: 'bg-white' })}
       <div class="p-8 text-center">
         <div class="text-slate-700 font-semibold text-sm mb-1">No data for this combination</div>
         <div class="text-slate-500 text-sm leading-relaxed">There's no ${state.form.distance} ${state.form.stroke} ${state.form.pool} in the dataset.</div>
@@ -4611,19 +4597,16 @@ function renderPredictedSplits() {
 
   return `
     <div class="statusbar"></div>
-    <div class="px-5 pt-3 pb-2 flex items-center gap-3 bg-white">
-      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back" aria-label="Back">‹</button><button class="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="home" aria-label="Home" title="Home"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/><path d="M9.5 20v-5.4h5V20"/></svg></button>
-      <div class="flex-1 min-w-0">
-        <div class="text-base font-semibold truncate">${state.swimmer ? state.swimmer.name : (state.form.name || 'Set target time')}</div>
-        <div class="text-xs text-muted truncate">${r.distance} ${r.stroke} · ${r.pool} · ${r.sex === 'M' ? 'Men' : 'Women'}</div>
-      </div>
-      <div class="flex items-center gap-1.5 flex-shrink-0">${csvBtn()}${printBtn()}
-        <button class="px-3 py-2 rounded-full bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 transition" data-action="edit-plan">Edit</button>
-        ${state.planSaved
-          ? '<button class="px-4 py-2.5 rounded-full bg-emerald-50 text-emerald-700 text-sm font-semibold" data-action="save">Saved ✓</button>'
-          : `<button class="px-4 py-2.5 rounded-full bg-cyan-600 text-white text-sm font-semibold shadow-sm shadow-cyan-600/20 hover:bg-cyan-700 active:scale-[0.98] transition" data-action="save">${state.reviewId ? 'Update' : 'Save'}</button>`}
-      </div>
-    </div>
+    ${screenHeader({
+      title: `${state.swimmer ? state.swimmer.name : (state.form.name || 'Set target time')}`,
+      sub: `${r.distance} ${r.stroke} · ${r.pool} · ${r.sex === 'M' ? 'Men' : 'Women'}`,
+      primary: `${state.planSaved
+        ? '<button class="px-4 py-2.5 rounded-full bg-emerald-50 text-emerald-700 text-sm font-semibold flex-shrink-0" data-action="save">Saved ✓</button>'
+        : `<button class="px-4 py-2.5 rounded-full bg-cyan-600 text-white text-sm font-semibold shadow-sm shadow-cyan-600/20 hover:bg-cyan-700 active:scale-[0.98] transition flex-shrink-0" data-action="save">${state.reviewId ? 'Update' : 'Save'}</button>`}`,
+      secondary: hdrEditBtn('edit-plan'),
+      exports: [['csv-page', 'Download CSV'], ['print-page', 'Download PDF']],
+      cls: 'bg-white',
+    })}
 
     <!-- Target time hero, with quick nudge controls -->
     <div class="px-5 py-3 bg-white border-b border-slate-100">
@@ -4684,132 +4667,6 @@ function ordinal(n) {
 }
 
 // ----- (legacy mock race analysis — unused in v2, superseded below) -----
-function _legacyRaceAnalysis() {
-  const race = state.race || sampleRace;
-  const swimmer = swimmers.find(s => s.id === race.swimmerId);
-  const prediction = predict(race.stroke, race.sex, race.pool, race.distance, race.targetSeconds);
-  if (!prediction) return '<div class="p-8">No data</div>';
-
-  const actualTotal = race.actualSplits.reduce((a, b) => a + b, 0);
-  const delta = actualTotal - race.targetSeconds;
-  const insights = generateInsights(prediction, race.actualSplits, swimmer);
-
-  const splitRows = race.actualSplits.map((a, i) => {
-    const cls = classifySplit(a, prediction.lo[i], prediction.hi[i]);
-    const d = a - prediction.splits[i];
-    const aColor = cls === 'too-fast' ? 'text-amber-700' : (cls === 'too-slow' ? 'text-rose-600' : 'text-slate-900');
-    const dColor = cls === 'too-fast' ? 'text-amber-700' : (cls === 'too-slow' ? 'text-rose-600' : 'text-emerald-700');
-
-    // Layout the range as a fixed extended window so a too-fast actual is visible left of the range,
-    // and too-slow visible right. Pad the visualized window by 1.5x the IQR.
-    const lo = prediction.lo[i], hi = prediction.hi[i], mean = prediction.splits[i];
-    const iqr = hi - lo;
-    const winLo = lo - iqr * 1.0;
-    const winHi = hi + iqr * 1.0;
-    const pct = (v) => Math.max(0, Math.min(100, ((v - winLo) / (winHi - winLo)) * 100));
-    return `
-      <div class="px-4 py-4 ${i < race.actualSplits.length - 1 ? 'border-b border-slate-100' : ''}">
-        <div class="flex items-baseline justify-between gap-2 mb-3">
-          <div class="text-sm font-semibold text-slate-700">${i + 1}${ordinal(i+1).slice(-2)} 50</div>
-          <div class="flex items-baseline gap-3">
-            <div class="hero-time text-2xl ${aColor}">${a.toFixed(2)}</div>
-            <div class="text-xs ${dColor} font-semibold tnum">${d >= 0 ? '+' : ''}${d.toFixed(2)}</div>
-          </div>
-        </div>
-        <div class="relative pb-1">
-          <div class="range-track">
-            <div class="range-fill" style="left: ${pct(lo).toFixed(1)}%; right: ${(100-pct(hi)).toFixed(1)}%;"></div>
-            <div class="range-tick" style="left: ${pct(mean).toFixed(1)}%;"></div>
-            <div class="range-actual ${cls}" style="left: ${pct(a).toFixed(1)}%;"></div>
-          </div>
-          <div class="flex justify-between text-[10px] text-faint mt-1.5 mono">
-            <span>${lo.toFixed(2)}</span>
-            <span class="text-[10px] text-faint">predicted ${mean.toFixed(2)}</span>
-            <span>${hi.toFixed(2)}</span>
-          </div>
-        </div>
-      </div>
-    `;
-  }).join('');
-
-  const toneStyles = {
-    amber:   { wrap: 'bg-amber-50 border-amber-200',   title: 'text-amber-900',   body: 'text-amber-800',   icon: 'text-amber-600',   action: 'text-amber-900 bg-amber-100' },
-    rose:    { wrap: 'bg-rose-50 border-rose-200',     title: 'text-rose-900',    body: 'text-rose-800',    icon: 'text-rose-600',    action: 'text-rose-900 bg-rose-100' },
-    emerald: { wrap: 'bg-emerald-50 border-emerald-200', title: 'text-emerald-900', body: 'text-emerald-800', icon: 'text-emerald-600', action: 'text-emerald-900 bg-emerald-100' },
-  };
-  const insightCards = insights.map(ins => {
-    const t = toneStyles[ins.tone] || { wrap: 'bg-slate-100 border-slate-200', title: 'text-slate-900', body: 'text-slate-700', icon: 'text-slate-500', action: 'text-slate-700 bg-slate-100' };
-    return `
-      <div class="${t.wrap} border rounded-xl px-4 py-4 flex gap-3">
-        <span class="${t.icon} text-xl leading-none mt-0.5 flex-shrink-0">${ins.icon}</span>
-        <div class="flex-1">
-          <div class="font-semibold text-sm ${t.title}">${ins.title}</div>
-          <div class="text-xs mt-1 leading-relaxed ${t.body}">${ins.body}</div>
-          ${ins.action ? `<div class="mt-2 inline-block px-2.5 py-1 rounded-md text-[11px] font-semibold ${t.action}">Next: ${ins.action.replace(/^Next:\s*/, '')}</div>` : ''}
-        </div>
-      </div>
-    `;
-  }).join('');
-
-  const deltaColor = delta > 0 ? 'text-rose-600' : 'text-emerald-700';
-  const deltaBg = delta > 0 ? 'bg-rose-50 border-rose-100' : 'bg-emerald-50 border-emerald-100';
-
-  return `
-    <div class="statusbar"></div>
-    <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
-      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button><button class="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="home" aria-label="Home" title="Home"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/><path d="M9.5 20v-5.4h5V20"/></svg></button>
-      <div class="flex-1 min-w-0">
-        <div class="text-base font-semibold">${swimmer?.name || ''}</div>
-        <div class="text-xs text-muted truncate">${race.distance} ${race.stroke} ${race.pool} · ${race.date}</div>
-      </div>
-    </div>
-
-    <!-- Hero summary: target | actual | delta -->
-    <div class="px-5 py-3 bg-white border-b border-slate-100">
-      <div class="${deltaBg} border rounded-2xl p-4">
-        <div class="grid grid-cols-3 gap-2">
-          <div>
-            <div class="label-cap text-muted">Target</div>
-            <div class="hero-time text-xl mt-1">${formatTime(race.targetSeconds)}</div>
-          </div>
-          <div class="text-center border-l border-r border-slate-200/60">
-            <div class="label-cap text-muted">Actual</div>
-            <div class="hero-time text-xl mt-1">${formatTime(actualTotal)}</div>
-          </div>
-          <div class="text-right">
-            <div class="label-cap ${deltaColor}">Delta</div>
-            <div class="hero-time text-xl mt-1 ${deltaColor}">${delta >= 0 ? '+' : ''}${delta.toFixed(2)}</div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="scrollable px-5 py-3 space-y-4 bg-slate-50">
-
-      <!-- Legend (color is never the only signal) -->
-      <div class="flex items-center justify-center gap-4 text-[11px] text-muted">
-        <span><span class="status-dot too-fast"></span>Too fast</span>
-        <span><span class="status-dot in-range"></span>In range</span>
-        <span><span class="status-dot too-slow"></span>Too slow</span>
-      </div>
-
-      <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-        <div class="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
-          <div class="label-cap text-muted">Splits</div>
-          <div class="label-cap text-faint">Actual · Δ vs predicted</div>
-        </div>
-        ${splitRows}
-      </div>
-
-      ${insights.length ? `
-        <div class="space-y-3">
-          <div class="label-cap text-muted px-1">Coaching insights</div>
-          ${insightCards}
-        </div>
-      ` : '<div class="text-xs text-faint italic text-center py-2">No automatic insights for this race.</div>'}
-    </div>
-  `;
-}
 
 // ============================================================
 // RACE ANALYSIS
@@ -5743,6 +5600,13 @@ function renderTeamStandards() {
   const search = m.all.length
     ? `<input type="text" data-ts-search value="${esc(f.q)}" placeholder="Search swimmer" class="w-full bg-slate-100 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300 placeholder:text-muted" />` : '';
 
+  // The columns are a choice, so the sheet has to say which choice it was printed with —
+  // a page of gaps with no named source is unusable a week later.
+  const chosen = [f.src.canada && 'Canada', f.src.world && 'World', f.src.rudolph && 'Rudolph']
+    .filter(Boolean).join(' · ');
+  m.legend = chosen + (m.sxf === 'all' ? '' : (m.sxf === 'M' ? ' · men' : ' · women'))
+           + (m.q ? ' · "' + m.q + '"' : '');
+
   const notes = [];
   if (anyEst) notes.push('A <span class="mono">~</span> means the comparison crossed courses — that swimmer’s ' + f.pool + ' time converted to the standard’s course. It is an estimate; the official time is the one swum in that course.');
   if (noYear) notes.push(noYear + ' swimmer' + (noYear === 1 ? ' has' : 's have') + ' no birth year, so there is no Rudolph score. Tap the row to set it.');
@@ -5751,14 +5615,12 @@ function renderTeamStandards() {
 
   return `
     <div class="statusbar"></div>
-    <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
-      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back" aria-label="Back">‹</button><button class="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="home" aria-label="Home" title="Home"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/><path d="M9.5 20v-5.4h5V20"/></svg></button>
-      <div class="flex-1 min-w-0">
-        <div class="text-lg font-semibold truncate">Team vs standards</div>
-        <div class="text-xs text-muted truncate">${f.distance} m ${f.stroke} · ${f.pool}</div>
-      </div>
-      ${m.rows.length && (m.cols.length || m.rud) ? csvBtn() : ''}
-    </div>
+    ${screenHeader({
+      title: `Team vs standards`,
+      sub: `${f.distance} m ${f.stroke} · ${f.pool}`,
+      exports: (m.rows.length && (m.cols.length || m.rud)) ? [['csv-page', 'Download CSV'], ['tp-download', 'Download PDF']] : [],
+      cls: 'bg-white',
+    })}
     <div class="scrollable bg-slate-50">
       <div class="mx-3 mt-3 bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
         <div>
@@ -5783,8 +5645,13 @@ function renderTeamStandards() {
         ${search}
       </div>
       <div class="m-3 bg-white rounded-2xl border border-slate-200 overflow-hidden">
-        ${m.rows.length && (m.cols.length || m.rud) ? `<div class="px-3 pt-3 pb-1"><div class="text-[15px] font-bold text-slate-900">${f.distance} m ${f.stroke} ${f.pool} — ${m.cols.length ? 'gap to the cut' : 'Rudolph points'}</div></div>` : ''}
-        ${body}
+        ${m.rows.length && (m.cols.length || m.rud) ? `<div id="tp-print" class="bg-white">
+          <div class="px-3 pt-3 pb-1">
+            <div data-tp-title class="text-[15px] font-bold text-slate-900">${f.distance} m ${f.stroke} ${f.pool} — ${m.cols.length ? 'gap to the cut' : 'Rudolph points'}</div>
+            <div data-tp-sub class="text-[11px] text-muted mt-0.5">${m.legend}</div>
+          </div>
+          ${body}
+        </div>` : body}
       </div>
       <div class="px-4 pb-5 space-y-1.5">${notes.map((n) => `<div class="text-[10px] text-faint leading-snug">${n}</div>`).join('')}</div>
     </div>`;
@@ -5833,14 +5700,7 @@ function renderStandards() {
   const seg = (val, cur, attr, label) => `<div class="seg ${cur === val ? 'active' : ''}" data-${attr}="${val}">${label}</div>`;
   return `
     <div class="statusbar"></div>
-    <div class="px-5 pt-3 pb-3 flex items-center gap-3">
-      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">\u2039</button><button class="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="home" aria-label="Home" title="Home"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/><path d="M9.5 20v-5.4h5V20"/></svg></button>
-      <div class="flex-1 min-w-0">
-        <div class="text-lg font-semibold truncate">Compare to standards</div>
-        ${f.name ? `<div class="text-xs text-muted truncate">${f.name}</div>` : ''}
-      </div>
-      ${csvBtn()}
-    </div>
+    ${screenHeader({ title: `Compare to standards`, sub: `${f.name}`, exports: [['csv-page', 'Download CSV']] })}
     <div class="scrollable px-5 py-3 space-y-4 bg-slate-50">
       <div class="seg-group">
         <button class="seg ${f.src === 'canada' ? 'active' : ''}" data-stdsrc="canada">Canada</button>
@@ -5983,14 +5843,12 @@ function renderTrainingPace() {
 
   return `
     <div class="statusbar"></div>
-    <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white no-print">
-      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back" aria-label="Back">‹</button><button class="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="home" aria-label="Home" title="Home"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/><path d="M9.5 20v-5.4h5V20"/></svg></button>
-      <div class="flex-1 min-w-0">
-        <div class="text-lg font-semibold">Training Pace</div>
-      </div>
-      ${rows && rows.length ? '<button class="px-3 py-2 rounded-full bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 transition flex-shrink-0" data-action="csv-page">CSV</button>' : ''}
-      ${rows && rows.length ? '<button class="px-3 py-2 rounded-full bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 transition flex-shrink-0" data-action="tp-download">PDF</button>' : ''}
-    </div>
+    ${screenHeader({
+      title: `Training Pace`,
+      sub: `${f.distance} m · ${f.pool} · ${f.basis === 'recent' ? 'most recent' : (f.basis === 'target' ? 'target' : 'best time')}`,
+      exports: (rows && rows.length) ? [['csv-page', 'Download CSV'], ['tp-download', 'Download PDF']] : [],
+      cls: 'bg-white no-print',
+    })}
     <div class="scrollable bg-slate-50">
       <div class="px-5 py-4 bg-white border-b border-slate-100 no-print">
         ${group('Pool', pools.map((p) => [p, p]), 'pool')}
@@ -6028,13 +5886,7 @@ function renderRaceEntry() {
       </div>`).join('');
   return `
     <div class="statusbar"></div>
-    <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
-      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button><button class="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="home" aria-label="Home" title="Home"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/><path d="M9.5 20v-5.4h5V20"/></svg></button>
-      <div class="flex-1 min-w-0">
-        <div class="text-lg font-semibold">${state.raceEditId ? 'Edit race' : 'Record Races'}</div>
-        ${f.name ? `<div class="text-xs text-muted truncate">${f.name}</div>` : ''}
-      </div>
-    </div>
+    ${screenHeader({ title: `${state.raceEditId ? 'Edit race' : 'Record Races'}`, sub: `${f.name}`, cls: 'bg-white' })}
     ${state.raceEditId ? `<div class="px-5 pb-3 -mt-1 bg-white">
       <div class="rounded-xl bg-cyan-50 border border-cyan-200 px-3 py-2 text-[11px] text-cyan-900 leading-snug">
         Editing a saved race \u2014 what you save here <span class="font-semibold">replaces</span> it. It won\u2019t be added as a second race.
@@ -6283,19 +6135,16 @@ function renderRaceAnalysis() {
   }
   return `
     <div class="statusbar"></div>
-    <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
-      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back" aria-label="Back">‹</button><button class="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="home" aria-label="Home" title="Home"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/><path d="M9.5 20v-5.4h5V20"/></svg></button>
-      <div class="flex-1 min-w-0">
-        <div class="text-base font-semibold truncate">${race.name || 'Race'}</div>
-        <div class="text-xs text-muted truncate">${race.distance} ${race.stroke} ${race.pool}${meetLabel(race) ? ' · ' + meetLabel(race) : ''}${race.date ? ' · ' + race.date : ''}</div>
-      </div>
-      <div class="flex items-center gap-1.5 flex-shrink-0">${csvBtn()}
-        ${state.raceSaved === 'saved' ? '<span class="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-[11px] font-semibold">Saved ✓</span>'
-          : state.raceSaved === 'noname' ? '<span class="px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 text-[11px] font-semibold">Not saved · no name</span>'
-          : state.raceSaved === 'notime' ? '<span class="px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 text-[11px] font-semibold">Not saved · no time</span>' : ''}
-        <button class="px-3 py-2 rounded-full bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 transition" data-action="edit-race">Edit</button>
-      </div>
-    </div>
+    ${screenHeader({
+      title: `${race.name || 'Race'}`,
+      sub: `${race.distance} ${race.stroke} ${race.pool}${meetLabel(race) ? ' · ' + meetLabel(race) : ''}${race.date ? ' · ' + race.date : ''}`,
+      primary: `${state.raceSaved === 'saved' ? '<span class="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-[11px] font-semibold flex-shrink-0">Saved ✓</span>'
+          : state.raceSaved === 'noname' ? '<span class="px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 text-[11px] font-semibold flex-shrink-0">Not saved · no name</span>'
+          : state.raceSaved === 'notime' ? '<span class="px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 text-[11px] font-semibold flex-shrink-0">Not saved · no time</span>' : ''}`,
+      secondary: hdrEditBtn('edit-race'),
+      exports: [['csv-page', 'Download CSV']],
+      cls: 'bg-white',
+    })}
     <div class="px-5 py-3 bg-white border-b border-slate-100">
       <div class="bg-cyan-50 border border-cyan-100 rounded-2xl p-4 text-center">
         <div class="label-cap text-muted">Time swam</div>
@@ -6339,13 +6188,7 @@ function renderRaceCompare() {
   }).join('');
   return `
     <div class="statusbar"></div>
-    <div class="px-5 pt-3 pb-3 flex items-center gap-3 bg-white">
-      <button class="w-11 h-11 rounded-full bg-cyan-50 border border-cyan-200 flex items-center justify-center text-cyan-700 text-2xl font-semibold leading-none hover:bg-cyan-100 active:scale-95 transition" data-action="back">‹</button><button class="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 active:scale-95 transition flex-shrink-0" data-action="home" aria-label="Home" title="Home"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/><path d="M9.5 20v-5.4h5V20"/></svg></button>
-      <div class="flex-1 min-w-0">
-        <div class="text-base font-semibold">${A.name || 'Compare'}</div>
-        <div class="text-xs text-muted truncate">${A.distance} ${A.stroke} ${A.pool} · ${A.round} vs ${B.round}</div>
-      </div>
-    </div>
+    ${screenHeader({ title: `${A.name || 'Compare'}`, sub: `${A.distance} ${A.stroke} ${A.pool} · ${A.round} vs ${B.round}`, cls: 'bg-white' })}
     <div class="px-5 py-3 bg-white border-b border-slate-100">
       <div class="grid grid-cols-3 items-end gap-2">
         <div><div class="label-cap text-muted">${A.round}</div><div class="hero-time text-xl mt-1">${formatTime(tA)}</div></div>
@@ -6412,8 +6255,25 @@ function renderRaceCompare() {
   }, true);
 })();
 
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && state.hdrMore) { state.hdrMore = false; render(); }
+});
+
 document.addEventListener('click', (e) => {
   const phone = document.getElementById('phone');
+  // An open printer menu closes on any tap that is not the button and not inside the menu.
+  // Runs before the nav handlers so the tap still does whatever it was going to do.
+  if (state.hdrMore) {
+    const inMenu = !!e.target.closest('[data-hdr-menu]');
+    const onButton = !!e.target.closest('[data-action="hdr-more"]');
+    if (!onButton) {
+      state.hdrMore = false;
+      // Picking a download runs a handler that writes a file and never re-renders, so the
+      // popover would sit there over the page. Redraw after the action, not instead of it.
+      if (inMenu) setTimeout(() => { if (typeof render === 'function') render(); }, 0);
+      else if (!e.target.closest('[data-action]')) { render(); return; }
+    }
+  }
   // Click handler for phone-internal nav
   if (phone.contains(e.target)) {
     // Delete buttons are checked first so they win over the row's navigation handler.
@@ -7052,6 +6912,7 @@ function handleAction(action, el) {
       break;
     }
     case 'training-pace': state.tpShow = false; navigate('training-pace'); break;
+    case 'hdr-more': state.hdrMore = !state.hdrMore; render(); break;
     case 'tp-show': state.tpShow = true; render(); break;
     case 'tp-download': {
       if (!tpPdfReady()) showToast('Preparing the PDF…');
