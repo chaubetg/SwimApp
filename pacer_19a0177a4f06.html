@@ -106,6 +106,9 @@
     /* Team vs standards can be ten columns wide, so it scrolls sideways — and a gap with no
        name against it is useless. Pin the swimmer column to the left edge. Each row paints
        its own background behind the pinned cell, or the numbers would slide underneath it. */
+    /* Training splits: the event column shrank once the row label lost its distance, and both
+       "100 m" and the date started wrapping. Floor it wide enough for an ISO date. */
+    .tspl-table th:first-child, .tspl-table td:first-child { min-width: 84px; white-space: nowrap; }
     .ts-table th:first-child, .ts-table td:first-child {
       position: sticky; left: 0; z-index: 2; background: #ffffff;
       /* Bounded, or a long name overflows the pinned cell and prints on top of the first
@@ -1129,7 +1132,7 @@ function durabilityBanner() {
   // stale-backup nag below now covers installed and uninstalled users alike.
   if (backupIsStale()) {
     const a = backupAgeDays();
-    const whenTxt = a === null ? 'never backed up' : `last backup ${Math.floor(a)} days ago`;
+    const whenTxt = a === null ? 'Never backed up' : `last backup ${Math.floor(a)} days ago`;
     return `<div class="px-5 pb-2"><div data-guard="backup" class="bg-slate-100 border border-slate-300 rounded-2xl px-4 py-3 flex items-center justify-between gap-3">
       <div class="min-w-0"><div class="text-[13px] font-bold text-slate-800">Back up your data</div>
       <div class="text-[11px] text-muted mt-0.5 leading-snug">${whenTxt} \u2014 a backup file restores everything on a new phone.</div></div>
@@ -1409,6 +1412,7 @@ const state = {
   fiftyOpen: {}, // 50m tool: which metric rows are expanded for SR/SC input
   tpForm: { pool: 'SCM', distance: 50, basis: 'best', stroke: 'Free', q: '' }, // Training Pace picker
   hdrMore: false,   // the printer menu — closed by navigating, Escape, or a tap outside
+  tsplForm: { pool: 'SCM', basis: 'best' },   // Training splits: one swimmer, every event
   tpShow: false,  // the table appears once "Show Training Table" is pressed
   // Team vs standards: which cut sets are on, and the event they are read at. Canada is
   // on by default because that is the ladder most of the squad is actually on.
@@ -1700,6 +1704,26 @@ function screenCsvModel() {
              rows: out, note: `${m.rows.length} swimmer${m.rows.length === 1 ? '' : 's'}` };
   }
 
+  if (state.view === 'training-splits') {
+    const f = state.tsplForm;
+    const rows = swimmerSplitRows(f.pool, f.basis);
+    if (!rows.length) return null;
+    const who = selfName() || '';
+    const basisLab = f.basis === 'recent' ? 'most recent' : (f.basis === 'target' ? 'target' : 'best time');
+    const out = [['swimmer', 'event', 'distance_m', 'stroke', 'pool', 'pace_from', 'pace_time', 'pace_time_s',
+                  'date', 'segment', 'split', 'split_s']];
+    rows.forEach((r) => {
+      const cells = tpCells(r.segs, r.stroke, f.pool, r.distance, r.splits, r.sex);
+      const head = [who, `${r.distance} ${r.stroke}`, r.distance, r.stroke, f.pool,
+                    r.fellBack ? 'best time (no target set)' : basisLab,
+                    formatTime(r.total), num(r.total), r.date || ''];
+      if (!cells.length) { out.push(head.concat(['', '', ''])); return; }
+      cells.forEach((c) => out.push(head.concat([c.h, formatTime(c.v), num(c.v)])));
+    });
+    return { name: `split_compass_training_splits_${slug(who)}_${f.pool.toLowerCase()}_${stamp}.csv`,
+             rows: out, note: `${rows.length} event${rows.length === 1 ? '' : 's'}` };
+  }
+
   if (state.view === 'best-times') { exportBestTimesCsv(); return 'handled'; }
 
   if (state.view === 'saved-swimmer') {
@@ -1908,7 +1932,7 @@ function renderImportMenu() {
     <div class="statusbar"></div>
     ${screenHeader({ title: `Import times`, sub: `Where are the times coming from?` })}
     <div class="scrollable px-5 py-4 space-y-3 bg-slate-50">
-      ${card('import-menu-season', 'Import from a season', 'A whole season of top times from Hy-Tek Team Manager — total times only. Feeds Best Times and Training Pace.')}
+      ${card('import-menu-season', 'Import from a season', 'A whole season of top times from Hy-Tek Team Manager — total times only. Feeds Best times and Training Pace.')}
       ${card('import-menu-meet', 'Import from a swim meet', 'A single meet’s results, with splits where available.', 'Soon')}
     </div>`;
 }
@@ -2118,6 +2142,7 @@ function render() {
     case 'import-meet': html = renderImportMeet(); break;
     case 'import-preview': html = renderImportPreview(); break;
     case 'training-pace': html = renderTrainingPace(); break;
+    case 'training-splits': html = renderTrainingSplits(); break;
     case 'standards': html = renderStandards(); break;
     case 'team-standards': html = renderTeamStandards(); break;
     case 'other-tools': html = renderOtherTools(); break;
@@ -2791,6 +2816,7 @@ function renderSwimmerHome() {
         races.length && [ICON_BEST, 'My best times', 'Fastest in each event',
           bestCount + ' event' + (bestCount === 1 ? '' : 's'), 'best-times'],
         hasProgress(sid) && [ICON_TREND, 'Progress over time', 'How your times are trending', '', 'progress'],
+        races.length && [ICON_TABLE, 'Training splits', 'Pace for every event you swim', '', 'training-splits'],
         [ICON_FLAG, 'Compare to standards', 'Olympic, Trials, U SPORTS cuts', '', 'standards'],
       ])}
       ${!races.length && !plans.length ? `<div class="text-center text-sm text-muted px-6 py-10 leading-relaxed">Tap <span class="font-semibold text-cyan-700">Record Races</span> to enter a race and its splits, or <span class="font-semibold text-cyan-700">Set target time</span> to see the splits a goal time needs.</div>` : ''}
@@ -2892,7 +2918,7 @@ function renderRoster() {
     <div class="flex flex-col items-center justify-center text-center px-8 py-20 text-slate-400">
       <div class="w-14 h-14 rounded-2xl bg-cyan-50 flex items-center justify-center text-2xl mb-3">🏊</div>
       <div class="text-sm font-semibold text-slate-600">No swimmers yet</div>
-      <div class="text-xs mt-1.5 leading-relaxed max-w-[220px]">Tap <span class="font-semibold text-cyan-700">Record Races</span>, enter a swimmer's time and splits, then <span class="font-semibold">Save &amp; Compare</span> to build your roster.</div>
+      <div class="text-xs mt-1.5 leading-relaxed max-w-[220px]">Tap <span class="font-semibold text-cyan-700">Record Races</span>, enter a swimmer’s time and splits, then <span class="font-semibold">Save &amp; Compare</span> to build your roster.</div>
       <button class="mt-4 text-xs font-semibold text-cyan-700 hover:underline" data-action="import-json">Import a backup</button>
     </div>`;
 
@@ -3552,7 +3578,7 @@ function renderProgressGroup() {
   }).join('');
   return `
     <div class="statusbar"></div>
-    ${screenHeader({ title: `${g.sig}`, sub: `${name} · ${win !== 'all' ? entries.length + ' of ' + allEntries.length : allEntries.length} entries`, exports: [['csv-page', 'Download CSV']] })}
+    ${screenHeader({ title: `${g.sig}`, sub: `${name} · ${win !== 'all' ? entries.length + ' of ' + allEntries.length + ' entries' : allEntries.length + (allEntries.length === 1 ? ' entry' : ' entries')}`, exports: [['csv-page', 'Download CSV']] })}
     <div class="scrollable px-5 py-3 space-y-3 bg-slate-50">
       ${g.kind === 'fifty' ? fatigueNote(sid, 'banner') : ''}
       ${winToggle}
@@ -3564,7 +3590,7 @@ function renderProgressGroup() {
       <div class="bg-white border border-slate-200 rounded-2xl overflow-x-auto">
         <table class="w-full border-collapse"><thead><tr><th class="sticky left-0 z-10 bg-white px-2 py-1.5 text-left text-[10px] font-semibold text-muted whitespace-nowrap">Metric</th>${dateHdr}</tr></thead><tbody>${rowsHtml}</tbody></table>
       </div>
-      <div class="text-center text-[10px] text-faint leading-snug">green = best · tap any metric row to chart it over time.</div>
+      <div class="text-center text-[10px] text-faint leading-snug">Green = best · tap any metric row to chart it over time.</div>
     </div>
   `;
 }
@@ -3762,7 +3788,7 @@ function convResultHtml() {
   const sexLbl = c.sex === 'M' ? 'Men' : 'Women';
   const others = ['SCY', 'SCM', 'LCM'].filter(x => x !== c.from);
   if (!secs) {
-    return `<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-6 text-center text-sm text-muted">Enter a ${c.from} time above to see the predicted ${others[0]} and ${others[1]} times.</div>`;
+    return `<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-6 text-center text-sm text-muted">Enter an ${c.from} time above to see the predicted ${others[0]} and ${others[1]} times.</div>`;
   }
   return others.map(to => {
     const p = convPlan(c.from, to, c.stroke, c.sex, c.distance);
@@ -4083,7 +4109,7 @@ function renderEfficiency() {
       </div>
       <div id="eff-result">${effResultHtml()}</div>
       <div class="bg-white border border-slate-200 rounded-2xl p-3">
-        <div class="label-cap text-muted mb-2">Save to swimmer</div>
+        <div class="label-cap text-muted mb-2">Save to a swimmer</div>
         <div class="flex gap-2 items-center">
           <input data-toolname data-form="eff" value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="Swimmer name" class="flex-1 min-w-0 bg-slate-100 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300" />
           <button class="px-4 py-2.5 bg-cyan-600 text-white rounded-xl text-sm font-semibold hover:bg-cyan-700 active:scale-95 transition flex-shrink-0" data-action="save-effunified">${state.reviewId ? 'Update' : 'Save'}</button>
@@ -4270,7 +4296,7 @@ function renderFifty() {
   const fmin = Math.floor(secs / 60), fsec = Math.floor(secs % 60), fhh = Math.round((secs - Math.floor(secs)) * 100);
   return `
     <div class="statusbar"></div>
-    ${screenHeader({ title: `50 m LCM splits`, sub: `Sub-splits, checkpoints, stroke rate` })}
+    ${screenHeader({ title: `50 m LCM splits`, sub: `Sub-splits, checkpoints &amp; stroke rate` })}
     <div class="scrollable px-5 py-4 space-y-6">
       <div>
         <div class="label-cap mb-2">Stroke</div>
@@ -4481,9 +4507,9 @@ function renderQuickCalc() {
         </div>
       </div>
       ${SWIMMER ? '' : `<div>
-        <div class="label-cap mb-2">Search or Add Swimmer</div>
+        <div class="label-cap mb-2">Search or add a swimmer</div>
         <div class="relative">
-          <input type="text" data-name-input autocomplete="off" value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="e.g. Tegan O'Neill"
+          <input type="text" data-name-input autocomplete="off" value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="e.g. Tegan O’Neill"
             class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-base outline-none focus:ring-2 focus:ring-cyan-300" />
           <div data-name-suggest class="hidden" style="position:absolute;left:0;right:0;bottom:100%;margin-bottom:4px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 8px 24px rgba(15,23,42,.12);z-index:60;max-height:200px;overflow-y:auto;"></div>
         </div>
@@ -4694,7 +4720,7 @@ function renderPredictedSplits() {
     const worst = gp && gp.rows.length ? gp.rows.reduce((m, x) => (x.gap < m.gap ? x : m), gp.rows[0]) : null;
     const gapHtml = !gp ? `<div class="text-[11px] text-muted mt-3 pt-3 border-t border-slate-100">No recorded ${r.distance} ${r.stroke} ${r.pool} for ${first} yet — record one and this shows where the gap sits.</div>`
       : `<div class="mt-3 pt-3 border-t border-slate-100">
-          <div class="text-[11px] text-muted mb-1.5">Best <span class="mono font-semibold text-slate-700">${formatTime(gp.bestTotal)}</span>${gp.date ? ' · ' + gp.date : ''} · <span class="font-semibold ${gp.gap < 0 ? 'text-cyan-700' : 'text-rose-600'}">${gp.gap < 0 ? Math.abs(gp.gap).toFixed(2) + 's to find' : sgn(gp.gap) + 's slower than their best'}</span></div>
+          <div class="text-[11px] text-muted mb-1.5">Best <span class="mono font-semibold text-slate-700">${formatTime(gp.bestTotal)}</span>${gp.date ? ' · ' + gp.date : ''} · <span class="font-semibold ${Math.abs(gp.gap) < 0.005 ? 'text-slate-600' : (gp.gap < 0 ? 'text-cyan-700' : 'text-rose-600')}">${Math.abs(gp.gap) < 0.005 ? 'the same as their best' : (gp.gap < 0 ? Math.abs(gp.gap).toFixed(2) + 's to find' : sgn(gp.gap) + 's slower than their best')}</span></div>
           ${gp.rows.length ? `<table class="w-full text-[12px]">
             <tr class="text-[9px] uppercase tracking-wide text-faint"><th class="text-left font-semibold pb-0.5"></th><th class="text-right font-semibold">Best</th><th class="text-right font-semibold">Target</th><th class="text-right font-semibold">Gap</th></tr>
             ${gp.rows.map((x) => `<tr>
@@ -4710,9 +4736,9 @@ function renderPredictedSplits() {
         <button class="w-full flex items-center gap-3 text-left" data-action="toggle-target">
           <span class="text-2xl leading-none ${tgtOn ? 'text-amber-500' : 'text-slate-300'}">${tgtOn ? '★' : '☆'}</span>
           <span class="flex-1 min-w-0">
-            <span class="block font-bold text-[14px] text-slate-800">${tgtOn ? `${first}'s season target` : 'Saved plan only'}</span>
+            <span class="block font-bold text-[14px] text-slate-800">${tgtOn ? `${first}’s season target` : 'Saved plan only'}</span>
             <span class="block text-[11px] text-muted leading-snug">${tgtOn
-              ? `Saving makes this ${first}'s target for the ${r.distance} ${r.stroke} ${r.pool}`
+              ? `Saving makes this ${first}’s target for the ${r.distance} ${r.stroke} ${r.pool}`
               : 'Tap the star to make this their season target'}</span>
           </span>
         </button>
@@ -5226,7 +5252,7 @@ function renderOtherTools() {
       <div class="px-5 py-4 space-y-2">
         ${PUBLIC_BUILD ? '' : `
         ${tool('converter', 'Course converter', 'Convert a time between SCY, SCM &amp; LCM', '⇄')}
-        ${tool('adjacent', 'Adjacent events', 'Predict the event up &amp; down from your main', '↕')}
+        ${tool('adjacent', 'Adjacent events', 'Predict the next event up &amp; down from your main', '↕')}
         ${tool('fifty-splits', '50 m LCM splits', 'Sub-splits, checkpoints &amp; stroke rate', '½')}
         ${tool('efficiency', 'Efficiency test', 'Stroke Index from a 15 m pure swim', '◇')}`}
       </div>
@@ -5679,7 +5705,7 @@ function rudolphCardHtml(f) {
   const age = rudolphAge(by, when);
   const lcm = convertCourse(f.seconds, f.stroke, f.sex, f.distance, f.pool, 'LCM');
   if (!(f.seconds > 0)) return `<div class="bg-white border border-dashed border-slate-200 rounded-2xl px-4 py-4 text-center text-sm text-muted">Enter a time to score it.</div>`;
-  if (!lcm) return `<div class="bg-white border border-dashed border-slate-200 rounded-2xl px-4 py-4 text-center text-sm text-muted">No conversion available for this event, so a short-course time can't be scored against a long-course table.</div>`;
+  if (!lcm) return `<div class="bg-white border border-dashed border-slate-200 rounded-2xl px-4 py-4 text-center text-sm text-muted">No conversion available for this event, so a short-course time can’t be scored against a long-course table.</div>`;
   const sc = rudolphScore(f.sex, age.key, f.stroke, f.distance, lcm.s);
   if (!sc) return `<div class="bg-white border border-dashed border-slate-200 rounded-2xl px-4 py-4 text-center text-sm text-muted">The Rudolph table doesn't cover ${f.distance} ${f.stroke}.</div>`;
   const band = sc.whole >= 18 ? 'world class' : sc.whole >= 14 ? 'national level'
@@ -6014,6 +6040,111 @@ function renderStandards() {
     </div>`;
 }
 
+// ===== Training splits (one swimmer, every event) ============================
+// Same numbers as the coach's Training Pace table — literally the same function, filtered to
+// this swimmer — so the two can never disagree about a target.
+function swimmerSplitRows(pool, basis) {
+  const sid = SWIMMER ? selfSid() : state.savedSid;
+  if (!sid) return [];
+  const ord = ['Free', 'Back', 'Breast', 'Fly', 'IM'];
+  const out = [];
+  tpDistances(pool).forEach((d) => {
+    trainingRows(pool, d, basis).forEach((r) => {
+      if (r.sid === sid) out.push(Object.assign({}, r, { distance: d }));
+    });
+  });
+  out.sort((a, b) => a.distance - b.distance || ord.indexOf(a.stroke) - ord.indexOf(b.stroke));
+  return out;
+}
+
+function renderTrainingSplits() {
+  const f = state.tsplForm;
+  if (f.pool === 'SCY') f.pool = 'SCM';
+  const rows = swimmerSplitRows(f.pool, f.basis);
+  const basisLab = f.basis === 'recent' ? 'most recent' : (f.basis === 'target' ? 'target' : 'best time');
+  const chip = (on) => `px-3 py-2 rounded-xl text-xs font-semibold border transition ${on
+    ? 'bg-cyan-600 text-white border-cyan-600'
+    : 'bg-white text-slate-700 border-slate-200 hover:border-cyan-300'}`;
+  const TP_ABBR = { Free: 'FR', Back: 'BK', Breast: 'BR', Fly: 'FLY', IM: 'IM' };
+
+  let body = '', fellBack = 0;
+  if (!rows.length) {
+    body = `<div class="px-4 py-10 text-center text-sm text-muted">No recorded ${f.pool} times yet.<br><span class="text-xs">Record a race and its splits, and the pace for every event you swim appears here.</span></div>`;
+  } else {
+    // Every distance block has its own column shape, so the table pads to the widest of them
+    // and short events simply leave the far columns empty.
+    const byDist = {};
+    rows.forEach((r) => { (byDist[r.distance] = byDist[r.distance] || []).push(r); });
+    const dists = Object.keys(byDist).map(Number).sort((a, b) => a - b);
+    const headsFor = (d) => {
+      const r = byDist[d].find((x) => x.segs && x.segs.length);
+      return r ? tpCells(r.segs, r.stroke, f.pool, d, r.splits, r.sex).map((c) => c.h) : [];
+    };
+    const nCol = Math.max(1, ...dists.map((d) => headsFor(d).length));
+    const pad = (a) => a.concat(Array(Math.max(0, nCol - a.length)).fill(null));
+    const headRow = (d, cls) => `<tr class="text-[10px] uppercase tracking-wide text-faint ${cls}">
+        <th class="text-left font-semibold py-1.5 pl-3">${d} m</th>
+        <th class="text-right font-semibold px-2">Time</th>
+        ${pad(headsFor(d)).map((h) => `<th class="text-right font-semibold px-2 whitespace-nowrap">${h == null ? '' : h}</th>`).join('')}
+      </tr>`;
+    let thead = '', trs = '';
+    dists.forEach((d, di) => {
+      const heads = headsFor(d);
+      // tpPdfModel() takes the PDF's header row from `thead th`, so the first block's header
+      // has to be a real thead or the PDF is built with an empty one.
+      if (di === 0) thead = headRow(d, 'border-b-2 border-slate-400');
+      else trs += headRow(d, 'border-t-2 border-slate-400');
+      byDist[d].forEach((r) => {
+        if (r.fellBack) fellBack++;
+        const cells = pad(tpCells(r.segs, r.stroke, f.pool, d, r.splits, r.sex));
+        trs += `<tr class="border-t border-slate-100">
+          <td class="py-2 pl-3">
+            <div class="font-semibold text-[13px] whitespace-nowrap">${r.stroke}</div>
+            ${r.date ? `<div class="text-[10px] text-faint leading-none mt-0.5 whitespace-nowrap">${r.date}</div>` : ''}
+          </td>
+          <td class="text-right px-2 whitespace-nowrap"><span class="mono text-[13px] font-bold text-cyan-800">${formatTime(r.total)}</span>${r.fellBack ? '<span class="text-[10px] text-amber-600">*</span>' : ''}</td>
+          ${cells.map((c, i) => `<td class="text-right px-2 mono text-[13px] ${c && /((1st|2nd|3rd|4th|First|Last|Middle|Mid) ?(50|100)|Fly-Bk|Bk-Br|Br-Fr)$/.test(heads[i] || '') ? 'text-slate-900 font-semibold' : 'text-slate-600'}">${c ? formatTime(c.v) : ''}</td>`).join('')}
+        </tr>`;
+      });
+    });
+    body = `<div class="overflow-x-auto"><table class="w-full tp-table tspl-table"><thead>${thead}</thead><tbody>${trs}</tbody></table></div>`;
+  }
+
+  const group = (label, items, key) => `
+    <div class="mb-3 last:mb-0">
+      <div class="label-cap mb-1.5">${label}</div>
+      <div class="flex flex-wrap gap-1.5">
+        ${items.map(([v, lab]) => `<button class="${chip(String(f[key]) === String(v))}" data-tspl="${key}" data-tsplv="${v}">${lab}</button>`).join('')}
+      </div>
+    </div>`;
+
+  return `
+    <div class="statusbar"></div>
+    ${screenHeader({
+      title: `Training splits`,
+      sub: `${f.pool} · from your ${basisLab}`,
+      exports: rows.length ? [['csv-page', 'Download CSV'], ['tp-download', 'Download PDF']] : [],
+      cls: 'bg-white no-print',
+    })}
+    <div class="scrollable bg-slate-50">
+      <div class="px-5 py-4 bg-white border-b border-slate-100 no-print">
+        ${group('Pool', [['LCM', 'LCM'], ['SCM', 'SCM']], 'pool')}
+        ${group('Pace from', [['best', 'Best time'], ['recent', 'Most recent'], ['target', 'Target']], 'basis')}
+      </div>
+      <div class="m-3 bg-white rounded-2xl border border-slate-200 overflow-hidden">
+        ${rows.length ? `<div id="tp-print" class="bg-white">
+          <div class="px-3 pt-3 pb-1">
+            <div data-tp-title class="text-[15px] font-bold text-slate-900">${selfName() ? selfName() + ' — ' : ''}${f.pool} training splits</div>
+            <div data-tp-sub class="text-[11px] text-muted mt-0.5">Pace from your ${basisLab}</div>
+          </div>
+          ${body}
+        </div>` : body}
+      </div>
+      ${fellBack ? `<div class="px-4 pb-3 text-[10px] text-faint leading-snug">* No target set for that event, so the pace comes from your best time instead.</div>` : ''}
+      <div class="px-4 pb-5 text-[10px] text-faint leading-snug">Split shapes come from published race analysis of elite finals. Treat them as a reference for how a race that speed is usually paced, not a rule.</div>
+    </div>`;
+}
+
 // ----- Screen: Training Pace -----
 function renderTrainingPace() {
   const f = state.tpForm;
@@ -6218,7 +6349,7 @@ function renderRaceEntry() {
       </div>
       <div class="bg-gradient-to-br from-cyan-50 to-white border border-cyan-100 rounded-2xl px-4 py-3">
         <div class="flex items-center justify-between gap-3">
-          <div class="label-cap text-cyan-800">Time swam</div>
+          <div class="label-cap text-cyan-800">Time swum</div>
           ${timeBoxes('target', rf.times.target, f.distance)}
         </div>
       </div>
@@ -6235,9 +6366,9 @@ function renderRaceEntry() {
         <textarea data-race-notes rows="3" placeholder="Race plan and what you executed &#8212; breakout, turns, stroke count, where you moved." class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-sm outline-none focus:ring-2 focus:ring-cyan-300 resize-none">${(rf.notes || '').replace(/</g, '&lt;')}</textarea>
       </div>`}
       ${SWIMMER ? '' : `<div>
-        <div class="label-cap mb-2">Search or Add Swimmer</div>
+        <div class="label-cap mb-2">Search or add a swimmer</div>
         <div class="relative">
-          <input type="text" data-name-input autocomplete="off" value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="e.g. Tegan O'Neill"
+          <input type="text" data-name-input autocomplete="off" value="${(f.name || '').replace(/"/g, '&quot;')}" placeholder="e.g. Tegan O’Neill"
             class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-base outline-none focus:ring-2 focus:ring-cyan-300" />
           <div data-name-suggest class="hidden" style="position:absolute;left:0;right:0;bottom:100%;margin-bottom:4px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 8px 24px rgba(15,23,42,.12);z-index:60;max-height:200px;overflow-y:auto;"></div>
         </div>
@@ -6306,7 +6437,7 @@ function renderRaceAnalysis() {
     return pt.splits[i];
   });
   const GT = 'display:grid;grid-template-columns:minmax(0,1fr) 4rem 4rem 2.9rem 2.1rem;gap:4px;align-items:center;';
-  const head = `<div style="${GT}" class="px-3 pt-3 pb-1"><span class="label-cap text-muted">Split</span><span class="label-cap text-muted" style="text-align:right;">Ideal</span><span class="label-cap text-muted" style="text-align:right;">Swam</span><span class="label-cap text-muted" style="text-align:right;">Δ</span><span class="label-cap text-muted" style="text-align:center;">SR</span></div>`;
+  const head = `<div style="${GT}" class="px-3 pt-3 pb-1"><span class="label-cap text-muted">Split</span><span class="label-cap text-muted" style="text-align:right;">Ideal</span><span class="label-cap text-muted" style="text-align:right;">Swum</span><span class="label-cap text-muted" style="text-align:right;">Δ</span><span class="label-cap text-muted" style="text-align:center;">SR</span></div>`;
   // Running cumulatives shown in () beside each split — skipped on the first row (it would
   // repeat the split), on the averaged middle row, and on single-row (50 m) events.
   let cumP = 0, cumA = 0;
@@ -6404,7 +6535,7 @@ function renderRaceAnalysis() {
       </div>
       ${beats ? `<div class="px-3 pb-2"><span class="text-xs font-semibold text-emerald-700">New best for this event — ${Math.abs(gap).toFixed(2)}s faster.</span></div>`
               : `<div class="px-3 pb-2"><span class="text-xs ${gc} font-semibold">${gap >= 0 ? '+' : ''}${gap.toFixed(2)}s ${ref.head}${ref.predicted ? ' (predicted splits)' : ''}</span></div>`}
-      <div style="display:grid;grid-template-columns:minmax(0,1fr) 4rem 4rem 3rem;gap:4px;align-items:center;" class="px-3 pb-1"><span class="label-cap text-muted">Split</span><span class="label-cap text-muted" style="text-align:right;">${ref.col}</span><span class="label-cap text-muted" style="text-align:right;">Swam</span><span class="label-cap text-muted" style="text-align:right;">Δ</span></div>
+      <div style="display:grid;grid-template-columns:minmax(0,1fr) 4rem 4rem 3rem;gap:4px;align-items:center;" class="px-3 pb-1"><span class="label-cap text-muted">Split</span><span class="label-cap text-muted" style="text-align:right;">${ref.col}</span><span class="label-cap text-muted" style="text-align:right;">Swum</span><span class="label-cap text-muted" style="text-align:right;">Δ</span></div>
       ${rows}
       ${(other.notes || '').trim() ? `<div class="px-3 py-2.5 border-t border-slate-100"><div class="label-cap text-muted mb-1">${ref.col} notes</div><div class="text-xs text-slate-600 leading-relaxed" style="white-space:pre-wrap;">${(other.notes || '').replace(/</g, '&lt;')}</div></div>` : ''}
     </div>`;
@@ -6423,7 +6554,7 @@ function renderRaceAnalysis() {
     })}
     <div class="px-5 py-3 bg-white border-b border-slate-100">
       <div class="bg-cyan-50 border border-cyan-100 rounded-2xl p-4 text-center">
-        <div class="label-cap text-muted">Time swam</div>
+        <div class="label-cap text-muted">Time swum</div>
         <div class="hero-time text-3xl mt-1 text-cyan-900">${formatTime(c.actualTotal)}</div>
         ${mismatch != null ? `<div class="text-[11px] text-amber-700 mt-1.5">Official time entered ${formatTime(race.targetSeconds)} · splits add up to ${formatTime(c.actualTotal)} (${mismatch >= 0 ? '+' : ''}${mismatch.toFixed(2)})</div>` : ''}
       </div>
@@ -6660,6 +6791,8 @@ document.addEventListener('click', (e) => {
     const rg = e.target.closest('[data-rgroup]');
     if (rg) { state.rgOpen = state.rgOpen || {}; const k = rg.getAttribute('data-rgroup'); state.rgOpen[k] = !state.rgOpen[k]; render(); return; }
     // Training Pace pickers — the table below refreshes with the choice once it's been shown.
+    const tspl = e.target.closest('[data-tspl]');
+    if (tspl) { state.tsplForm[tspl.getAttribute('data-tspl')] = tspl.getAttribute('data-tsplv'); render(); return; }
     const tp = e.target.closest('[data-tp]');
     if (tp) {
       const k = tp.getAttribute('data-tp'), v = tp.getAttribute('data-tpv');
@@ -6976,7 +7109,7 @@ function handleAction(action, el) {
       } else if (!_named) {
         showToast('Not saved — add a swimmer name');
       } else {
-        showToast('Not saved — enter the time swam');
+        showToast('Not saved — enter the time swum');
       }
       // Open on the best-time comparison — that is the question a coach asks the second
       // the race is in. Only from this path: opening an old race from a list starts closed.
@@ -7259,6 +7392,7 @@ function handleAction(action, el) {
       break;
     }
     case 'training-pace': state.tpShow = false; navigate('training-pace'); break;
+    case 'training-splits': navigate('training-splits'); break;
     case 'other-tools': navigate('other-tools'); break;
     case 'hdr-more': state.hdrMore = !state.hdrMore; render(); break;
     case 'tp-show': state.tpShow = true; render(); break;
