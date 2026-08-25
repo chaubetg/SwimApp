@@ -1419,7 +1419,10 @@ const state = {
   // Team vs standards: which cut sets are on, and the event they are read at. Canada is
   // on by default because that is the ladder most of the squad is actually on.
   tsForm: { stroke: 'Free', distance: 100, pool: 'LCM', sexFilter: 'all', q: '',
-            src: { canada: true, world: false, rudolph: false } },
+            src: { canada: true, world: false, rudolph: false },
+            // Trials Senior only, by default: the column a university coach actually wants
+            // open. Everything else is opt-in, and the choice is remembered.
+            cols: { trSen: true } },
   adjForm: { stroke: 'Free', sex: 'M', pool: 'LCM', distance: 100, seconds: 0, name: '' }, // adjacent-events predictor
   form: {
     stroke: 'Free', sex: 'M', pool: 'LCM', distance: 200,
@@ -1680,7 +1683,7 @@ function screenCsvModel() {
   }
   if (state.view === 'team-standards') {
     const m = teamStdModel();
-    if (!m.rows.length || (!m.cols.length && !m.rud)) return null;
+    if (!m.rows.length || (!m.cols.length && !m.rud && !m.usp)) return null;
     const f = m.f, ev = `${f.distance} ${f.stroke}`;
     // A column is an estimate for EVERY row when its course differs from the pool on screen,
     // so the warning belongs in the header rather than repeated down the column.
@@ -1690,6 +1693,7 @@ function screenCsvModel() {
       const conv = d.course === f.pool ? '' : '_converted_estimate';
       head.push(tag + '_cut_s', tag + '_gap_s' + conv);
     });
+    if (m.usp) head.push('usports_2026_rank', 'usports_2026_field');
     if (m.rud) head.push('rudolph_points' + (f.pool === 'LCM' ? '' : '_converted_estimate'));
     const out = [head];
     m.rows.forEach((r) => {
@@ -1699,6 +1703,10 @@ function screenCsvModel() {
         line.push(t == null ? '' : num(t),
           (c && c.gap != null) ? (c.gap >= 0 ? '+' : '') + c.gap.toFixed(2) : '');
       });
+      if (m.usp) {
+        const rk = uspRank({ pool: f.pool, sex: r.sex, distance: f.distance, stroke: f.stroke }, r.t);
+        line.push(rk ? rk.rank : '', rk ? rk.n : '');
+      }
       if (m.rud) { const c = teamRudCell(r, f); line.push(c && c.pts != null ? c.pts : ''); }
       out.push(line);
     });
@@ -2943,6 +2951,7 @@ function renderRoster() {
         [ICON_IMPORT, 'Import times', 'Load a meet CSV \u2014 updates best times', '', 'import-times-csv'],
         [ICON_TIMER, 'Set target time', 'Split targets for a target time', '', 'quick-calc'],
         [ICON_TABLE, 'Team vs standards', 'Every swimmer, gap to each cut', '', 'team-standards'],
+        [ICON_LIKE, 'Who do you swim like?', 'A swimmer against the world finalist who races their way', '', 'swim-like'],
         !PUBLIC_BUILD && [ICON_TOOLS, 'Other tools', 'Converter, adjacent events, 50 m, efficiency', '', 'other-tools'],
       ])}
     </div>
@@ -5604,6 +5613,26 @@ function rudolphScore(sex, ageKey, stroke, dist, lcmSeconds) {
 // column-mapped by coordinate and checked against the World Aquatics base times — nothing
 // here is faster than a world record. Refresh each autumn: Swimming Canada reviews its
 // standards every August, and a stale standard is worse than no standard.
+// The Team vs standards column choice, remembered between visits. A separate key, and a new
+// one — pacer_saved_v2 and pacer_last_backup are never touched.
+const TS_COLS_KEY = 'sc_ts_cols';
+function loadTsCols() {
+  try {
+    const raw = localStorage.getItem(TS_COLS_KEY);
+    if (!raw) return;
+    const o = JSON.parse(raw);
+    if (o && o.src) Object.assign(state.tsForm.src, o.src);
+    if (o && o.cols) state.tsForm.cols = o.cols;
+    // A stored selection with nothing in it would render an empty table on open.
+    if (!Object.keys(state.tsForm.src).some((k) => state.tsForm.src[k])) state.tsForm.src.canada = true;
+  } catch (e) {}
+}
+function saveTsCols() {
+  try {
+    localStorage.setItem(TS_COLS_KEY, JSON.stringify({ src: state.tsForm.src, cols: state.tsForm.cols }));
+  } catch (e) {}
+}
+
 const STD_AS_OF = 'World Aquatics Dec 2025 \u00b7 Swimming Canada Sept 2025';
 const STD_DEFS = [
   { k: 'olyA',  label: 'Olympic A',      course: 'LCM', org: 'LA28', src: 'world' },
@@ -5773,7 +5802,7 @@ function teamStdCols(f, sexes) {
   // In the order the chips are read, not the order STD_DEFS happens to be declared: with
   // Canada selected, a coach should not have to scroll past three Olympic columns to reach it.
   const order = { canada: 0, world: 1 };
-  return STD_DEFS.filter((d) => f.src[d.src] && has[d.k])
+  return STD_DEFS.filter((d) => f.src[d.src] && f.cols[d.k] && has[d.k])
     .map((d, i) => ({ d, i }))
     .sort((a, b) => (order[a.d.src] - order[b.d.src]) || (a.i - b.i))
     .map((x) => x.d);
@@ -5818,6 +5847,10 @@ function teamStdDistances(f) {
 function teamStdModel() {
   const f = state.tsForm;
   if (f.pool === 'SCY') f.pool = 'SCM';
+  // Anything that replaces tsForm wholesale — a stored selection, a test, an older build's
+  // state — must not be able to take the screen down.
+  if (!f.src) f.src = { canada: true, world: false, rudolph: false };
+  if (!f.cols) f.cols = { trSen: true };
   const dists = teamStdDistances(f);
   if (dists.length && dists.indexOf(f.distance) < 0) f.distance = dists[0];
   const all = teamStdRows(f);
@@ -5827,7 +5860,10 @@ function teamStdModel() {
   const rows = all.filter((r) => (sxf === 'all' || r.sex === sxf) && nameMatches(r.name, q));
   const sexes = TS_SEXES.filter((sx) => rows.some((r) => r.sex === sx));
   return { f, dists, all, rows, sexes, sexesPresent, sxf, q,
-           cols: teamStdCols(f, sexes), rud: !!f.src.rudolph };
+           cols: teamStdCols(f, sexes), rud: !!f.src.rudolph,
+           // The U SPORTS column is a rank, not a cut, so it rides alongside rather than in
+           // the STD_DEFS list. Short course only, because the meet was.
+           usp: !!(f.src.canada && f.cols.uspRank) };
 }
 
 function renderTeamStandards() {
@@ -5845,13 +5881,14 @@ function renderTeamStandards() {
     body = `<div class="px-4 py-10 text-center text-sm text-muted">No recorded ${f.distance} m ${f.stroke} ${f.pool} times yet.<br><span class="text-xs">Record a race at this event and the swimmer appears here.</span></div>`;
   } else if (!m.rows.length) {
     body = `<div class="px-4 py-10 text-center text-sm text-muted">${m.q ? 'No swimmer matches “' + esc(m.q) + '”.' : 'No swimmers in this filter.'}</div>`;
-  } else if (!m.cols.length && !m.rud) {
+  } else if (!m.cols.length && !m.rud && !m.usp) {
     body = `<div class="px-4 py-10 text-center text-sm text-muted">No published standard for ${f.distance} m ${f.stroke} in the sets you have selected.</div>`;
   } else {
     const headRow = `<tr class="text-[10px] uppercase tracking-wide text-faint border-b-2 border-slate-400">
         <th class="text-left font-semibold py-1.5 pl-3">Swimmer</th>
         <th class="text-right font-semibold px-2">Best</th>
         ${m.cols.map((d) => `<th class="text-right font-semibold px-2 whitespace-nowrap">${d.label}<span class="text-slate-300"> ${d.course}</span></th>`).join('')}
+        ${m.usp ? '<th class="text-right font-semibold px-2 whitespace-nowrap">U SPORTS</th>' : ''}
         ${m.rud ? '<th class="text-right font-semibold px-2 whitespace-nowrap">Rudolph</th>' : ''}
       </tr>`;
 
@@ -5862,6 +5899,7 @@ function renderTeamStandards() {
         <td></td>
         ${m.cols.map((d) => { const t = teamStdTarget(sx, f, d.k);
           return `<td class="text-right px-2 mono text-[12px] font-bold text-slate-500 whitespace-nowrap">${t == null ? '' : formatTime(t)}</td>`; }).join('')}
+        ${m.usp ? `<td class="text-right px-2 mono text-[12px] font-bold text-slate-500 whitespace-nowrap">${uspField({ pool: f.pool, sex: sx, distance: f.distance, stroke: f.stroke }) ? '1st' : ''}</td>` : ''}
         ${m.rud ? '<td class="text-right px-2 mono text-[12px] font-bold text-slate-500">20</td>' : ''}
       </tr>`;
 
@@ -5874,6 +5912,13 @@ function renderTeamStandards() {
         const met = c.gap <= 0;
         return `<td class="text-right px-2 mono text-[13px] whitespace-nowrap ${met ? 'text-emerald-700 font-bold' : 'text-rose-600'}">${c.est ? '~' : ''}${met ? '−' : '+'}${formatTime(Math.abs(c.gap))}</td>`;
       }).join('');
+      let uc = '';
+      if (m.usp) {
+        const rk = uspRank({ pool: f.pool, sex: r.sex, distance: f.distance, stroke: f.stroke }, r.t);
+        uc = rk
+          ? `<td class="text-right px-2 mono text-[13px] font-bold ${rk.inA ? 'text-emerald-700' : 'text-slate-700'} whitespace-nowrap">${rk.rank}<span class="text-[10px] font-normal text-slate-400">/${rk.n}</span></td>`
+          : '<td class="text-right px-2 text-[12px] text-slate-300">—</td>';
+      }
       let rc = '';
       if (m.rud) {
         const c = teamRudCell(r, f);
@@ -5888,7 +5933,7 @@ function renderTeamStandards() {
           ${r.date ? `<div class="text-[10px] text-faint leading-none mt-0.5">${r.date}</div>` : ''}
         </td>
         <td class="text-right px-2 mono text-[13px] font-bold text-cyan-800 whitespace-nowrap">${formatTime(r.t)}</td>
-        ${cells}${rc}
+        ${cells}${uc}${rc}
       </tr>`;
     };
 
@@ -5903,13 +5948,29 @@ function renderTeamStandards() {
   const seg = (val, cur, attr, label) => `<div class="seg ${cur === val ? 'active' : ''}" data-${attr}="${val}">${label}</div>`;
   const srcChips = [['canada', 'Canada'], ['world', 'World'], ['rudolph', 'Rudolph']]
     .map(([k, l]) => `<button class="${chip(!!f.src[k])}" data-tssrc="${k}">${l}</button>`).join(' ');
+  // Only the standards that exist for this event, so a coach is never offered a column that
+  // would come back empty.
+  const availCol = (k) => m.sexes.some((sx) => teamStdTarget(sx, f, k) != null)
+    || (!m.sexes.length && TS_SEXES.some((sx) => teamStdTarget(sx, f, k) != null));
+  const subChip = (on, k, lab) => `<button class="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border transition ${on
+    ? 'bg-cyan-100 text-cyan-900 border-cyan-300'
+    : 'bg-white text-slate-500 border-slate-200 hover:border-cyan-300'}" data-tscol="${k}">${lab}</button>`;
+  const groupSub = (grp) => {
+    if (!f.src[grp]) return '';
+    const items = STD_DEFS.filter((d) => d.src === grp && availCol(d.k))
+      .map((d) => subChip(!!f.cols[d.k], d.k, d.label + ' ' + d.course));
+    if (grp === 'canada' && uspField({ pool: 'SCM', sex: m.sexes[0] || 'M', distance: f.distance, stroke: f.stroke })) {
+      items.push(subChip(!!f.cols.uspRank, 'uspRank', 'U SPORTS rank'));
+    }
+    return items.length ? `<div class="flex flex-wrap gap-1.5 mt-1.5 pl-0.5">${items.join('')}</div>` : '';
+  };
   const search = m.all.length
     ? `<input type="text" data-ts-search value="${esc(f.q)}" placeholder="Search swimmer" class="w-full bg-slate-100 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300 placeholder:text-muted" />` : '';
 
   // The columns are a choice, so the sheet has to say which choice it was printed with —
   // a page of gaps with no named source is unusable a week later.
-  const chosen = [f.src.canada && 'Canada', f.src.world && 'World', f.src.rudolph && 'Rudolph']
-    .filter(Boolean).join(' · ');
+  const chosen = m.cols.map((d) => d.label + ' ' + d.course).concat(m.usp ? ['U SPORTS rank'] : [])
+    .concat(f.src.rudolph ? ['Rudolph'] : []).join(' · ');
   m.legend = chosen + (m.sxf === 'all' ? '' : (m.sxf === 'M' ? ' · men' : ' · women'))
            + (m.q ? ' · "' + m.q + '"' : '');
 
@@ -5924,7 +5985,7 @@ function renderTeamStandards() {
     ${screenHeader({
       title: `Team vs standards`,
       sub: `${f.distance} m ${f.stroke} · ${f.pool}`,
-      exports: (m.rows.length && (m.cols.length || m.rud)) ? [['csv-page', 'Download CSV'], ['tp-download', 'Download PDF']] : [],
+      exports: (m.rows.length && (m.cols.length || m.rud || m.usp)) ? [['csv-page', 'Download CSV'], ['tp-download', 'Download PDF']] : [],
       cls: 'bg-white',
     })}
     <div class="scrollable bg-slate-50">
@@ -5932,6 +5993,7 @@ function renderTeamStandards() {
         <div>
           <div class="label-cap mb-2">Standards <span class="font-normal text-faint normal-case tracking-normal">· tap to add or remove columns</span></div>
           <div class="flex flex-wrap gap-1.5">${srcChips}</div>
+          ${groupSub('canada')}${groupSub('world')}
         </div>
         <div>
           <div class="label-cap mb-2">Stroke</div>
@@ -5951,7 +6013,7 @@ function renderTeamStandards() {
         ${search}
       </div>
       <div class="m-3 bg-white rounded-2xl border border-slate-200 overflow-hidden">
-        ${m.rows.length && (m.cols.length || m.rud) ? `<div id="tp-print" class="bg-white">
+        ${m.rows.length && (m.cols.length || m.rud || m.usp) ? `<div id="tp-print" class="bg-white">
           <div class="px-3 pt-3 pb-1">
             <div data-tp-title class="text-[15px] font-bold text-slate-900">${f.distance} m ${f.stroke} ${f.pool} — ${m.cols.length ? 'gap to the cut' : 'Rudolph points'}</div>
             <div data-tp-sub class="text-[11px] text-muted mt-0.5">${m.legend}</div>
@@ -5960,6 +6022,49 @@ function renderTeamStandards() {
         </div>` : body}
       </div>
       <div class="px-4 pb-5 space-y-1.5">${notes.map((n) => `<div class="text-[10px] text-faint leading-snug">${n}</div>`).join('')}</div>
+    </div>`;
+}
+
+// The U SPORTS ranking, shown on the Canada tab because that is where a university swimmer
+// already is. Same data and the same rules as the race screen used: short course only, since
+// the meet is, and closed until asked.
+function uspStandardsHtml(f) {
+  const race = { pool: f.pool, sex: f.sex, distance: f.distance, stroke: f.stroke };
+  if (!(f.seconds > 0)) return '';
+  const r = uspRank(race, f.seconds);
+  if (!r) {
+    if (f.pool !== 'SCM' && uspField({ pool: 'SCM', sex: f.sex, distance: f.distance, stroke: f.stroke })) {
+      return `<div class="bg-white border border-slate-200 rounded-2xl px-4 py-3 text-[11px] text-muted leading-snug">${USP_MEET} was short course. Switch your pool to SCM to see where this time would have ranked.</div>`;
+    }
+    return '';
+  }
+  const open = !!state.uspOpen;
+  const ord = (n) => n + (n % 100 >= 11 && n % 100 <= 13 ? 'th'
+    : n % 10 === 1 ? 'st' : n % 10 === 2 ? 'nd' : n % 10 === 3 ? 'rd' : 'th');
+  const head = `<button class="w-full px-4 py-3 flex items-center gap-3 text-left bg-slate-50 hover:bg-slate-100 active:bg-slate-100 transition" data-action="usp-toggle">
+      <span class="flex-1 min-w-0">
+        <span class="block font-semibold text-slate-800 text-[14px]">Where this would have ranked at ${USP_MEET}</span>
+        <span class="block text-[11px] text-muted mt-0.5">${r.n} swimmers in this event</span>
+      </span>
+      <span class="text-slate-500 text-base font-bold flex-shrink-0">${open ? '–' : '+'}</span>
+    </button>`;
+  if (!open) return `<div class="bg-white border border-slate-200 rounded-2xl overflow-hidden">${head}</div>`;
+  const gap = (cut) => formatTime(Math.abs(f.seconds - cut));
+  const line = (label, val, note, good) => `<div class="px-4 py-2.5 flex items-center gap-3 border-t border-slate-100">
+      <div class="flex-1 min-w-0"><div class="text-[13px] font-semibold text-slate-700">${label}</div>
+        ${note ? `<div class="text-[11px] ${good ? 'text-emerald-700' : 'text-muted'} mt-0.5 leading-snug">${note}</div>` : ''}</div>
+      <div class="mono font-bold text-[14px] text-slate-700 flex-shrink-0">${val}</div>
+    </div>`;
+  return `<div class="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+      ${head}
+      <div class="px-4 py-4 text-center border-t border-slate-100">
+        <div class="hero-time text-4xl text-slate-800">${ord(r.rank)}</div>
+        <div class="text-[12px] text-muted mt-1">of ${r.n} at ${USP_MEET}</div>
+      </div>
+      ${r.aCut ? line('A final', formatTime(r.aCut), r.inA ? 'Would have been in it.' : gap(r.aCut) + ' outside', r.inA) : ''}
+      ${r.bCut && !r.inA ? line('B final', formatTime(r.bCut), r.inB ? 'Would have been in it.' : gap(r.bCut) + ' outside', r.inB) : ''}
+      ${line('Winner', formatTime(r.win), r.rank === 1 ? 'That was this time.' : gap(r.win) + ' ahead', r.rank === 1)}
+      <div class="px-4 py-2.5 text-[10px] text-faint leading-snug border-t border-slate-100">Short course, 12–14 March 2026. Each swimmer counted once, at their fastest swim of the meet.</div>
     </div>`;
 }
 
@@ -6038,6 +6143,7 @@ function renderStandards() {
       </div>
       ${f.src === 'rudolph' ? rudolphCardHtml(f) : `
       ${head}
+      ${f.src === 'canada' ? uspStandardsHtml(f) : ''}
       ${rows.length ? `<div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">${rowHtml}</div>`
         : `<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-6 text-center text-sm text-muted">No published standard for this event.</div>`}
       <div class="text-[10px] text-faint leading-snug px-1">Standards as published: ${STD_AS_OF}. Times in a different course to the standard are converted from paired-athlete ratios and are estimates \u2014 the official time is the one swum in that course. Junior eligibility depends on birth years set each year; this app does not know your age.</div>`}
@@ -6332,65 +6438,51 @@ function uspRank(race, seconds) {
   };
 }
 
-function uspCardHtml(race, seconds) {
-  const r = uspRank(race, seconds);
-  if (!r) return '';
-  const open = !!state.uspOpen;
-  const head = `<button class="w-full px-4 py-3 flex items-center gap-3 text-left bg-slate-50 hover:bg-slate-100 active:bg-slate-100 transition" data-action="usp-toggle">
-      <span class="flex-1 min-w-0">
-        <span class="block font-semibold text-slate-800 text-[14px]">How would this have ranked at ${USP_MEET}?</span>
-        <span class="block text-[11px] text-muted mt-0.5">${r.n} swimmers in this event</span>
-      </span>
-      <span class="text-slate-500 text-base font-bold flex-shrink-0">${open ? '–' : '+'}</span>
-    </button>`;
-  if (!open) return `<div class="bg-white border border-slate-200 rounded-2xl overflow-hidden">${head}</div>`;
-  const ord = (n) => n + (n % 100 >= 11 && n % 100 <= 13 ? 'th'
-    : n % 10 === 1 ? 'st' : n % 10 === 2 ? 'nd' : n % 10 === 3 ? 'rd' : 'th');
-  const line = (label, val, note, good) => `<div class="px-4 py-2.5 flex items-center gap-3 border-t border-slate-100">
-      <div class="flex-1 min-w-0"><div class="text-[13px] font-semibold text-slate-700">${label}</div>
-        ${note ? `<div class="text-[11px] ${good ? 'text-emerald-700' : 'text-muted'} mt-0.5 leading-snug">${note}</div>` : ''}</div>
-      <div class="mono font-bold text-[14px] text-slate-700 flex-shrink-0">${val}</div>
-    </div>`;
-  const gap = (cut) => formatTime(Math.abs(seconds - cut));
-  return `<div class="bg-white border border-slate-200 rounded-2xl overflow-hidden">
-      ${head}
-      <div class="px-4 py-4 text-center border-t border-slate-100">
-        <div class="hero-time text-4xl text-slate-800">${ord(r.rank)}</div>
-        <div class="text-[12px] text-muted mt-1">of ${r.n} at ${USP_MEET}</div>
-      </div>
-      ${r.aCut ? line('A final', formatTime(r.aCut),
-          r.inA ? 'You would have been in it.' : gap(r.aCut) + ' outside', r.inA) : ''}
-      ${r.bCut && !r.inA ? line('B final', formatTime(r.bCut),
-          r.inB ? 'You would have been in it.' : gap(r.bCut) + ' outside', r.inB) : ''}
-      ${line('Winner', formatTime(r.win), r.rank === 1 ? 'That was you.' : gap(r.win) + ' ahead of you', r.rank === 1)}
-      <div class="px-4 py-2.5 text-[10px] text-faint leading-snug border-t border-slate-100">Short course, 12–14 March 2026. Each swimmer counted once, at their fastest swim of the meet — so this is where the time would have placed, not which heat it would have been in.</div>
-    </div>`;
-}
-
 // ----- Screen: Who do you swim like? -----
 function renderSwimLike() {
   const f = state.slForm;
-  const sid = f.sid || (SWIMMER ? selfSid() : state.savedSid);
-  const who = swimmerName(sid) || (SWIMMER ? (selfName() || '') : '');
-  const evs = swimLikeEvents(sid);
-  if (evs.length && !evs.some((e) => e.key === f.ev)) f.ev = evs[0].key;
-  const ev = evs.find((e) => e.key === f.ev) || null;
-  const model = ev ? swimLikeList(ev.race) : null;
+  const sid = SWIMMER ? selfSid() : f.sid;
   const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
   const chip = (on) => `px-3 py-2 rounded-xl text-xs font-semibold border transition ${on
     ? 'bg-cyan-600 text-white border-cyan-600'
     : 'bg-white text-slate-700 border-slate-200 hover:border-cyan-300'}`;
 
+  // A coach arrives without a swimmer in mind, so that is the first question.
+  if (!SWIMMER && !sid) {
+    const seen = new Set(); const sids = [];
+    state.saved.forEach((s) => { if (s.sid && s.kind === 'race' && !seen.has(s.sid)) { seen.add(s.sid); sids.push(s.sid); } });
+    const able = sids.filter((x) => swimLikeEvents(x).length)
+      .sort((x, y) => (swimmerName(x) || '').localeCompare(swimmerName(y) || '', undefined, { sensitivity: 'base' }));
+    return `
+      <div class="statusbar"></div>
+      ${screenHeader({ title: `Who do you swim like?`, sub: `Pick a swimmer`, cls: 'bg-white' })}
+      <div class="scrollable bg-slate-50">
+        ${able.length ? `<div class="m-3 bg-white rounded-2xl border border-slate-200 overflow-hidden">
+          ${able.map((x) => `<button class="w-full px-4 py-3.5 flex items-center gap-3 text-left hover:bg-cyan-50/50 active:bg-cyan-50 transition border-b border-slate-100 last:border-0" data-sl-sid="${x}">
+            <span class="w-10 h-10 rounded-full bg-cyan-100 text-cyan-800 font-bold flex items-center justify-center text-sm flex-shrink-0">${initialsOf(swimmerName(x))}</span>
+            <span class="flex-1 min-w-0"><span class="block font-semibold text-[15px] text-slate-800 truncate">${esc(swimmerName(x))}</span>
+              <span class="block text-[11px] text-muted mt-0.5">${swimLikeEvents(x).length} event${swimLikeEvents(x).length === 1 ? '' : 's'} to compare</span></span>
+            <span class="text-slate-300 text-xl leading-none flex-shrink-0">›</span>
+          </button>`).join('')}
+        </div>` : `<div class="m-3 bg-white rounded-2xl border border-dashed border-slate-200 px-5 py-10 text-center text-sm text-muted">
+          No swimmer has a race that can be compared yet.<br><span class="text-xs">It needs a recorded race with its splits. A 50 long course and the 800 and 1500 are left out — there is no split shape to match on.</span></div>`}
+      </div>`;
+  }
+
+  const who = swimmerName(sid) || (SWIMMER ? (selfName() || '') : '');
+  const evs = swimLikeEvents(sid);
+  if (evs.length && !evs.some((e) => e.key === f.ev)) f.ev = evs[0].key;
+  const ev = evs.find((e) => e.key === f.ev) || null;
+  const model = ev ? swimLikeList(ev.race) : null;
+
   let body;
   if (!evs.length) {
     body = `<div class="m-3 bg-white rounded-2xl border border-dashed border-slate-200 px-5 py-10 text-center text-sm text-muted">
-      Nothing to compare yet.<br><span class="text-xs">Record a race with its splits and the finalists who swim like ${SWIMMER ? 'you' : 'them'} appear here. A 50 long course and the 800 and 1500 are left out — there is no split shape to match on.</span></div>`;
+      Nothing to compare yet.<br><span class="text-xs">Record a race with its splits and the finalist who swims like ${SWIMMER ? 'you' : 'them'} appears here. A 50 long course and the 800 and 1500 are left out — there is no split shape to match on.</span></div>`;
   } else if (!model || !model.list.length) {
     body = `<div class="m-3 bg-white rounded-2xl border border-dashed border-slate-200 px-5 py-10 text-center text-sm text-muted">No finalist data for this event yet.</div>`;
-  } else if (f.pick != null) {
-    body = swimLikeDetailHtml(ev, model, f.pick, who);
   } else {
-    body = swimLikeListHtml(ev, model);
+    body = swimLikeMatchHtml(ev, model, who);
   }
 
   return `
@@ -6401,11 +6493,11 @@ function renderSwimLike() {
       cls: 'bg-white',
     })}
     <div class="scrollable bg-slate-50">
-      ${f.pick != null ? `<div class="px-5 pt-3 pb-1 bg-white">
-        <button class="px-3.5 py-2 rounded-full bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 active:scale-95 transition" data-action="sl-back">‹ All finalists</button>
+      ${!SWIMMER ? `<div class="px-5 pt-3 pb-1 bg-white">
+        <button class="px-3.5 py-2 rounded-full bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 active:scale-95 transition" data-action="sl-swimmer">‹ Another swimmer</button>
       </div>` : ''}
-      ${evs.length > 1 && f.pick == null ? `<div class="px-5 py-4 bg-white border-b border-slate-100">
-        <div class="label-cap mb-1.5">Your event</div>
+      ${evs.length > 1 ? `<div class="px-5 py-4 bg-white border-b border-slate-100">
+        <div class="label-cap mb-1.5">${SWIMMER ? 'Your event' : 'Event'}</div>
         <div class="flex flex-wrap gap-1.5">${evs.map((e) => `<button class="${chip(e.key === f.ev)}" data-sl-ev="${esc(e.key)}">${e.label}</button>`).join('')}</div>
       </div>` : ''}
       ${body}
@@ -6429,41 +6521,13 @@ function swimLikeEvents(sid) {
     || a.label.localeCompare(b.label));
 }
 
-function swimLikeListHtml(ev, model) {
-  const pct = (x) => (x * 100).toFixed(1) + '%';
-  const co = swimLikeVsCohort(ev.race, model);
-  const rows = model.list.map((c, i) => {
-    const closest = i === 0;
-    return `<button class="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-cyan-50/50 active:bg-cyan-50 transition border-b border-slate-100 last:border-0" data-sl-pick="${c.i}">
-      <span class="w-7 text-center text-[11px] font-bold ${closest ? 'text-cyan-700' : 'text-slate-300'} flex-shrink-0">${i + 1}</span>
-      <span class="flex-1 min-w-0">
-        <span class="block font-semibold text-[14px] text-slate-800 truncate">${c.row.name}</span>
-        <span class="block text-[11px] text-muted mt-0.5 truncate">${c.row.nation} · ${c.row.year} · out in ${pct(c.front)}</span>
-        ${closest ? '<span class="inline-block mt-1 px-2 py-0.5 rounded-full bg-cyan-50 text-cyan-700 text-[10px] font-bold">closest to you</span>' : ''}
-      </span>
-      <span class="text-right flex-shrink-0">
-        <span class="block mono font-bold text-[14px] text-slate-700">${formatTime(c.row.total)}</span>
-      </span>
-      <span class="text-slate-300 text-xl leading-none flex-shrink-0">›</span>
-    </button>`;
-  }).join('');
-  return `
-    <div class="px-5 pt-4 pb-2">
-      <div class="text-[13px] text-slate-700 leading-snug">You take this race out in <span class="font-bold text-cyan-800">${pct(model.mine)}</span> of your total. These finalists are sorted by how close they are to that — not by how fast they went.</div>
-    </div>
-    ${co && co.worst ? `<div class="mx-3 mb-1 rounded-2xl bg-white border border-amber-200 px-4 py-3">
-      <div class="label-cap text-amber-700">Where the race is</div>
-      <div class="text-[13px] text-slate-800 leading-snug mt-1">Against the ${co.n} finalists who start like you, your <span class="font-bold">${co.worst.label}</span> is <span class="font-bold mono">${formatTime(co.worst.gap)}</span> slower than their shape says it should be at your time.</div>
-    </div>` : ''}
-    <div class="m-3 bg-white rounded-2xl border border-slate-200 overflow-hidden">${rows}</div>
-    <div class="px-4 pb-5 text-[10px] text-faint leading-snug">A-finals from ${FIN_MEETS}. One swim per athlete per event, their fastest. The percentage is the share of the race in the opening ${ev.race.distance === 50 ? '25' : '50'}.</div>`;
-}
-
-function swimLikeDetailHtml(ev, model, pickIdx, who) {
-  const cand = model.list.find((c) => c.i === pickIdx) || model.list[0];
+function swimLikeMatchHtml(ev, model, who) {
+  const cand = model.list[0];
   const cmp = swimLikeCompare(ev.race, cand);
+  const co = swimLikeVsCohort(ev.race, model);
   if (!cmp) return '<div class="m-3 px-5 py-10 text-center text-sm text-muted">Nothing to compare.</div>';
   const sgn = (v) => (v >= 0 ? '+' : '−') + formatTime(Math.abs(v));
+  const rel = cand.row.total - cmp.total;
   const rows = cmp.rows.map((r) => `<tr class="border-t border-slate-100">
       <td class="py-2.5 pl-2.5 text-[12px] font-semibold text-slate-700 whitespace-nowrap">${r.label}</td>
       <td class="text-right px-1.5 mono text-[12px] text-slate-800">${formatTime(r.mine)}</td>
@@ -6471,29 +6535,32 @@ function swimLikeDetailHtml(ev, model, pickIdx, who) {
       <td class="text-right px-1.5 mono text-[12px] font-bold text-cyan-800 whitespace-nowrap">${formatTime(r.atMine)}</td>
       <td class="text-right pr-2.5 pl-1 mono text-[11px] whitespace-nowrap ${Math.abs(r.gap) < 0.05 ? 'text-slate-400' : (r.gap > 0 ? 'text-rose-600' : 'text-emerald-700')}">${sgn(r.gap)}</td>
     </tr>`).join('');
-  const rel = cand.row.total - cmp.total;
   return `
     <div class="mx-3 mt-3 bg-gradient-to-br from-cyan-50 to-white border border-cyan-200 rounded-2xl px-4 py-4">
-      <div class="label-cap text-cyan-800">You swim like</div>
+      <div class="label-cap text-cyan-800">${SWIMMER ? 'You swim like' : who ? who.split(' ')[0] + ' swims like' : 'Swims like'}</div>
       <div class="text-[22px] font-bold text-cyan-900 leading-tight mt-0.5">${cand.row.name}</div>
-      <div class="text-[12px] text-cyan-800 mt-1">${cand.row.nation} · ${cand.row.year} · ${formatTime(cand.row.total)} <span class="text-muted">(${rel >= 0 ? 'you are ' + formatTime(Math.abs(rel)) + ' quicker' : formatTime(Math.abs(rel)) + ' quicker than you'})</span></div>
-      <div class="text-[11px] text-cyan-800 mt-2 leading-snug">They take it out in ${(cand.front * 100).toFixed(1)}% of their race; you take it out in ${(model.mine * 100).toFixed(1)}%.</div>
+      <div class="text-[12px] text-cyan-800 mt-1">${cand.row.nation} · ${cand.row.year} · ${formatTime(cand.row.total)} <span class="text-muted">(${rel >= 0 ? formatTime(Math.abs(rel)) + ' slower than ' + (SWIMMER ? 'you' : 'them') : formatTime(Math.abs(rel)) + ' quicker'})</span></div>
+      <div class="text-[11px] text-cyan-800 mt-2 leading-snug">Out in ${(cand.front * 100).toFixed(1)}% of the race, against ${(model.mine * 100).toFixed(1)}% — the closest of ${model.list.length} finalists in this event.</div>
     </div>
-
+    ${co && co.worst ? `<div class="mx-3 mt-3 rounded-2xl bg-white border border-amber-200 px-4 py-3">
+      <div class="label-cap text-amber-700">Where the race is</div>
+      <div class="text-[13px] text-slate-800 leading-snug mt-1">Against the ${co.n} finalists who start the same way, the <span class="font-bold">${co.worst.label}</span> is <span class="font-bold mono">${formatTime(co.worst.gap)}</span> slower than their shape says it should be at this time.</div>
+    </div>` : ''}
     <div class="m-3 bg-white rounded-2xl border border-slate-200 overflow-hidden">
       <div class="overflow-x-auto"><table class="w-full tp-table">
         <thead><tr class="text-[10px] uppercase tracking-wide text-faint border-b-2 border-slate-400">
           <th class="text-left font-semibold py-1.5 pl-2.5">Split</th>
-          <th class="text-right font-semibold px-1.5">You</th>
-          <th class="text-right font-semibold px-1.5">Them</th>
-          <th class="text-right font-semibold px-2 whitespace-nowrap">At your time</th>
-          <th class="text-right font-semibold pr-3 pl-1">Δ</th>
+          <th class="text-right font-semibold px-1.5">${SWIMMER ? 'You' : (who ? who.split(' ')[0] : 'Them')}</th>
+          <th class="text-right font-semibold px-1.5">${cand.row.name.split(' ')[0]}</th>
+          <th class="text-right font-semibold px-1.5 whitespace-nowrap">At this time</th>
+          <th class="text-right font-semibold pr-2.5 pl-1">Δ</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table></div>
     </div>
-    <div class="px-4 pb-5 text-[10px] text-faint leading-snug">"Them at your time" is their split shape stretched over your own total — how you would have distributed this swim if you paced it the way they do. ${cmp.rows.length < 3 ? 'With only two splits the opening share fixes the closing one, so there is no gap to find in this event — the match is the interesting part.' : ''}</div>`;
+    <div class="px-4 pb-5 text-[10px] text-faint leading-snug">A-finals from ${FIN_MEETS}. Matched on the share of the race in the opening ${ev.race.distance === 50 ? '25' : '50'} — not on finishing time. "At this time" is their split shape stretched over this swim's own total.${cmp.rows.length < 3 ? ' With only two splits the opening share fixes the closing one, so there is no gap to find in this event — the match is the interesting part.' : ''}</div>`;
 }
+
 
 // ----- Screen: Training Pace -----
 function renderTrainingPace() {
@@ -6915,7 +6982,6 @@ function renderRaceAnalysis() {
       ${race.notes ? `<div class="bg-white rounded-2xl border border-slate-200 p-4"><div class="label-cap text-muted mb-1">Notes</div><div class="text-sm text-slate-700 leading-relaxed" style="white-space:pre-wrap;">${(race.notes || '').replace(/</g, '&lt;')}</div></div>` : ''}
       ${cmpButtons}
       ${bestCard}
-      ${uspCardHtml(race, c.actualTotal)}
       ${SWIMMER ? reflectSectionsHtml() : ''}
     </div>
   `;
@@ -7144,8 +7210,8 @@ document.addEventListener('click', (e) => {
     // Training Pace pickers — the table below refreshes with the choice once it's been shown.
     const slEv = e.target.closest('[data-sl-ev]');
     if (slEv) { state.slForm.ev = slEv.getAttribute('data-sl-ev'); state.slForm.pick = null; render(); return; }
-    const slPick = e.target.closest('[data-sl-pick]');
-    if (slPick) { state.slForm.pick = +slPick.getAttribute('data-sl-pick'); render(); return; }
+    const slSid = e.target.closest('[data-sl-sid]');
+    if (slSid) { state.slForm = { sid: slSid.getAttribute('data-sl-sid'), ev: null, pick: null }; render(); return; }
     const tspl = e.target.closest('[data-tspl]');
     if (tspl) { state.tsplForm[tspl.getAttribute('data-tspl')] = tspl.getAttribute('data-tsplv'); render(); return; }
     const tp = e.target.closest('[data-tp]');
@@ -7179,7 +7245,19 @@ document.addEventListener('click', (e) => {
       if (sset[k] && Object.keys(sset).filter((x) => sset[x]).length === 1) {
         showToast('Keep at least one set of standards on'); return;
       }
-      sset[k] = !sset[k]; render(); return;
+      sset[k] = !sset[k];
+      // Turning a source on with none of its columns chosen would add a heading and no data.
+      if (sset[k] && k !== 'rudolph' && !STD_DEFS.some((d) => d.src === k && state.tsForm.cols[d.k])) {
+        const first = STD_DEFS.find((d) => d.src === k);
+        if (first) state.tsForm.cols[first.k] = true;
+      }
+      saveTsCols(); render(); return;
+    }
+    const tsCol = e.target.closest('[data-tscol]');
+    if (tsCol) {
+      const k = tsCol.getAttribute('data-tscol'), cols = state.tsForm.cols;
+      cols[k] = !cols[k];
+      saveTsCols(); render(); return;
     }
     const tsk = e.target.closest('[data-tsstroke]');
     if (tsk) { state.tsForm.stroke = tsk.getAttribute('data-tsstroke'); render(); return; }
@@ -7686,6 +7764,7 @@ function handleAction(action, el) {
       if (top) { const p = top.split('|');
         state.tsForm.stroke = p[0]; state.tsForm.distance = +p[1]; state.tsForm.pool = p[2]; }
       state.tsForm.q = '';
+      loadTsCols();
       navigate('team-standards');
       break;
     }
@@ -7749,11 +7828,14 @@ function handleAction(action, el) {
     case 'training-pace': state.tpShow = false; navigate('training-pace'); break;
     case 'training-splits': navigate('training-splits'); break;
     case 'swim-like': {
-      state.slForm = { sid: SWIMMER ? selfSid() : state.savedSid, ev: null, pick: null };
+      // From a swimmer's page the swimmer is obvious; from the main page it is not, and a
+      // savedSid left over from an earlier screen is not an answer.
+      const from = SWIMMER ? selfSid() : (state.view === 'saved-swimmer' ? state.savedSid : null);
+      state.slForm = { sid: from, ev: null, pick: null };
       navigate('swim-like');
       break;
     }
-    case 'sl-back': state.slForm.pick = null; render(); break;
+    case 'sl-swimmer': state.slForm = { sid: null, ev: null, pick: null }; render(); break;
     case 'usp-toggle': state.uspOpen = !state.uspOpen; render(); break;
     case 'other-tools': navigate('other-tools'); break;
     case 'hdr-more': state.hdrMore = !state.hdrMore; render(); break;
