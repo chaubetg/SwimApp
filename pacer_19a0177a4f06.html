@@ -1413,6 +1413,11 @@ const state = {
   tpForm: { pool: 'SCM', distance: 50, basis: 'best', stroke: 'Free', q: '' }, // Training Pace picker
   hdrMore: false,   // the printer menu — closed by navigating, Escape, or a tap outside
   tsplForm: { pool: 'SCM', basis: 'best' },
+  // Goals (swimmer build). ev stays null until an event is tapped — the bars belong to an
+  // event, so there is nothing honest to draw before one is chosen. It survives navigating
+  // away, so the tap is once per session, not once per visit.
+  goalForm: { ev: null, term: 'short', sec: 0 },
+  goalHint: {},     // which "how will you know" hints are open
   slForm: { sid: null, ev: null, pick: null },   // Who do you swim like?
   uspOpen: false,   // the U SPORTS ranking card is opt-in, and starts closed   // Training splits: one swimmer, every event
   tpShow: false,  // the table appears once "Show Training Table" is pressed
@@ -2153,6 +2158,7 @@ function render() {
     case 'import-preview': html = renderImportPreview(); break;
     case 'training-pace': html = renderTrainingPace(); break;
     case 'training-splits': html = renderTrainingSplits(); break;
+    case 'goals': html = renderGoals(); break;
     case 'swim-like': html = renderSwimLike(); break;
     case 'standards': html = renderStandards(); break;
     case 'team-standards': html = renderTeamStandards(); break;
@@ -2306,6 +2312,18 @@ function render() {
   bindSegTime('[data-fmin]', '[data-fsec]', '[data-fhh]', (v) => { state.fiftyForm.seconds = v; }, '#fifty-result', fiftyResultHtml);
   bindSegTime('[data-amin]', '[data-asec]', '[data-ahh]', (v) => { state.adjForm.seconds = v; }, '#adj-result', adjResultHtml);
   bindSegTime('[data-emin]', '[data-esec]', '[data-ehh]', (v) => { state.effForm.t = v; }, '#eff-result', effResultHtml);
+  bindSegTime('[data-gmin]', '[data-gsec]', '[data-ghh]', (v) => { state.goalForm.sec = v; });
+  // Goal free-text. Painted, never re-rendered on input \u2014 a redraw closes the keyboard.
+  host.querySelectorAll('[data-goal-f]').forEach((el) => {
+    const k = el.getAttribute('data-goal-f');
+    el.addEventListener('input', () => {
+      const ev = goalEventFor(state.goalForm.ev); if (!ev) return;
+      const rec = goalRec(selfSid(), ev, true); if (!rec) return;
+      const g = (rec.goals[state.goalForm.term] = rec.goals[state.goalForm.term] || {});
+      g[k] = el.value;
+      persistSaved();
+    });
+  });
   // Tool "save to swimmer" name inputs → the tool form's .name (silent, keeps focus).
   host.querySelectorAll('[data-toolname]').forEach((el) => {
     const k = el.getAttribute('data-form');
@@ -2615,6 +2633,7 @@ const ICON_IMPORT = ICO('<path d="M12 3v11"/><path d="m8 10.5 4 4 4-4"/><path d=
 const ICON_TIMER = ICO('<circle cx="12" cy="13.5" r="7.5"/><path d="M12 10v3.5l2.4 1.8"/><path d="M9.5 2.5h5"/>');
 const ICON_TABLE = ICO('<rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="M3 10h18"/><path d="M9.5 10v9.5"/>');
 const ICON_LIKE = ICO('<path d="M4 17.5c2.2-1.6 3.6.9 5.8-.7 2.2-1.6 3.6.9 5.8-.7 2.2-1.6 3.6.9 5.8-.7"/><path d="M4 12.5c2.2-1.6 3.6.9 5.8-.7 2.2-1.6 3.6.9 5.8-.7 2.2-1.6 3.6.9 5.8-.7"/><circle cx="16" cy="5.5" r="2"/>');
+const ICON_GOAL = ICO('<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1" fill="currentColor"/>');
 const ICON_TOOLS = ICO('<circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.2 5.2l2.1 2.1M16.7 16.7l2.1 2.1M18.8 5.2l-2.1 2.1M7.3 16.7l-2.1 2.1"/>');
 
 // One card, hairline dividers, no border on the last row. Rows are built here rather
@@ -2826,6 +2845,7 @@ function renderSwimmerHome() {
         races.length && [ICON_BEST, 'My best times', 'Fastest in each event',
           bestCount + ' event' + (bestCount === 1 ? '' : 's'), 'best-times'],
         hasProgress(sid) && [ICON_TREND, 'Progress over time', 'How your times are trending', '', 'progress'],
+        races.length && [ICON_GOAL, 'My goals', 'Short, season and long term', '', 'goals'],
         races.length && [ICON_TABLE, 'Training splits', 'Pace for every event you swim', '', 'training-splits'],
         races.length && [ICON_LIKE, 'Who do you swim like?', 'World finalists who race the way you do', '', 'swim-like'],
         [ICON_FLAG, 'Compare to standards', 'Olympic, Trials, U SPORTS cuts', '', 'standards'],
@@ -6150,6 +6170,327 @@ function renderStandards() {
     </div>`;
 }
 
+// ===== Goals (swimmer build) ================================================
+// Three goals per event: short term, season, long term. Each one is a time, a starting
+// point captured when it was set, and one technique skill with a test for "done".
+//
+// The SEASON goal is deliberately not a new number. "Set target time" already writes
+// kind:'plan' + isTarget + targetSeconds per swimmer per event, and Training Pace and
+// Training splits read it as their `target` basis. A parallel season-goal field would
+// disagree with that within a week, so the season goal reads the target plan when one
+// exists and writes it on save. The other two terms have no equivalent and live on the
+// goal record alone.
+const GOAL_TERMS = [
+  { k: 'short',  short: 'Short',  label: 'Short term goal', sub: 'The next few weeks — your next meet.',
+    fill: 'bg-sky-400' },
+  { k: 'season', short: 'Season', label: 'Season goal',     sub: 'This season. This is also your target time — Training splits paces off it.',
+    fill: 'bg-cyan-500' },
+  { k: 'long',   short: 'Long',   label: 'Long term goal',  sub: 'A year or more away. Allowed to feel unreasonable.',
+    fill: 'bg-indigo-500' },
+];
+const GOAL_KNOW_HINT = 'Make it something you could see or count, not something you would have to feel. ' +
+  '"Two dolphin kicks off every wall in a 200," "no breath inside the flags," "breakout past the 6 m mark" — ' +
+  'each of those is either true or it is not.';
+
+// Every event this swimmer has a timed race in, with their best time in it. A goal needs a
+// best time: without one there is no starting point and the bar would be a decoration.
+function goalEvents(sid) {
+  if (!sid) return [];
+  const by = {};
+  state.saved.forEach((s) => {
+    if (s.kind !== 'race' || s.sid !== sid) return;
+    const c = buildRaceComparison(s);
+    const t = c ? c.actualTotal : 0;
+    if (!(t > 0)) return;
+    const k = s.distance + '|' + s.stroke + '|' + s.pool;
+    if (!by[k] || t < by[k].best - 1e-9) {
+      by[k] = { key: k, distance: s.distance, stroke: s.stroke, pool: s.pool, sex: s.sex,
+                best: t, date: s.date || '', label: s.distance + ' ' + s.stroke + ' ' + s.pool };
+    }
+  });
+  const ord = { Free: 0, Back: 1, Breast: 2, Fly: 3, IM: 4 };
+  return Object.values(by).sort((a, b) => a.distance - b.distance
+    || (ord[a.stroke] ?? 9) - (ord[b.stroke] ?? 9) || String(a.pool).localeCompare(String(b.pool)));
+}
+function goalEventFor(key) { return goalEvents(selfSid()).find((e) => e.key === key) || null; }
+// How many of the three terms this event has a time for — drives the dot on its chip.
+function goalCount(sid, ev) {
+  const rec = state.saved.find((s) => s.kind === 'goal' && s.sid === sid
+    && s.distance === ev.distance && s.stroke === ev.stroke && s.pool === ev.pool);
+  return GOAL_TERMS.filter((t) => goalOf(rec, t.k, ev).sec > 0).length;
+}
+
+// One goal record per swimmer per event, holding all three terms plus the achieved history.
+function goalRec(sid, ev, create) {
+  if (!sid || !ev) return null;
+  let g = state.saved.find((s) => s.kind === 'goal' && s.sid === sid
+    && s.distance === ev.distance && s.stroke === ev.stroke && s.pool === ev.pool);
+  if (!g && create) {
+    g = { id: 'sv' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+          sid, name: swimmerName(sid) || selfName() || '', kind: 'goal',
+          stroke: ev.stroke, pool: ev.pool, distance: ev.distance, sex: ev.sex,
+          goals: {}, hist: [] };
+    state.saved.push(g); persistSaved();
+  }
+  if (g && !g.goals) g.goals = {};
+  if (g && !g.hist) g.hist = [];
+  return g || null;
+}
+
+// The one place that decides what a term's goal time is. For the season that is the target
+// plan if there is one, so the two can never show different numbers.
+function goalOf(rec, term, ev) {
+  const stored = (rec && rec.goals && rec.goals[term]) || {};
+  const out = { sec: +stored.sec || 0, base: +stored.base || 0, baseDate: stored.baseDate || '',
+                setDate: stored.setDate || '', skill: stored.skill || '', know: stored.know || '',
+                fromTarget: false };
+  if (term === 'season' && ev) {
+    const t = targetFor(rec ? rec.sid : selfSid(), ev.stroke, ev.pool, ev.distance);
+    if (t && t.targetSeconds > 0) { out.sec = t.targetSeconds; out.fromTarget = true; }
+  }
+  return out;
+}
+function goalStoredSec(evKey, term) {
+  const ev = goalEventFor(evKey); if (!ev) return 0;
+  return goalOf(goalRec(selfSid(), ev), term, ev).sec;
+}
+
+// pct is measured from the best time on the day the goal was set, so the bar starts empty
+// and only moves when a genuinely faster swim is recorded. Best times cannot get slower,
+// so the bar cannot drain.
+function goalProgress(g, best) {
+  if (!g || !(g.sec > 0)) return null;
+  const base = g.base > 0 ? g.base : 0;
+  const beaten = best > 0 && best <= g.sec + 0.0049;
+  if (!(best > 0)) return { pct: 0, base, unstarted: !base, beaten: false, need: 0 };
+  if (!base) return { pct: beaten ? 1 : 0, base: 0, unstarted: true, beaten, need: best - g.sec };
+  const span = base - g.sec;
+  const pct = span <= 0 ? 1 : Math.max(0, Math.min(1, (base - best) / span));
+  return { pct, base, span, unstarted: false, beaten, need: best - g.sec };
+}
+
+function goalSave() {
+  const ev = goalEventFor(state.goalForm.ev);
+  if (!ev) { showToast('Pick an event first'); return; }
+  const sec = +state.goalForm.sec || 0;
+  if (!(sec > 0)) { showToast('Enter a goal time'); return; }
+  if (sec >= ev.best) {
+    if (!confirm('That is slower than your best (' + formatTime(ev.best) + ').\n\nOK = save it anyway\nCancel = go back')) return;
+  }
+  const term = state.goalForm.term;
+  const rec = goalRec(selfSid(), ev, true);
+  const g = (rec.goals[term] = rec.goals[term] || {});
+  g.sec = sec;
+  g.base = ev.best;                       // the starting point the bar is measured from
+  g.baseDate = ev.date || '';
+  g.setDate = new Date().toISOString().slice(0, 10);
+  // The season goal is the target time. Write it through so Training splits agrees.
+  if (term === 'season') {
+    const sid = selfSid();
+    state.saved.forEach((x) => {
+      if (isPlan(x) && x.sid === sid && x.stroke === ev.stroke && x.pool === ev.pool && x.distance === ev.distance) x.isTarget = false;
+    });
+    const plan = state.saved.filter((x) => isPlan(x) && x.sid === sid
+      && x.stroke === ev.stroke && x.pool === ev.pool && x.distance === ev.distance).pop();
+    if (plan) { plan.targetSeconds = sec; plan.isTarget = true; plan.sex = plan.sex || ev.sex; }
+    else state.saved.push({ id: 'sv' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+      sid, name: swimmerName(sid) || selfName() || '', kind: 'plan', isTarget: true,
+      stroke: ev.stroke, sex: ev.sex, pool: ev.pool, distance: ev.distance, targetSeconds: sec });
+  }
+  persistSaved();
+  showToast(term === 'season' ? 'Season goal saved — also set as your target time' : 'Goal saved');
+  render();
+}
+
+function goalClear() {
+  const ev = goalEventFor(state.goalForm.ev); if (!ev) return;
+  const rec = goalRec(selfSid(), ev); if (!rec) return;
+  const term = state.goalForm.term;
+  if (!confirm('Clear this goal? The technique skill on it goes too.')) return;
+  delete rec.goals[term];
+  if (term === 'season') {
+    const sid = selfSid();
+    state.saved.forEach((x) => {
+      if (isPlan(x) && x.sid === sid && x.stroke === ev.stroke && x.pool === ev.pool && x.distance === ev.distance) x.isTarget = false;
+    });
+  }
+  state.goalForm.sec = 0;
+  persistSaved(); render();
+}
+
+// Achieving a technique skill files it and clears the slot, so the next one starts empty.
+// The point is one skill at a time, not a list of everything ever attempted.
+function goalAchieved() {
+  const ev = goalEventFor(state.goalForm.ev); if (!ev) return;
+  const rec = goalRec(selfSid(), ev); if (!rec) return;
+  const term = state.goalForm.term;
+  const g = rec.goals[term];
+  if (!g || !String(g.skill || '').trim()) { showToast('Write the technique skill first'); return; }
+  rec.hist = rec.hist || [];
+  rec.hist.push({ term, skill: g.skill, know: g.know || '', date: new Date().toISOString().slice(0, 10) });
+  g.skill = ''; g.know = '';
+  persistSaved();
+  showToast('Nice — filed. Pick the next one.');
+  render();
+}
+
+function goalBarsHtml(ev, rec) {
+  const f = state.goalForm;
+  return `<div class="flex gap-2">${GOAL_TERMS.map((t) => {
+    const g = goalOf(rec, t.k, ev);
+    const p = goalProgress(g, ev.best);
+    const on = f.term === t.k;
+    const pct = p ? Math.round(p.pct * 100) : 0;
+    const foot = !g.sec ? 'Not set' : (p && p.beaten ? 'Beaten ✓' : (p && p.unstarted ? 'Save to start' : pct + '%'));
+    return `<button class="flex-1 min-w-0 rounded-2xl border px-2 pt-2.5 pb-2.5 text-center transition ${on
+      ? 'border-cyan-500 bg-cyan-50/70 shadow-sm' : 'border-slate-200 bg-white hover:border-cyan-300'}" data-goal-term="${t.k}">
+      <div class="text-[10px] font-bold uppercase tracking-wide leading-none ${on ? 'text-cyan-800' : 'text-slate-500'}">${t.short}</div>
+      <div class="relative mx-auto mt-2.5 w-8 h-[124px] rounded-full bg-slate-100 border border-slate-200 overflow-hidden">
+        <div class="absolute inset-x-0 bottom-0 ${t.fill} transition-all" style="height:${pct}%"></div>
+      </div>
+      <div class="mt-2 mono text-[13px] font-bold leading-none ${g.sec ? 'text-slate-900' : 'text-slate-300'}">${g.sec ? formatTime(g.sec) : '—'}</div>
+      <div class="text-[10px] mt-1 leading-none ${p && p.beaten ? 'text-emerald-600 font-semibold' : 'text-muted'}">${foot}</div>
+    </button>`;
+  }).join('')}</div>`;
+}
+
+function goalEditorHtml(ev, rec) {
+  const f = state.goalForm;
+  const t = GOAL_TERMS.find((x) => x.k === f.term) || GOAL_TERMS[0];
+  const g = goalOf(rec, f.term, ev);
+  const p = goalProgress(g, ev.best);
+  const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const secs = +f.sec || 0;
+  const tmin = secs >= 60 ? String(Math.floor(secs / 60)) : '0';
+  const tsec = String(Math.floor(secs % 60)).padStart(2, '0');
+  const thh = String(Math.round((secs - Math.floor(secs)) * 100)).padStart(2, '0');
+  const hintOpen = !!(state.goalHint || {})[f.term];
+
+  const status = !g.sec
+    ? `<div class="text-[12px] text-muted leading-snug">No ${t.short.toLowerCase()} goal yet. Enter a time below.</div>`
+    : (p && p.beaten
+      ? `<div class="text-[12px] text-emerald-700 font-semibold leading-snug">You have beaten it — ${formatTime(ev.best)} against a goal of ${formatTime(g.sec)}. Time for a new one.</div>`
+      : (p && p.unstarted
+        ? `<div class="text-[12px] text-amber-700 leading-snug">Press Save to start tracking this one — your best time today becomes the mark the bar fills from.</div>`
+        : `<div class="text-[12px] text-slate-600 leading-snug">
+             <span class="mono font-bold text-slate-900">${formatTime(Math.max(0, p.need))}</span> to go.
+             Set${g.setDate ? ' ' + g.setDate : ''}, measured from a best of <span class="mono">${formatTime(p.base)}</span>.
+           </div>`));
+
+  const hist = (rec && rec.hist ? rec.hist : []).slice(-3).reverse();
+
+  return `
+    <div class="m-3 bg-white rounded-2xl border border-slate-200 overflow-hidden">
+      <div class="px-4 pt-4 pb-3 border-b border-slate-100">
+        <div class="font-bold text-[15px] text-slate-900">${t.label}</div>
+        <div class="text-[11px] text-muted leading-snug mt-0.5">${t.sub}</div>
+        ${g.fromTarget ? '<div class="text-[11px] text-cyan-700 leading-snug mt-1">Reading your saved target time for this event.</div>' : ''}
+      </div>
+
+      <div class="px-4 py-4 border-b border-slate-100">
+        <div class="label-cap mb-2">Goal time</div>
+        <div class="bg-gradient-to-br from-cyan-50 to-white border-2 border-cyan-200 rounded-2xl px-4 py-4 focus-within:border-cyan-500 transition">
+          <div class="flex items-end justify-center gap-1">
+            <div class="text-center">
+              <input data-gmin inputmode="numeric" maxlength="2" value="${tmin}" class="time-seg" aria-label="Minutes" />
+              <div class="time-seg-label">min</div>
+            </div>
+            <div class="time-seg-sep">:</div>
+            <div class="text-center">
+              <input data-gsec inputmode="numeric" maxlength="2" value="${tsec}" class="time-seg" aria-label="Seconds" />
+              <div class="time-seg-label">sec</div>
+            </div>
+            <div class="time-seg-sep">.</div>
+            <div class="text-center">
+              <input data-ghh inputmode="numeric" maxlength="2" value="${thh}" class="time-seg" aria-label="Hundredths" />
+              <div class="time-seg-label">hund.</div>
+            </div>
+          </div>
+        </div>
+        <div class="mt-3 flex items-center gap-2">
+          <button class="flex-1 bg-cyan-600 text-white rounded-xl px-4 py-3 text-sm font-bold hover:bg-cyan-700 active:scale-[0.99] transition" data-action="goal-save">Save goal</button>
+          ${g.sec ? '<button class="px-4 py-3 rounded-xl bg-slate-100 text-slate-600 text-sm font-semibold hover:bg-slate-200 active:scale-95 transition" data-action="goal-clear">Clear</button>' : ''}
+        </div>
+        <div class="mt-2.5">${status}</div>
+      </div>
+
+      <div class="px-4 py-4 space-y-4">
+        <div>
+          <div class="text-[13px] font-semibold text-slate-700 leading-snug mb-1">One technique skill you are working on to get there</div>
+          <textarea data-goal-f="skill" rows="2" maxlength="240" placeholder="One thing. Not three."
+            class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-sm outline-none focus:ring-2 focus:ring-cyan-300 resize-none">${esc(g.skill)}</textarea>
+        </div>
+        <div>
+          <div class="flex items-start justify-between gap-2 mb-1">
+            <div class="text-[13px] font-semibold text-slate-700 leading-snug">How will you know you have achieved it?</div>
+            <button class="w-5 h-5 rounded-full bg-slate-100 text-slate-500 text-[11px] font-bold flex items-center justify-center flex-shrink-0 hover:bg-slate-200" data-goal-hint="${t.k}" aria-label="What to write here">?</button>
+          </div>
+          ${hintOpen ? `<div class="text-[11px] text-muted leading-snug mb-1.5">${GOAL_KNOW_HINT}</div>` : ''}
+          <textarea data-goal-f="know" rows="2" maxlength="240" placeholder="What would someone on the deck see?"
+            class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-sm outline-none focus:ring-2 focus:ring-cyan-300 resize-none">${esc(g.know)}</textarea>
+        </div>
+        ${String(g.skill || '').trim() ? `<button class="w-full rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-800 px-4 py-3 text-sm font-bold hover:bg-emerald-100 active:scale-[0.99] transition" data-action="goal-achieved">Mark this skill achieved</button>` : ''}
+      </div>
+
+      ${hist.length ? `<div class="px-4 pb-4 pt-1 border-t border-slate-100">
+        <div class="label-cap mb-2">Skills you have ticked off</div>
+        <div class="space-y-1.5">
+          ${hist.map((h) => `<div class="text-[12px] text-slate-600 leading-snug">
+            <span class="text-emerald-600 font-bold">✓</span> ${esc(h.skill)}
+            <span class="text-faint">· ${h.date}</span>
+          </div>`).join('')}
+        </div>
+      </div>` : ''}
+    </div>`;
+}
+
+function renderGoals() {
+  const sid = selfSid();
+  const f = state.goalForm;
+  const evs = goalEvents(sid);
+  if (f.ev && !evs.some((e) => e.key === f.ev)) f.ev = null;
+  const ev = evs.find((e) => e.key === f.ev) || null;
+  const rec = ev ? goalRec(sid, ev) : null;
+  const who = selfName() || '';
+  const escA = (s) => String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+  const chip = (on) => `px-3 py-2 rounded-xl text-xs font-semibold border transition ${on
+    ? 'bg-cyan-600 text-white border-cyan-600'
+    : 'bg-white text-slate-700 border-slate-200 hover:border-cyan-300'}`;
+
+  let body;
+  if (!evs.length) {
+    body = `<div class="m-3 bg-white rounded-2xl border border-dashed border-slate-200 px-5 py-10 text-center text-sm text-muted">
+      No goals yet.<br><span class="text-xs">Record a race first. A goal needs a time to measure from — without one the bar has no starting point.</span></div>`;
+  } else if (!ev) {
+    body = `<div class="m-3 bg-white rounded-2xl border border-dashed border-slate-200 px-5 py-10 text-center text-sm text-muted">
+      Pick an event above.<br><span class="text-xs">Goals are per event, so the bars only make sense once you have chosen one.</span></div>`;
+  } else {
+    body = `<div class="m-3">${goalBarsHtml(ev, rec)}</div>
+      <div class="px-4 pb-1 text-center text-[11px] text-muted">Best so far: <span class="mono font-semibold text-slate-700">${formatTime(ev.best)}</span>${ev.date ? ' · ' + ev.date : ''}</div>
+      ${goalEditorHtml(ev, rec)}`;
+  }
+
+  return `
+    <div class="statusbar"></div>
+    ${screenHeader({
+      title: 'My goals',
+      sub: `${who ? who + ' · ' : ''}${ev ? ev.label : (evs.length ? 'pick an event' : 'no races yet')}`,
+      cls: 'bg-white',
+    })}
+    <div class="scrollable bg-slate-50">
+      ${evs.length ? `<div class="px-5 py-4 bg-white border-b border-slate-100">
+        <div class="label-cap mb-1.5">Your event</div>
+        <div class="flex flex-wrap gap-1.5">${evs.map((e) => {
+          const n = goalCount(sid, e);
+          return `<button class="${chip(e.key === f.ev)}" data-goal-ev="${escA(e.key)}">${e.label}${n
+            ? `<span class="ml-1.5 text-[10px] font-bold ${e.key === f.ev ? 'text-cyan-100' : 'text-cyan-600'}">${n}/3</span>` : ''}</button>`;
+        }).join('')}</div>
+      </div>` : ''}
+      ${body}
+      ${ev ? `<div class="px-4 pb-5 pt-1 text-[10px] text-faint leading-snug">Progress is measured from your best time on the day you set the goal, so it only moves when you actually swim faster.</div>` : ''}
+    </div>`;
+}
+
 // ===== Training splits (one swimmer, every event) ============================
 // Same numbers as the coach's Training Pace table — literally the same function, filtered to
 // this swimmer — so the two can never disagree about a target.
@@ -7212,6 +7553,25 @@ document.addEventListener('click', (e) => {
     if (slEv) { state.slForm.ev = slEv.getAttribute('data-sl-ev'); state.slForm.pick = null; render(); return; }
     const slSid = e.target.closest('[data-sl-sid]');
     if (slSid) { state.slForm = { sid: slSid.getAttribute('data-sl-sid'), ev: null, pick: null }; render(); return; }
+    const gev = e.target.closest('[data-goal-ev]');
+    if (gev) {
+      state.goalForm.ev = gev.getAttribute('data-goal-ev');
+      state.goalForm.sec = goalStoredSec(state.goalForm.ev, state.goalForm.term);
+      render(); return;
+    }
+    const gtm = e.target.closest('[data-goal-term]');
+    if (gtm) {
+      state.goalForm.term = gtm.getAttribute('data-goal-term');
+      state.goalForm.sec = goalStoredSec(state.goalForm.ev, state.goalForm.term);
+      render(); return;
+    }
+    const gh = e.target.closest('[data-goal-hint]');
+    if (gh) {
+      const k = gh.getAttribute('data-goal-hint');
+      state.goalHint = state.goalHint || {};
+      state.goalHint[k] = !state.goalHint[k];
+      render(); return;
+    }
     const tspl = e.target.closest('[data-tspl]');
     if (tspl) { state.tsplForm[tspl.getAttribute('data-tspl')] = tspl.getAttribute('data-tsplv'); render(); return; }
     const tp = e.target.closest('[data-tp]');
@@ -7827,6 +8187,10 @@ function handleAction(action, el) {
     }
     case 'training-pace': state.tpShow = false; navigate('training-pace'); break;
     case 'training-splits': navigate('training-splits'); break;
+    case 'goals': navigate('goals'); break;
+    case 'goal-save': goalSave(); break;
+    case 'goal-clear': goalClear(); break;
+    case 'goal-achieved': goalAchieved(); break;
     case 'swim-like': {
       // From a swimmer's page the swimmer is obvious; from the main page it is not, and a
       // savedSid left over from an earlier screen is not an answer.
