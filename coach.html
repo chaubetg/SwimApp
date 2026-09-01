@@ -5216,13 +5216,43 @@ function tpEnsurePdfLibs() {
 
 // Read the sheet that is ALREADY rendered rather than recomputing the numbers, so the PDF and
 // the screen can never drift apart. Returns null when there's nothing to download.
+// jsPDF's built-in fonts are WinAnsi (cp1252). A single character outside it switches the
+// whole string to UTF-16BE, which those fonts cannot draw — every character comes out with a
+// leading NUL that prints as a blank, so the text sprawls sideways out of its cell. That is
+// what turned a met cut ("−0.47") into gibberish beside a missed one ("+3.68"), and it is
+// what a Polish ł in a swimmer's name would do to their whole row.
+// Verified byte-level: "A−B" emits (<0>A"<12><0>B); "A—B", "A’B", "A·B", "AéB" all emit one
+// byte each and are safe, so accented names and the app's dashes and quotes pass through.
+const PDF_CP1252_EXTRA = '€‚ƒ„…†‡ˆ‰Š‹ŒŽ'
+                       + '‘’“”•–—˜™š›œžŸ';
+// The characters the app deliberately prints that cp1252 has no room for.
+const PDF_SUBS = { '−': '-', '≈': '~', '→': '->', '▸': '>',
+                   '✓': 'v', '★': '*', 'Ł': 'L', 'ł': 'l',
+                   'Đ': 'D', 'đ': 'd', 'Ħ': 'H', 'ħ': 'h' };
+function pdfText(s) {
+  s = String(s == null ? '' : s);
+  let out = '';
+  for (const ch of s) {
+    const c = ch.codePointAt(0);
+    // cp1252 proper: ASCII, the Latin-1 upper half, and the 27 characters cp1252 puts in
+    // 0x80-0x9F. U+0080-U+009F themselves are undefined there, so they are not let through.
+    if (c === 9 || c === 10 || (c >= 32 && c <= 126) || (c >= 160 && c <= 255)
+        || PDF_CP1252_EXTRA.indexOf(ch) >= 0) { out += ch; continue; }
+    if (PDF_SUBS[ch] != null) { out += PDF_SUBS[ch]; continue; }
+    // Anything else degrades to its base letter rather than taking the row down with it.
+    const d = ch.normalize('NFD').replace(/[̀-ͯ]/g, '');
+    out += /^[ -~]+$/.test(d) ? d : '';
+  }
+  return out;
+}
+
 function tpPdfModel() {
   const host = document.getElementById('tp-print');
   const table = host && host.querySelector('table');
   if (!table) return null;
   const title = (host.querySelector('[data-tp-title]') || {}).textContent || 'Training pace';
   const sub = (host.querySelector('[data-tp-sub]') || {}).textContent || '';
-  const head = [[...table.querySelectorAll('thead th')].map((t) => t.textContent.trim())];
+  const head = [[...table.querySelectorAll('thead th')].map((t) => pdfText(t.textContent.trim()))];
   const body = [];
   const rules = [];                       // body-row indexes that open a new stroke block
   [...table.querySelectorAll('tbody tr')].forEach((tr) => {
@@ -5230,16 +5260,16 @@ function tpPdfModel() {
     const ths = [...tr.querySelectorAll('th')];
     const tds = [...tr.querySelectorAll('td')];
     const cells = ths.length
-      ? ths.map((t) => t.textContent.trim())                       // IM's own header row
+      ? ths.map((t) => pdfText(t.textContent.trim()))               // IM's own header row
       : tds.map((t, i) => {
-          if (i === 0) { const d = t.querySelector('div'); return (d ? d.textContent : t.textContent).trim(); }
-          return t.textContent.replace(/\s+/g, ' ').trim();
+          if (i === 0) { const d = t.querySelector('div'); return pdfText((d ? d.textContent : t.textContent).trim()); }
+          return pdfText(t.textContent.replace(/\s+/g, ' ').trim());
         });
     if (!cells.length) return;
     if (opensBlock) rules.push(body.length);
     body.push(cells);
   });
-  return { title: title.trim(), sub: sub.trim(), head, body, rules };
+  return { title: pdfText(title.trim()), sub: pdfText(sub.trim()), head, body, rules };
 }
 
 function tpBuildPdf() {
