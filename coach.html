@@ -1431,6 +1431,9 @@ const state = {
   form: {
     stroke: 'Free', sex: 'M', pool: 'LCM', distance: 200,
     targetSeconds: 120, name: '',
+    // Which of the three goals this time is. Season by default, because that is the one the
+    // training target normally is. Swimmer build only.
+    goalTerm: 'season',
   },
   result: null, // last computed prediction
   splitView: '100', // distance events (400+): show '50' or '100' checkpoints
@@ -4217,6 +4220,9 @@ function renderQuickCalc() {
   // SCY is hidden for now (2026-08-17) — snap a remembered yards selection to SCM so
   // nobody is stranded on a course with no button for it.
   if (state.form.pool === 'SCY') state.form.pool = 'SCM';
+  // seedSelf() and plan-from-pb rebuild state.form wholesale, so normalise here rather than
+  // relying on every writer to remember the field. A fresh form is a season goal.
+  if (!GOAL_TERMS.some((t) => t.k === state.form.goalTerm)) state.form.goalTerm = 'season';
   const f = state.form;
   const strokes = ['Free', 'Back', 'Breast', 'Fly', 'IM'];
   const distances = [50, 100, 200, 400, 800, 1500];
@@ -4258,6 +4264,13 @@ function renderQuickCalc() {
           ${distances.map(d => `<span class="pill ${f.distance === d ? 'active' : ''}" data-distance="${d}">${d}</span>`).join('')}
         </div>
       </div>
+      ${SWIMMER ? `<div>
+        <div class="label-cap mb-2">What kind of goal is this?</div>
+        <div class="flex gap-2 flex-wrap">
+          ${GOAL_TERMS.map((t) => `<span class="pill ${(f.goalTerm || 'season') === t.k ? 'active' : ''}" data-goalterm="${t.k}">${t.label.replace(' goal', '')}</span>`).join('')}
+        </div>
+        <div class="text-[11px] text-muted leading-snug mt-2">${(GOAL_TERMS.find((t) => t.k === (f.goalTerm || 'season')) || GOAL_TERMS[1]).sub}</div>
+      </div>` : ''}
       <div>
         <div class="flex items-center justify-between gap-3 mb-2">
           <div class="label-cap">Target time</div>
@@ -4492,6 +4505,11 @@ function renderPredictedSplits() {
   // ----- Season target: the star, and where the gap to it actually lives -----
   const tgtName = ((state.swimmer && state.swimmer.name) || state.form.name || '').trim();
   const tgtOn = state.form.isTarget !== false;
+  // In the swimmer build the star sits under a goal that has a name; in the coach build there
+  // is only ever the one season target, so the word stays as it was.
+  const tgtWhat = SWIMMER
+    ? (GOAL_TERMS.find((t) => t.k === (state.form.goalTerm || 'season')) || GOAL_TERMS[1]).label.replace(' goal', '').toLowerCase()
+    : 'season';
   let tgtCard = '';
   if (tgtName) {
     const first = tgtName.split(' ')[0];
@@ -4516,10 +4534,10 @@ function renderPredictedSplits() {
         <button class="w-full flex items-center gap-3 text-left" data-action="toggle-target">
           <span class="text-2xl leading-none ${tgtOn ? 'text-amber-500' : 'text-slate-300'}">${tgtOn ? '★' : '☆'}</span>
           <span class="flex-1 min-w-0">
-            <span class="block font-bold text-[14px] text-slate-800">${tgtOn ? `${first}’s season target` : 'Saved plan only'}</span>
+            <span class="block font-bold text-[14px] text-slate-800">${tgtOn ? `${first}’s ${tgtWhat} target` : `Saved as a ${tgtWhat} goal only`}</span>
             <span class="block text-[11px] text-muted leading-snug">${tgtOn
-              ? `Saving makes this ${first}’s target for the ${r.distance} ${r.stroke} ${r.pool}`
-              : 'Tap the star to make this their season target'}</span>
+              ? `Saving makes this the time training paces off for the ${r.distance} ${r.stroke} ${r.pool}`
+              : `Tap the star to make this the time training paces off${SWIMMER ? '' : ' for them'}`}</span>
           </span>
         </button>
         ${tgtOn ? gapHtml : ''}
@@ -5946,21 +5964,32 @@ const GOAL_KNOW_HINT = 'Make it something you could see or count, not something 
   '"Two dolphin kicks off every wall in a 200," "no breath inside the flags," "breakout past the 6 m mark" — ' +
   'each of those is either true or it is not.';
 
-// Every event this swimmer has a timed race in, with their best time in it. A goal needs a
-// best time: without one there is no starting point and the bar would be a decoration.
+// Every event this swimmer has a timed race in OR a goal for. The bar runs between two
+// times derived from the GOAL, so an event with no swim in it yet is not a dead end — it
+// shows an empty bar that fills the first time a race is recorded.
 function goalEvents(sid) {
   if (!sid) return [];
   const by = {};
-  state.saved.forEach((s) => {
-    if (s.kind !== 'race' || s.sid !== sid) return;
-    const c = buildRaceComparison(s);
-    const t = c ? c.actualTotal : 0;
-    if (!(t > 0)) return;
+  const put = (s, t) => {
     const k = s.distance + '|' + s.stroke + '|' + s.pool;
-    if (!by[k] || t < by[k].best - 1e-9) {
-      by[k] = { key: k, distance: s.distance, stroke: s.stroke, pool: s.pool, sex: s.sex,
-                best: t, date: s.date || '', label: s.distance + ' ' + s.stroke + ' ' + s.pool };
+    if (!by[k]) by[k] = { key: k, distance: s.distance, stroke: s.stroke, pool: s.pool,
+                          sex: s.sex, best: 0, date: '',
+                          label: s.distance + ' ' + s.stroke + ' ' + s.pool };
+    if (t > 0 && (!(by[k].best > 0) || t < by[k].best - 1e-9)) {
+      by[k].best = t; by[k].date = s.date || ''; by[k].sex = s.sex || by[k].sex;
     }
+  };
+  state.saved.forEach((s) => {
+    if (s.sid !== sid) return;
+    if (s.kind === 'race') {
+      const c = buildRaceComparison(s);
+      const t = c ? c.actualTotal : 0;
+      if (t > 0) put(s, t);
+      return;
+    }
+    // A saved target time, or a goal record from an earlier visit — both name an event the
+    // swimmer is working towards even before they have raced it.
+    if ((isPlan(s) && s.targetSeconds > 0) || s.kind === 'goal') put(s, 0);
   });
   const ord = { Free: 0, Back: 1, Breast: 2, Fly: 3, IM: 4 };
   return Object.values(by).sort((a, b) => a.distance - b.distance
@@ -5991,14 +6020,21 @@ function goalRec(sid, ev, create) {
   return g || null;
 }
 
-// The one place that decides what a term's goal time is. For the season that is the target
-// plan if there is one, so the two can never show different numbers.
+// Which of the three goals is the training target — the one whose time Training Pace and
+// Training splits read as their `target` basis. Season unless the swimmer moved the star.
+function goalTargetTerm(rec) {
+  const t = rec && rec.targetTerm;
+  return GOAL_TERMS.some((x) => x.k === t) ? t : 'season';
+}
+
+// The one place that decides what a term's goal time is. For whichever term holds the
+// training target that is the target plan, so the two can never show different numbers.
 function goalOf(rec, term, ev) {
   const stored = (rec && rec.goals && rec.goals[term]) || {};
   const out = { sec: +stored.sec || 0, base: +stored.base || 0, baseDate: stored.baseDate || '',
                 setDate: stored.setDate || '', skill: stored.skill || '', know: stored.know || '',
                 fromTarget: false };
-  if (term === 'season' && ev) {
+  if (term === goalTargetTerm(rec) && ev) {
     const t = targetFor(rec ? rec.sid : selfSid(), ev.stroke, ev.pool, ev.distance);
     if (t && t.targetSeconds > 0) { out.sec = t.targetSeconds; out.fromTarget = true; }
   }
@@ -6009,18 +6045,20 @@ function goalStoredSec(evKey, term) {
   return goalOf(goalRec(selfSid(), ev), term, ev).sec;
 }
 
-// pct is measured from the best time on the day the goal was set, so the bar starts empty
-// and only moves when a genuinely faster swim is recorded. Best times cannot get slower,
-// so the bar cannot drain.
+// 0% is 5% slower than the goal; 100% is the goal itself. A fixed span, so a bar means the
+// same thing on every event and for every swimmer, and it does not depend on when the goal
+// was set. Best times only improve, so the bar cannot drain.
+const GOAL_ZERO_PCT = 0.05;
+function goalZero(sec) { return sec * (1 + GOAL_ZERO_PCT); }
 function goalProgress(g, best) {
   if (!g || !(g.sec > 0)) return null;
-  const base = g.base > 0 ? g.base : 0;
-  const beaten = best > 0 && best <= g.sec + 0.0049;
-  if (!(best > 0)) return { pct: 0, base, unstarted: !base, beaten: false, need: 0 };
-  if (!base) return { pct: beaten ? 1 : 0, base: 0, unstarted: true, beaten, need: best - g.sec };
-  const span = base - g.sec;
-  const pct = span <= 0 ? 1 : Math.max(0, Math.min(1, (base - best) / span));
-  return { pct, base, span, unstarted: false, beaten, need: best - g.sec };
+  const zero = goalZero(g.sec);
+  if (!(best > 0)) return { pct: 0, zero, noTime: true, far: false, beaten: false, need: null };
+  const beaten = best <= g.sec + 0.0049;
+  const pct = Math.max(0, Math.min(1, (zero - best) / (zero - g.sec)));
+  return { pct, zero, noTime: false, far: best > zero, beaten, need: best - g.sec,
+           // What they have taken off since the goal was set, when there is a mark for it.
+           since: (g.base > 0 && best < g.base - 0.0049) ? g.base - best : 0 };
 }
 
 function goalSave() {
@@ -6028,7 +6066,7 @@ function goalSave() {
   if (!ev) { showToast('Pick an event first'); return; }
   const sec = +state.goalForm.sec || 0;
   if (!(sec > 0)) { showToast('Enter a goal time'); return; }
-  if (sec >= ev.best) {
+  if (ev.best > 0 && sec >= ev.best) {
     if (!confirm('That is slower than your best (' + formatTime(ev.best) + ').\n\nOK = save it anyway\nCancel = go back')) return;
   }
   const term = state.goalForm.term;
@@ -6038,8 +6076,9 @@ function goalSave() {
   g.base = ev.best;                       // the starting point the bar is measured from
   g.baseDate = ev.date || '';
   g.setDate = new Date().toISOString().slice(0, 10);
-  // The season goal is the target time. Write it through so Training splits agrees.
-  if (term === 'season') {
+  // Whichever term holds the training target IS the target time. Write it through so
+  // Training splits agrees.
+  if (term === goalTargetTerm(rec)) {
     const sid = selfSid();
     state.saved.forEach((x) => {
       if (isPlan(x) && x.sid === sid && x.stroke === ev.stroke && x.pool === ev.pool && x.distance === ev.distance) x.isTarget = false;
@@ -6062,7 +6101,7 @@ function goalClear() {
   const term = state.goalForm.term;
   if (!confirm('Clear this goal? The technique skill on it goes too.')) return;
   delete rec.goals[term];
-  if (term === 'season') {
+  if (term === goalTargetTerm(rec)) {
     const sid = selfSid();
     state.saved.forEach((x) => {
       if (isPlan(x) && x.sid === sid && x.stroke === ev.stroke && x.pool === ev.pool && x.distance === ev.distance) x.isTarget = false;
@@ -6088,6 +6127,29 @@ function goalAchieved() {
   render();
 }
 
+// A target time saved from "Set target time" is one of the three goals, so file it as that
+// one. Called from the save action after the plan is written; swimmer build only, because
+// only the swimmer build has a goals screen to read it back from.
+// The time is stored on the goal record whichever term it is, so moving the star to another
+// term later cannot make an earlier goal vanish with the plan it used to live in.
+function goalFileFromPlan(sid, r, term, wantTarget) {
+  if (!SWIMMER || !sid) return;
+  const ev = goalEvents(sid).find((e) => e.distance === r.distance
+    && e.stroke === r.stroke && e.pool === r.pool);
+  // No recorded race at this event yet, so there is no starting point to measure from. The
+  // plan is still saved; the goal appears with its bar once a time is recorded.
+  if (!ev) return;
+  const rec = goalRec(sid, ev, true);
+  if (!rec) return;
+  const g = (rec.goals[term] = rec.goals[term] || {});
+  g.sec = r.targetSeconds;
+  g.base = ev.best;
+  g.baseDate = ev.date || '';
+  g.setDate = new Date().toISOString().slice(0, 10);
+  if (wantTarget) rec.targetTerm = term;
+  persistSaved();
+}
+
 function goalBarsHtml(ev, rec) {
   const f = state.goalForm;
   return `<div class="flex gap-2">${GOAL_TERMS.map((t) => {
@@ -6095,10 +6157,11 @@ function goalBarsHtml(ev, rec) {
     const p = goalProgress(g, ev.best);
     const on = f.term === t.k;
     const pct = p ? Math.round(p.pct * 100) : 0;
-    const foot = !g.sec ? 'Not set' : (p && p.beaten ? 'Beaten ✓' : (p && p.unstarted ? 'Save to start' : pct + '%'));
+    const foot = !g.sec ? 'Not set'
+      : (p && p.beaten ? 'Beaten ✓' : (p && p.noTime ? 'No time yet' : pct + '%'));
     return `<button class="flex-1 min-w-0 rounded-2xl border px-2 pt-2.5 pb-2.5 text-center transition ${on
       ? 'border-cyan-500 bg-cyan-50/70 shadow-sm' : 'border-slate-200 bg-white hover:border-cyan-300'}" data-goal-term="${t.k}">
-      <div class="text-[10px] font-bold uppercase tracking-wide leading-none ${on ? 'text-cyan-800' : 'text-slate-500'}">${t.short}</div>
+      <div class="text-[10px] font-bold uppercase tracking-wide leading-none ${on ? 'text-cyan-800' : 'text-slate-500'}">${t.short}${goalTargetTerm(rec) === t.k ? '<span class="text-amber-500 ml-0.5">★</span>' : ''}</div>
       <div class="relative mx-auto mt-2.5 w-8 h-[124px] rounded-full bg-slate-100 border border-slate-200 overflow-hidden">
         <div class="absolute inset-x-0 bottom-0 ${t.fill} transition-all" style="height:${pct}%"></div>
       </div>
@@ -6120,16 +6183,24 @@ function goalEditorHtml(ev, rec) {
   const thh = String(Math.round((secs - Math.floor(secs)) * 100)).padStart(2, '0');
   const hintOpen = !!(state.goalHint || {})[f.term];
 
+  const zeroTxt = p ? `<span class="mono">${formatTime(p.zero)}</span>` : '';
+  const sinceTxt = (p && p.since)
+    ? ` <span class="text-emerald-700">${formatTime(p.since)} off since you set it${g.setDate ? ' on ' + g.setDate : ''}.</span>` : '';
   const status = !g.sec
     ? `<div class="text-[12px] text-muted leading-snug">No ${t.short.toLowerCase()} goal yet. Enter a time below.</div>`
     : (p && p.beaten
       ? `<div class="text-[12px] text-emerald-700 font-semibold leading-snug">You have beaten it — ${formatTime(ev.best)} against a goal of ${formatTime(g.sec)}. Time for a new one.</div>`
-      : (p && p.unstarted
-        ? `<div class="text-[12px] text-amber-700 leading-snug">Press Save to start tracking this one — your best time today becomes the mark the bar fills from.</div>`
-        : `<div class="text-[12px] text-slate-600 leading-snug">
-             <span class="mono font-bold text-slate-900">${formatTime(Math.max(0, p.need))}</span> to go.
-             Set${g.setDate ? ' ' + g.setDate : ''}, measured from a best of <span class="mono">${formatTime(p.base)}</span>.
-           </div>`));
+      : (p && p.noTime
+        ? `<div class="text-[12px] text-muted leading-snug">No recorded time for this event yet. The bar runs from ${zeroTxt} to ${formatTime(g.sec)} and fills the first time you record a race.</div>`
+        : (p && p.far
+          ? `<div class="text-[12px] text-slate-600 leading-snug">
+               <span class="mono font-bold text-slate-900">${formatTime(Math.max(0, p.need))}</span> to go.
+               The bar starts at ${zeroTxt} — 5% off the goal — and you are not inside that yet.${sinceTxt}
+             </div>`
+          : `<div class="text-[12px] text-slate-600 leading-snug">
+               <span class="mono font-bold text-slate-900">${formatTime(Math.max(0, p.need))}</span> to go.
+               The bar runs from ${zeroTxt} (5% slower) to <span class="mono">${formatTime(g.sec)}</span>.${sinceTxt}
+             </div>`)));
 
   const hist = (rec && rec.hist ? rec.hist : []).slice(-3).reverse();
 
@@ -6138,7 +6209,7 @@ function goalEditorHtml(ev, rec) {
       <div class="px-4 pt-4 pb-3 border-b border-slate-100">
         <div class="font-bold text-[15px] text-slate-900">${t.label}</div>
         <div class="text-[11px] text-muted leading-snug mt-0.5">${t.sub}</div>
-        ${g.fromTarget ? '<div class="text-[11px] text-cyan-700 leading-snug mt-1">Reading your saved target time for this event.</div>' : ''}
+        ${g.fromTarget ? '<div class="text-[11px] text-cyan-700 leading-snug mt-1">\u2605 This is the time Training splits paces off \u2014 it is your saved target time for this event.</div>' : ''}
       </div>
 
       <div class="px-4 py-4 border-b border-slate-100">
@@ -6214,13 +6285,15 @@ function renderGoals() {
   let body;
   if (!evs.length) {
     body = `<div class="m-3 bg-white rounded-2xl border border-dashed border-slate-200 px-5 py-10 text-center text-sm text-muted">
-      No goals yet.<br><span class="text-xs">Record a race first. A goal needs a time to measure from — without one the bar has no starting point.</span></div>`;
+      No goals yet.<br><span class="text-xs">Record a race, or set a target time, and the event appears here with its three goals.</span></div>`;
   } else if (!ev) {
     body = `<div class="m-3 bg-white rounded-2xl border border-dashed border-slate-200 px-5 py-10 text-center text-sm text-muted">
       Pick an event above.<br><span class="text-xs">Goals are per event, so the bars only make sense once you have chosen one.</span></div>`;
   } else {
     body = `<div class="m-3">${goalBarsHtml(ev, rec)}</div>
-      <div class="px-4 pb-1 text-center text-[11px] text-muted">Best so far: <span class="mono font-semibold text-slate-700">${formatTime(ev.best)}</span>${ev.date ? ' · ' + ev.date : ''}</div>
+      <div class="px-4 pb-1 text-center text-[11px] text-muted">${ev.best > 0
+        ? `Best so far: <span class="mono font-semibold text-slate-700">${formatTime(ev.best)}</span>${ev.date ? ' · ' + ev.date : ''}`
+        : 'No recorded race at this event yet.'}</div>
       ${goalEditorHtml(ev, rec)}`;
   }
 
@@ -6241,7 +6314,7 @@ function renderGoals() {
         }).join('')}</div>
       </div>` : ''}
       ${body}
-      ${ev ? `<div class="px-4 pb-5 pt-1 text-[10px] text-faint leading-snug">Progress is measured from your best time on the day you set the goal, so it only moves when you actually swim faster.</div>` : ''}
+      ${ev ? `<div class="px-4 pb-5 pt-1 text-[10px] text-faint leading-snug">Each bar runs from 5% slower than the goal (empty) to the goal itself (full), so a bar means the same thing on every event. It moves when you record a faster swim.</div>` : ''}
     </div>`;
 }
 
@@ -7259,6 +7332,14 @@ document.addEventListener('click', (e) => {
       state.goalHint[k] = !state.goalHint[k];
       render(); return;
     }
+    const gterm = e.target.closest('[data-goalterm]');
+    if (gterm) {
+      state.form.goalTerm = gterm.getAttribute('data-goalterm');
+      // The season goal is normally the time training paces off; the other two normally are
+      // not. The star on the splits screen is still the last word — this only sets it up.
+      state.form.isTarget = state.form.goalTerm === 'season';
+      render(); return;
+    }
     const tspl = e.target.closest('[data-tspl]');
     if (tspl) { state.tsplForm[tspl.getAttribute('data-tspl')] = tspl.getAttribute('data-tsplv'); render(); return; }
     const tp = e.target.closest('[data-tp]');
@@ -7925,6 +8006,7 @@ function handleAction(action, el) {
               dup.isTarget = true;
             }
             persistSaved();
+            goalFileFromPlan(sid, r, state.form.goalTerm || 'season', state.form.isTarget !== false);
             state.planSaved = true;
             showToast(`Replaced ${nm} · ${r.distance} ${r.stroke} ${r.pool} plan`);
             render();
@@ -7943,6 +8025,7 @@ function handleAction(action, el) {
       }
       const upd = upsertSaved({ id: 'sv' + Date.now().toString(36), sid, name: nm, kind: 'plan', isTarget: wantTarget,
         stroke: r.stroke, sex: r.sex, pool: r.pool, distance: r.distance, targetSeconds: r.targetSeconds });
+      goalFileFromPlan(sid, r, state.form.goalTerm || 'season', wantTarget);
       state.planSaved = true;
       showToast(`${upd ? 'Updated' : 'Saved'} ${nm} · ${r.distance} ${r.stroke}`);
       render();
