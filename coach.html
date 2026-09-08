@@ -2710,16 +2710,27 @@ const REFL_SECTIONS = [
         hint: 'Type (coffee, gel, gum, drink — and the brand) · how much · how many minutes before.' },
       { k: 'n_keep', label: 'What would you keep, and what would you drop, next time?', rows: 3, max: 300, echo: 1 },
     ] },
-  { key: 'mind', title: 'Reflect on your mental performance?', sub: 'Two minutes. There are no wrong answers here.',
+  // An After Action Review, in Zinsser's own order. What happened, so what, what next.
+  // m_good keeps its key on purpose: it was "Three things you handled well", it is the same
+  // three lines, and the Top Ten List feature was always going to read from that key.
+  { key: 'mind', title: 'Reflect on your mental performance?', sub: 'What happened \u00b7 So what \u00b7 What next.',
+    legacy: [['m_conf', 'Confidence before the race'], ['m_doubt', 'Doubts'], ['m_next', 'Mental tool for next time']],
     fields: [
-      { k: 'm_conf', type: 'num', label: 'How confident did you feel right before your race?',
-        hint: '1 to 10. 10 = very confident.' },
-      { k: 'm_doubt', label: 'Did you have any doubts before or during your race? What did you do in response?', rows: 3, max: 250,
-        hint: 'Name the moment — ready room, behind the blocks, a specific wall. If doubt never showed up, just say so.' },
-      { k: 'm_good', type: 'three', label: 'Three things you handled well.', max: 100,
-        hint: 'Outside the time, your splits and your technique — things you did, felt, or handled.' },
-      { k: 'm_next', label: 'What mental tool will you use differently, or do again, next race?', rows: 3, max: 250, echo: 1,
-        hint: 'For example: breathing · self-talk · hyping up or calming down with music · visualising.' },
+      { head: 'What happened?', n: 1 },
+      { k: 'm_what', label: 'Time and splits aside, how well did you execute?', rows: 4, max: 400,
+        hint: 'And what thoughts or emotions were going through your mind \u2014 behind the blocks, at the first wall, coming home?' },
+      { k: 'm_best', type: 'short', label: 'Your best moment', max: 120, ph: 'One moment.' },
+      { k: 'm_back', type: 'short', label: 'The one moment you would take back', max: 120, ph: 'One moment.' },
+      { head: 'So what?', n: 2, rule: 1 },
+      { k: 'm_good', type: 'three', label: 'What was strong', max: 100,
+        hint: 'Up to three. These are the ones that feed your Top Ten list.' },
+      { k: 'm_work', type: 'short', label: 'What needs work', max: 120, ph: 'One thing.' },
+      // The echo sits on the step rather than on a field: "how did that go?" belongs to the
+      // whole Next block, and Start doing is the one with an obvious answer to it.
+      { head: 'Next, you\u2019ll\u2026', n: 3, rule: 1, echoOf: 'm_start', echoWord: 'start' },
+      { k: 'm_keep', type: 'short', label: 'Keep doing', max: 120, ph: 'What worked. Do it again.', cls: 'text-emerald-700' },
+      { k: 'm_start', type: 'short', label: 'Start doing', max: 120, ph: 'One new thing to try.', cls: 'text-cyan-700' },
+      { k: 'm_stop', type: 'short', label: 'Stop doing', max: 120, ph: 'One thing to drop.', cls: 'text-rose-600' },
     ] },
   // No questions. Some swimmers do not want to be asked anything — they want a page. Kept
   // last so the prompted sections stay the path of least resistance for everyone else.
@@ -2750,8 +2761,25 @@ function reflectSectionsHtml() {
   const hintHtml = (f) => `<button class="w-5 h-5 rounded-full bg-slate-100 text-slate-500 text-[11px] font-bold flex items-center justify-center flex-shrink-0 hover:bg-slate-200" data-refl-hint="${f.k}" aria-label="What to write here">?</button>`;
 
   const field = (f) => {
+    // A step header, not a question: the three AAR stages the fields under them belong to.
+    if (f.head) {
+      let echo = '';
+      if (f.echoOf) {
+        const p = lastReflect(f.echoOf);
+        if (p) echo = `<div class="rounded-xl bg-cyan-50 border border-cyan-200 px-3 py-2 mt-2 text-[11px] text-cyan-900 leading-snug">
+          <span class="font-semibold">Last race you said you\u2019d ${f.echoWord || 'do'}:</span> \u201c${esc(p.text)}\u201d
+          <span class="text-cyan-700">\u2014 how did that go?</span></div>`;
+      }
+      return `${f.rule ? '<div class="border-t border-slate-100"></div>' : ''}
+        <div>
+          <div class="flex items-center gap-2 pt-1">
+            <span class="w-5 h-5 rounded-full bg-cyan-600 text-white text-[11px] font-bold flex items-center justify-center flex-shrink-0">${f.n}</span>
+            <div class="text-[14px] font-bold text-cyan-900">${f.head}</div>
+          </div>${echo}
+        </div>`;
+    }
     const showHint = open['h:' + f.k] !== false;   // open until they close it
-    const hint = showHint ? `<div class="text-[11px] text-muted leading-snug mb-1.5">${f.hint}</div>` : '';
+    const hint = (showHint && f.hint) ? `<div class="text-[11px] text-muted leading-snug mb-1.5">${f.hint}</div>` : '';
     let echo = '';
     if (f.echo) {
       const p = lastReflect(f.k);
@@ -2759,8 +2787,9 @@ function reflectSectionsHtml() {
         <span class="font-semibold">Last race you said:</span> “${esc(p.text)}”
         <span class="text-cyan-700">— how did that go?</span></div>`;
     }
+    // No hint, no ? button — a button that opens nothing is worse than no button.
     const head = `<div class="flex items-start justify-between gap-2 mb-1">
-        <div class="text-[13px] font-semibold text-slate-700 leading-snug">${f.label}</div>${hintHtml(f)}
+        <div class="text-[13px] font-semibold ${f.cls || 'text-slate-700'} leading-snug">${f.label}</div>${f.hint ? hintHtml(f) : ''}
       </div>`;
     if (f.type === 'num') {
       return `<div>${head}${hint}
@@ -2774,6 +2803,12 @@ function reflectSectionsHtml() {
       return `<textarea data-refl="${f.k}" rows="${f.rows}" maxlength="${f.max}"
         class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-sm leading-relaxed outline-none focus:ring-2 focus:ring-cyan-300 resize-none">${esc(v[f.k])}</textarea>`;
     }
+    // One line, for an answer that is one thing: a moment, a habit to keep, a habit to drop.
+    if (f.type === 'short') {
+      return `<div>${head}${hint}
+        <input type="text" maxlength="${f.max}" value="${String(v[f.k] == null ? '' : v[f.k]).replace(/"/g, '&quot;')}" data-refl="${f.k}" placeholder="${f.ph || ''}"
+          class="w-full bg-slate-100 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300" aria-label="${f.label}" /></div>`;
+    }
     if (f.type === 'three') {
       const rows = [0, 1, 2].map((i) => `<input type="text" maxlength="${f.max}" value="${String(v[f.k + i] || '').replace(/"/g, '&quot;')}" data-refl="${f.k}${i}" placeholder="${i + 1}." class="w-full bg-slate-100 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300" />`).join('');
       return `<div>${head}${hint}<div class="space-y-2">${rows}</div></div>`;
@@ -2782,9 +2817,21 @@ function reflectSectionsHtml() {
       <textarea data-refl="${f.k}" rows="${f.rows}" maxlength="${f.max}" class="w-full bg-slate-100 rounded-xl px-3.5 py-3 text-sm outline-none focus:ring-2 focus:ring-cyan-300 resize-none">${esc(v[f.k])}</textarea></div>`;
   };
 
-  const filled = (s) => s.fields.reduce((n, f) => n + (f.type === 'three'
+  const filled = (s) => s.fields.reduce((n, f) => n + (f.head ? 0 : (f.type === 'three'
     ? [0, 1, 2].filter((i) => String(v[f.k + i] || '').trim()).length
-    : (String(v[f.k] == null ? '' : v[f.k]).trim() ? 1 : 0)), 0);
+    : (String(v[f.k] == null ? '' : v[f.k]).trim() ? 1 : 0))), 0);
+
+  // Questions this section used to ask. The answers are still theirs, so they stay readable
+  // rather than disappearing with the field that collected them. Only shown where they exist.
+  const legacyHtml = (s) => {
+    const got = (s.legacy || []).filter(([k]) => String(v[k] == null ? '' : v[k]).trim());
+    if (!got.length) return '';
+    return `<div class="rounded-xl bg-slate-50 border border-slate-200 px-3 py-2.5">
+      <div class="text-[10px] font-bold uppercase tracking-wide text-slate-500">From the older version of this section</div>
+      <div class="text-[11px] text-slate-600 leading-snug mt-1.5">
+        ${got.map(([k, lab]) => `<span class="font-semibold">${lab}:</span> ${esc(v[k])}`).join('<br>')}
+      </div></div>`;
+  };
 
   const sec = (s) => {
     const isOpen = !!open[s.key];
@@ -2798,7 +2845,7 @@ function reflectSectionsHtml() {
         ${n ? `<span class="text-[11px] font-semibold text-cyan-700 flex-shrink-0">${s.free ? 'written' : n + ' answered'}</span>` : ''}
         <span class="text-cyan-700 text-base font-bold flex-shrink-0">${isOpen ? '\u2013' : '+'}</span>
       </button>
-      ${isOpen ? `<div class="px-4 pb-4 pt-3 space-y-4 border-t border-cyan-100">${s.fields.map(field).join('')}</div>` : ''}
+      ${isOpen ? `<div class="px-4 pb-4 pt-3 space-y-4 border-t border-cyan-100">${s.fields.map(field).join('')}${legacyHtml(s)}</div>` : ''}
     </div>`;
   };
 
