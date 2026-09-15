@@ -4183,8 +4183,13 @@ function fiftyResultHtml() {
   const uk = uwKuw[f.stroke]; const uwTarget = uk ? uk[f.sex] * T : null; const uwDist = uk ? uk.dist : 15;
   const cp = {
     '15 m': rr.r15 * T, '20 m': rr.r15 * T + rr.r15_25 * T * 0.5, '25 m': rr.first25 * T,
-    '30 m': rr.first25 * T + rr.second25 * T * 0.2, '35 m': rr.first25 * T + rr.second25 * T * 0.4,
-    '40 m': rr.first25 * T + rr.second25 * T * 0.6, '45 m': rr.first25 * T + rr.second25 * T * 0.8, '50 m': T,
+    // 30-45 m derive from the MEASURED 25-45 m window (r25_45), not a flat fifths split of the
+    // second 25. The fifths assumed constant speed across the back half; 77 of the 80 elite swims in
+    // 50m_sprint_data.csv have the final 5 m timing FASTER than the 25-45 m average (the finish lunge
+    // reaches the pad early), so a flat split is contradicted by the data. This also makes
+    // t45 - t30 identical to the Speed-endurance row, which it previously contradicted by ~0.11 s.
+    '30 m': rr.first25 * T + rr.r25_45 * T * 0.25, '35 m': rr.first25 * T + rr.r25_45 * T * 0.5,
+    '40 m': rr.first25 * T + rr.r25_45 * T * 0.75, '45 m': rr.first25 * T + rr.r25_45 * T, '50 m': T,
   };
   const GTcp = 'display:grid;grid-template-columns:1fr 3rem 3.4rem 3rem;gap:6px;align-items:center;';
   const cpHeader = `<div style="${GTcp}" class="px-3 pt-2 pb-1"><span class="label-cap text-muted">Checkpoint</span><span class="label-cap text-muted" style="text-align:right;">Pred</span><span class="label-cap text-muted" style="text-align:center;">Time</span><span class="label-cap text-muted" style="text-align:center;">SR</span></div>`;
