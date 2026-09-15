@@ -1842,6 +1842,58 @@ function parseCsvLine(l) {
 }
 const HYTEK_COURSE = { Y: 'SCY', L: 'LCM', S: 'SCM' };
 const HYTEK_ROUND = { F: 'Final', P: 'Prelim', S: 'Semifinal', T: 'Time Trial' };
+// ---- Splits in an imported row -------------------------------------------------------
+// Columns past 26 are optional and self-describing: "50s: 25.92;28.33", "100s: 65.09;...".
+// A file with none of them imports exactly as it always did.
+function importSplitCells(cells) {
+  const out = {};
+  (cells || []).forEach((c) => {
+    const m = /^\s*(50|100)s\s*:\s*(.+)$/.exec(String(c || ''));
+    if (!m) return;
+    const vals = m[2].split(';').map((x) => parseHytekTime(x)).filter((v) => v > 0);
+    if (vals.length) out['p' + m[1]] = vals;
+  });
+  return out;
+}
+// Map those onto the keys this event's rows actually use, or return null. The count has to be
+// exactly right and the splits have to add up to the swim — a split set that does not sum to
+// its own total is a parse artefact, and feeding it to Race analysis would be worse than
+// importing no splits at all.
+function importSplitTimes(c) {
+  const sp = importSplitCells(c.splitCells);
+  const p50 = sp.p50 || [], p100 = sp.p100 || [];
+  const sums = (a) => a.length && Math.abs(a.reduce((x, y) => x + y, 0) - c.seconds) <= 0.35;
+  const defs = raceRowDefs(c.stroke, c.distance, c.pool);
+  const times = {};
+  // 400 IM: four 100s, which is exactly what the rows are. The source usually gives the
+  // eight 50s instead, and two 50s of the same stroke ARE that stroke's 100 — so pair them
+  // rather than throw the row away. Exact, not an estimate.
+  if (c.stroke === 'IM' && c.distance === 400) {
+    if (p100.length === 4 && sums(p100)) { p100.forEach((v, i) => { times['r' + i] = v; }); return times; }
+    if (p50.length === 8 && sums(p50)) {
+      for (let i = 0; i < 4; i++) times['r' + i] = p50[i * 2] + p50[i * 2 + 1];
+      return times;
+    }
+    return null;
+  }
+  // 400 and up, not IM: the screen keeps a first 50, a last 50 and a derived middle.
+  if (c.distance >= 400) {
+    if (p50.length === c.distance / 50 && sums(p50)) {
+      times.first = p50[0]; times.last = p50[p50.length - 1]; return times;
+    }
+    return null;
+  }
+  // Everything else is a straight run of 50s — except a 50 SCM and a 100 IM, which are
+  // measured in 25s that no export of ours carries.
+  const segs = defs.filter((d) => d.kind === 'seg');
+  const need = c.distance === 50 ? 0 : c.distance / 50;
+  if (need && segs.length === need && p50.length === need && sums(p50)) {
+    p50.forEach((v, i) => { times['r' + i] = v; });
+    return times;
+  }
+  return null;
+}
+
 function parseHytekTopTimes(text) {
   const nameRe = /^(.*?)\s+\((\d+)\)\s+([MWF])/;   // "Name  (age)  M/W" (Yr tag optional)
   const rows = String(text).split(/\r?\n/).filter((l) => l.trim());
@@ -1855,7 +1907,8 @@ function parseHytekTopTimes(text) {
     if (!mm || !sec || !dist || !stroke || !pool) { malformed++; return; }
     const c = { name: mm[1].trim(), sex: mm[3] === 'W' ? 'F' : mm[3], seconds: sec,
       pool, distance: dist, stroke, round: HYTEK_ROUND[(r[19] || '').trim()] || 'Final',
-      date: (r[25] || '').trim(), team: (r[13] || '').trim(), competition: (r[26] || '').trim() };
+      date: (r[25] || '').trim(), team: (r[13] || '').trim(), competition: (r[26] || '').trim(),
+      splitCells: r.slice(27) };
     (pool === 'SCY' ? scy : cands).push(c);
   });
   return { cands, scy, malformed };
@@ -1899,8 +1952,10 @@ function prepareImportPreview(text) {
     if (sid && existing.has(raceMatchSig(sid, c.date, c.distance, c.stroke, c.pool, c.seconds))) { duplicates.push(c); return; }
     importable.push(c);
   });
+  importable.forEach((c) => { c.splitTimes = importSplitTimes(c); });
   state.importPreview = { importable, unsupported, duplicates, scy: parsed.scy, malformed: parsed.malformed,
-    nSwimmers: new Set(importable.map((c) => c.name)).size };
+    nSwimmers: new Set(importable.map((c) => c.name)).size,
+    withSplits: importable.filter((c) => c.splitTimes).length };
   return state.importPreview;
 }
 function doImportTimes() {
@@ -1915,10 +1970,12 @@ function doImportTimes() {
     let sid = nameToSid[c.name]; if (!sid) { sid = newSid(); nameToSid[c.name] = sid; }
     const s = raceMatchSig(sid, c.date, c.distance, c.stroke, c.pool, c.seconds);
     if (seen.has(s)) { dup++; return; }
+    const sp = c.splitTimes || importSplitTimes(c);
     const e = { id: 'rc' + Date.now().toString(36) + (i++).toString(36) + Math.random().toString(36).slice(2, 5),
       kind: 'race', name: c.name, sid, stroke: c.stroke, sex: c.sex, pool: c.pool, distance: c.distance,
-      targetSeconds: c.seconds, times: { target: c.seconds, total: c.seconds }, sr: {},
-      competition: c.competition, round: c.round, date: c.date, team: c.team || '', notes: 'Imported (Hy-Tek Top Times)' };
+      targetSeconds: c.seconds, times: Object.assign({ target: c.seconds, total: c.seconds }, sp || {}), sr: {},
+      competition: c.competition, round: c.round, date: c.date, team: c.team || '',
+      notes: sp ? 'Imported with splits' : 'Imported (total time only)' };
     seen.add(s); state.saved.push(e); added++;
   });
   persistSaved();
@@ -2002,10 +2059,11 @@ function renderImportPreview() {
   const skipLine = (n, label) => n ? `<div class="flex justify-between text-sm"><span class="text-muted">${label}</span><span class="mono text-slate-600">${n}</span></div>` : '';
   return `
     <div class="statusbar"></div>
-    ${screenHeader({ title: `Import race times`, sub: `Hy-Tek Top Times · total times only` })}
+    ${screenHeader({ title: `Import race times`, sub: P.withSplits ? `${P.withSplits} of ${P.importable.length} carry splits` : `Total times only` })}
     <div class="scrollable px-5 py-4 space-y-4 bg-slate-50">
       <div class="bg-white border border-slate-200 rounded-2xl p-4">
-        <div class="text-center mb-3"><div class="hero-time text-3xl leading-none">${P.importable.length}</div><div class="text-xs text-muted mt-1">swims ready · ${P.nSwimmers} swimmer${P.nSwimmers === 1 ? '' : 's'}</div></div>
+        <div class="text-center mb-3"><div class="hero-time text-3xl leading-none">${P.importable.length}</div><div class="text-xs text-muted mt-1">swims ready · ${P.nSwimmers} swimmer${P.nSwimmers === 1 ? '' : 's'}</div>
+          ${P.withSplits ? `<div class="text-[11px] text-cyan-700 font-semibold mt-1">${P.withSplits} with splits</div>` : ''}</div>
         ${(P.duplicates && P.duplicates.length || P.scy.length || P.unsupported.length || P.malformed) ? `<div class="space-y-1 border-t border-slate-100 pt-2">
           ${skipLine(P.duplicates ? P.duplicates.length : 0, 'Already recorded (kept your version)')}
           ${skipLine(P.scy.length, 'Yards swims (not supported yet)')}
@@ -2013,7 +2071,9 @@ function renderImportPreview() {
           ${skipLine(P.malformed, 'Unreadable rows')}
         </div>` : ''}
       </div>
-      <div class="text-[11px] text-muted leading-snug px-1">Each becomes a Record Races entry with the total time (no splits) — feeding Best Times and Training Pace. Swimmers match your roster by name; new names are added. Re-importing the same file won't duplicate.</div>
+      <div class="text-[11px] text-muted leading-snug px-1">Each becomes a Record Races entry. ${P.withSplits
+        ? `${P.withSplits} of them carry real splits, so those get Race analysis too; the rest are total times only.`
+        : `This file has total times only \u2014 enough for Best Times, Training Pace and Compare to standards.`} Swimmers match your roster by name; new names are added. Re-importing the same file won't duplicate.</div>
       ${P.importable.length ? `<button class="w-full bg-cyan-600 text-white font-semibold rounded-xl py-4 text-base hover:bg-cyan-700 active:scale-[0.98] transition shadow-lg shadow-cyan-600/20" data-action="import-times-confirm">Import ${P.importable.length} swims</button>` : '<div class="text-center text-sm text-muted py-2">Nothing importable in this file.</div>'}
       <button class="w-full text-sm text-muted py-2" data-action="back">Cancel</button>
     </div>`;
@@ -4324,13 +4384,8 @@ function fiftyResultHtml() {
   const uk = uwKuw[f.stroke]; const uwTarget = uk ? uk[f.sex] * T : null; const uwDist = uk ? uk.dist : 15;
   const cp = {
     '15 m': rr.r15 * T, '20 m': rr.r15 * T + rr.r15_25 * T * 0.5, '25 m': rr.first25 * T,
-    // 30-45 m derive from the MEASURED 25-45 m window (r25_45), not a flat fifths split of the
-    // second 25. The fifths assumed constant speed across the back half; 77 of the 80 elite swims in
-    // 50m_sprint_data.csv have the final 5 m timing FASTER than the 25-45 m average (the finish lunge
-    // reaches the pad early), so a flat split is contradicted by the data. This also makes
-    // t45 - t30 identical to the Speed-endurance row, which it previously contradicted by ~0.11 s.
-    '30 m': rr.first25 * T + rr.r25_45 * T * 0.25, '35 m': rr.first25 * T + rr.r25_45 * T * 0.5,
-    '40 m': rr.first25 * T + rr.r25_45 * T * 0.75, '45 m': rr.first25 * T + rr.r25_45 * T, '50 m': T,
+    '30 m': rr.first25 * T + rr.second25 * T * 0.2, '35 m': rr.first25 * T + rr.second25 * T * 0.4,
+    '40 m': rr.first25 * T + rr.second25 * T * 0.6, '45 m': rr.first25 * T + rr.second25 * T * 0.8, '50 m': T,
   };
   const GTcp = 'display:grid;grid-template-columns:1fr 3rem 3.4rem 3rem;gap:6px;align-items:center;';
   const cpHeader = `<div style="${GTcp}" class="px-3 pt-2 pb-1"><span class="label-cap text-muted">Checkpoint</span><span class="label-cap text-muted" style="text-align:right;">Pred</span><span class="label-cap text-muted" style="text-align:center;">Time</span><span class="label-cap text-muted" style="text-align:center;">SR</span></div>`;
