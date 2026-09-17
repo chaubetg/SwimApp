@@ -1189,6 +1189,12 @@ function swimmerName(sid) { const e = entriesOf(sid); return e.length ? e[e.leng
 // Team rides on the swimmer's entries so it survives backups; read the latest non-empty.
 function swimmerTeam(sid) { const e = entriesOf(sid); for (let i = e.length - 1; i >= 0; i--) { const t = (e[i].team || '').trim(); if (t) return t; } return ''; }
 function setSwimmerTeam(sid, team) { const t = (team || '').trim(); state.saved.forEach(s => { if (s.sid === sid) s.team = t; }); persistSaved(); }
+// Sex rides on the entries too. Everything downstream treats "not M" as women
+// (see the s.sex === 'M' ? 'Men' : 'Women' reads), so normalise to 'M' / 'F' here.
+function swimmerSex(sid) { const e = entriesOf(sid); for (let i = e.length - 1; i >= 0; i--) { if (e[i].sex) return e[i].sex === 'M' ? 'M' : 'F'; } return 'F'; }
+// Changing this re-paces every split target the swimmer already has — those are
+// derived at render time from s.sex, never stored, so flipping back undoes it.
+function setSwimmerSex(sid, sex) { const v = sex === 'M' ? 'M' : 'F'; state.saved.forEach(s => { if (s.sid === sid) s.sex = v; }); persistSaved(); return v; }
 // Which swimmer a save belongs to: an explicit id (from a card or picked suggestion) wins; otherwise
 // attach to an existing swimmer if exactly one has this name; otherwise it's a brand-new swimmer.
 // (To keep two same-named swimmers separate, rename one — they then hold different ids.)
@@ -3063,6 +3069,10 @@ function renderRoster() {
     const team = swimmerTeam(sid);
     const nm = name.replace(/"/g, '&quot;');
     const navAttrs = editing ? '' : `data-savedsid="${sid}" data-name="${nm}"`;
+    // Small M/F toggle: tapped directly it flips the sex, and its handler runs
+    // ahead of the data-savedsid branch so a tap on it never opens the swimmer.
+    const sx = swimmerSex(sid);
+    const sexChip = SWIMMER ? '' : `<button class="w-9 h-9 rounded-lg text-xs font-bold flex items-center justify-center flex-shrink-0 border transition active:scale-95 ${sx === 'M' ? 'bg-sky-50 border-sky-200 text-sky-700 hover:bg-sky-100' : 'bg-pink-50 border-pink-200 text-pink-700 hover:bg-pink-100'}" data-set-sex="${sid}" aria-label="${nm} is set to ${sx === 'M' ? 'men' : 'women'} \u2014 tap to switch">${sx}</button>`;
     const trailing = editing
       ? `<button class="w-9 h-9 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center hover:bg-rose-100 active:scale-95 transition flex-shrink-0" data-del-swimmer="${sid}" aria-label="Delete ${nm}">${TRASH_SVG}</button>`
       : `<span class="text-slate-300 text-2xl">›</span>`;
@@ -3073,6 +3083,7 @@ function renderRoster() {
         <div class="font-semibold text-base truncate">${name}</div>
         <div class="text-xs text-muted mt-0.5">${evs.length} saved ${evs.length === 1 ? 'event' : 'events'}${team ? ` · <span class="text-cyan-700 font-medium">${team.replace(/</g, '&lt;')}</span>` : ''}</div>
       </div>
+      ${sexChip}
       ${trailing}
     </div>`;
   }).join('<div class="border-t border-slate-100 mx-3"></div>');
@@ -7508,6 +7519,14 @@ document.addEventListener('click', (e) => {
     }
     const tfEl = e.target.closest('[data-teamfilter]');
     if (tfEl) { state.teamFilter = tfEl.getAttribute('data-teamfilter'); render(); return; }
+    const sxEl = e.target.closest('[data-set-sex]');
+    if (sxEl) {
+      const sid = sxEl.getAttribute('data-set-sex');
+      const v = setSwimmerSex(sid, swimmerSex(sid) === 'M' ? 'F' : 'M');
+      render();
+      showToast(`${swimmerName(sid) || 'Swimmer'} \u2192 ${v === 'M' ? 'Men' : 'Women'} \u00b7 targets re-paced`);
+      return;
+    }
     const svn = e.target.closest('[data-savedsid]');
     if (svn) {
       state.savedSid = svn.getAttribute('data-savedsid');
