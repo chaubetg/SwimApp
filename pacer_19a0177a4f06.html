@@ -2151,6 +2151,38 @@ function deleteSwimmer(sid) {
   showToast(`Deleted ${name}`);
 }
 
+// ----- Clear everything: the whole roster, for a fresh import -----
+// state.saved holds races, target times, goals and reflections for every swimmer,
+// and the team name rides on each entry, so emptying it removes swimmers AND teams.
+// Nothing else needs touching: TS_COLS_KEY is only column preferences, and the
+// swimmer build's identity keys are not used here (renderRoster is coach-only).
+function clearAllData() {
+  const n = state.saved.length;
+  if (!n) { showToast('Nothing to clear'); return; }
+  const swimmers = new Set(state.saved.map((s) => s.sid)).size;
+  const a = backupAgeDays();
+  const backupLine = a === null
+    ? 'You have never backed up.'
+    : `Last backup ${Math.floor(a)} day${Math.floor(a) === 1 ? '' : 's'} ago.`;
+  if (!confirm(`Remove all ${swimmers} swimmer${swimmers === 1 ? '' : 's'}, `
+    + `${n.toLocaleString()} saved item${n === 1 ? '' : 's'} and every team?\n\n`
+    + `${backupLine}\n\nThis clears the roster so you can start from a fresh import. `
+    + `It can't be undone.`)) return;
+  // Second gate only where the data is actually unrecoverable.
+  if (backupIsStale() && !confirm('Last chance \u2014 this data is not backed up.\n\n'
+    + 'OK = delete everything anyway\nCancel = go back and back up first')) return;
+  state.saved = [];
+  persistSaved();
+  // Drop every pointer into the data that just went away.
+  state.savedSid = null; state.race = null; state.swimmer = null;
+  state.editing = false; state.search = ''; state.teamFilter = 'all';
+  state.importPreview = null; state.rgOpen = {};
+  if (state.form) state.form.sid = null;
+  if (state.tpForm) state.tpForm.teams = null;
+  navigate('roster');
+  showToast(`Cleared ${n.toLocaleString()} saved item${n === 1 ? '' : 's'} \u2014 ready for a fresh import`);
+}
+
 // ============================================================
 // RENDER
 // ============================================================
@@ -3161,6 +3193,8 @@ function renderRoster() {
         <button class="font-semibold hover:text-cyan-700 transition" data-action="export-csv">Download CSV</button>
         <span class="text-slate-200">\u00b7</span>
         <button class="font-semibold hover:text-cyan-700 transition" data-action="switch-version">Switch version</button>
+        ${hasSaved ? `<span class="basis-full h-0"></span>
+        <button class="font-semibold text-rose-500 hover:text-rose-700 transition" data-action="clear-all">Clear all data</button>` : ''}
       </div>
     </div>
     <div class="text-center text-[10px] text-faint py-2 flex-shrink-0">© 2026 Gaël Chaubet · All rights reserved</div>
@@ -8296,6 +8330,7 @@ function handleAction(action, el) {
     case 'export-csv': exportAnalysisCsv(); break;
     case 'bt-csv': exportBestTimesCsv(); break;
     case 'csv-page': exportScreenCsv(); break;
+    case 'clear-all': clearAllData(); break;
     case 'backup-json': exportBackupJson(); break;
     case 'import-json': triggerImport(); break;
     case 'import-times-csv': navigate('import-menu'); break;
