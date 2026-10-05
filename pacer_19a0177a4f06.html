@@ -5746,7 +5746,7 @@ function trainingRows(pool, distance, basis) {
 const TP_ORD = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th'];
 // A single 25 prints grey; a 50, 75, 100 or a named leg prints bold.
 function tpBold(h) { return !!h && !/(^|\s)25$/.test(h); }
-function tpCells(segs, stroke, pool, distance, splits, sex) {
+function tpAllCells(segs, stroke, pool, distance, splits, sex) {
   if (!segs || !segs.length) return [];
   // A 400 IM comes back as eight 50 s; it is swum and written as four 100 s, one per stroke.
   if (stroke === 'IM' && splits && splits.length === 8) {
@@ -5769,26 +5769,36 @@ function tpCells(segs, stroke, pool, distance, splits, sex) {
       { h: 'Last ' + lab, v: sum(n - ends, n) },
     ];
   }
-  // ---- 100 and 200: the columns a coach calls a set from --------------------------------
-  // Anything headed "1st" starts from the dive; every other column is a split inside the race.
-  // A column is only listed when it says something new: the 100 has no "Last 50" because it
-  // is the 2nd 50, and the 50 (handled below) has no "Last 25" because it is the 2nd 25.
+  // ---- 50, 100 and 200: every column a coach might call a set from ----------------------
+  // Each cell carries the toggle key(s) that show it (k) and whether it shows before anyone
+  // has touched a toggle (def). Anything headed "1st" starts from the dive; every other
+  // column is a split inside the race. Cells are listed in the order they print.
   const t = segs.map((s) => s.time);
+  const C = (h, v, k, def) => ({ h, v, k: [].concat(k), def: def !== false });
+  if (distance === 50 && segs.length === 2) {
+    return [C('1st 25', t[0], 'q1'), C('2nd 25', t[1], 'q2')];
+  }
   // 100 SCM, four 25s (modelled from real 100 SCM races for the form strokes, legs for IM).
   if (pool === 'SCM' && distance === 100 && segs.length === 4) {
     if (stroke === 'IM') {
       return [
-        { h: 'Fly 25', v: t[0] }, { h: 'Fly+Bk 50', v: t[0] + t[1] },
-        { h: 'Back 25', v: t[1] }, { h: 'Br+Fr 50', v: t[2] + t[3] },
-        { h: 'Free 25', v: t[3] }, { h: '1st 75', v: t[0] + t[1] + t[2] },
-        { h: 'Bk+Br 50', v: t[1] + t[2] },               // the middle 50: no dive, no finish
+        C('Fly 25', t[0], 'q1'), C('Fly+Bk 50', t[0] + t[1], ['h1', 'imp']),
+        C('Back 25', t[1], 'q2'), C('Br+Fr 50', t[2] + t[3], ['h2', 'imp']),
+        C('Free 25', t[3], 'qL'), C('1st 75', t[0] + t[1] + t[2], 't1'),
+        C('Last 75', t[1] + t[2] + t[3], 'tL', false),
+        C('Bk+Br 50', t[1] + t[2], 'imp'),                // the middle 50: no dive, no finish
       ];
     }
     return [
-      { h: '1st 25', v: t[0] }, { h: '1st 50', v: t[0] + t[1] },
-      { h: '2nd 25', v: t[1] }, { h: '2nd 50', v: t[2] + t[3] },
-      { h: 'Last 25', v: t[3] }, { h: '1st 75', v: t[0] + t[1] + t[2] },
+      C('1st 25', t[0], 'q1'), C('1st 50', t[0] + t[1], 'h1'),
+      C('2nd 25', t[1], 'q2'), C('Last 50', t[2] + t[3], 'h2'),
+      C('Last 25', t[3], 'qL'), C('1st 75', t[0] + t[1] + t[2], 't1'),
+      C('Last 75', t[1] + t[2] + t[3], 'tL', false),
     ];
+  }
+  // 100 long course: two 50s. No race data for a 25 inside it, so none is offered.
+  if (distance === 100 && segs.length === 2 && stroke !== 'IM') {
+    return [C('1st 50', t[0], 'h1'), C('Last 50', t[1], 'h2')];
   }
   if (distance === 200 && segs.length === 4) {
     const IM = stroke === 'IM';
@@ -5800,48 +5810,106 @@ function tpCells(segs, stroke, pool, distance, splits, sex) {
       const q2 = t.map((x, i) => x - q1[i]);             // second 25 of each 50
       if (IM) {
         return [
-          { h: '1st 25', v: q1[0] },
-          { h: 'Fly 50', v: t[0] }, { h: 'Fly 2nd 25', v: q2[0] },
-          { h: 'Back 50', v: t[1] }, { h: 'Bk 2nd 25', v: q2[1] },
-          { h: 'Breast 50', v: t[2] }, { h: 'Br 2nd 25', v: q2[2] },
-          { h: 'Free 50', v: t[3] }, { h: 'Fr 2nd 25', v: q2[3] },
-          { h: '1st 75', v: t[0] + q1[1] },
-          { h: 'Fly+Bk 100', v: t[0] + t[1] }, { h: 'Bk+Br 100', v: t[1] + t[2] },
-          { h: 'Br+Fr 100', v: t[2] + t[3] },
+          C('1st 25', q1[0], 'q1'),
+          C('Fly 50', t[0], 'h1'), C('Fly 2nd 25', q2[0], 'q2'),
+          C('Back 50', t[1], 'h2'), C('Bk 2nd 25', q2[1], 'q2'),
+          C('Breast 50', t[2], 'h3'), C('Br 2nd 25', q2[2], 'q2'),
+          C('Free 50', t[3], 'h4'), C('Fr 2nd 25', q2[3], ['q2', 'qL']),
+          C('1st 75', t[0] + q1[1], 't1'), C('Last 75', q2[2] + t[3], 'tL', false),
+          C('Fly+Bk 100', t[0] + t[1], ['c1', 'imp']), C('Bk+Br 100', t[1] + t[2], 'imp'),
+          C('Br+Fr 100', t[2] + t[3], ['cL', 'imp']),
         ];
       }
       return [
-        { h: '1st 25', v: q1[0] }, { h: '1st 50', v: t[0] },
-        { h: '2nd 25', v: q2[0] }, { h: '2nd 50', v: t[1] },
-        { h: 'Last 25', v: q2[3] }, { h: 'Last 50', v: t[3] },
-        { h: '1st 75', v: t[0] + q1[1] }, { h: '1st 100', v: t[0] + t[1] },
-        { h: '25\u2013125', v: q2[0] + t[1] + q1[2] },   // the 100 that starts at the first wall
-        { h: 'Last 100', v: t[2] + t[3] },
+        C('1st 25', q1[0], 'q1'), C('1st 50', t[0], 'h1'),
+        C('2nd 25', q2[0], 'q2'), C('2nd 50', t[1], 'h2'),
+        C('3rd 50', t[2], 'h3', false),
+        C('Last 25', q2[3], 'qL'), C('Last 50', t[3], 'h4'),
+        C('1st 75', t[0] + q1[1], 't1'), C('Last 75', q2[2] + t[3], 'tL', false),
+        C('1st 100', t[0] + t[1], 'c1'),
+        C('25–125', q2[0] + t[1] + q1[2], 'mid'),     // the 100 that starts at the first wall
+        C('Last 100', t[2] + t[3], 'cL'),
       ];
     }
     // Long course (or no share table): races are timed every 50 m, so there is no race data
     // for a 25 inside a 200 and none is invented. 50s and 100s only.
     if (IM) {
       return [
-        { h: 'Fly 50', v: t[0] }, { h: 'Back 50', v: t[1] },
-        { h: 'Breast 50', v: t[2] }, { h: 'Free 50', v: t[3] },
-        { h: 'Fly+Bk 100', v: t[0] + t[1] }, { h: 'Bk+Br 100', v: t[1] + t[2] },
-        { h: 'Br+Fr 100', v: t[2] + t[3] },
+        C('Fly 50', t[0], 'h1'), C('Back 50', t[1], 'h2'),
+        C('Breast 50', t[2], 'h3'), C('Free 50', t[3], 'h4'),
+        C('Fly+Bk 100', t[0] + t[1], ['c1', 'imp']), C('Bk+Br 100', t[1] + t[2], 'imp'),
+        C('Br+Fr 100', t[2] + t[3], ['cL', 'imp']),
       ];
     }
     return [
-      { h: '1st 50', v: t[0] }, { h: '2nd 50', v: t[1] }, { h: 'Last 50', v: t[3] },
-      { h: '1st 100', v: t[0] + t[1] }, { h: 'Last 100', v: t[2] + t[3] },
+      C('1st 50', t[0], 'h1'), C('2nd 50', t[1], 'h2'), C('3rd 50', t[2], 'h3', false),
+      C('Last 50', t[3], 'h4'),
+      C('1st 100', t[0] + t[1], 'c1'), C('Last 100', t[2] + t[3], 'cL'),
     ];
   }
   // Uniform segments get "1st 50 / 2nd 50" style headings; collapsed 400+ rows and IM legs keep
-  // the label buildDisplaySegments gave them.
+  // the label buildDisplaySegments gave them. No toggles here: these always print.
   const uniform = segs.every((s) => !s.count || s.count === 1) && distance % segs.length === 0;
   const seg = uniform ? distance / segs.length : 0;
   return segs.map((s, i) => ({
     h: (stroke === 'IM' || !uniform) ? s.label : `${TP_ORD[i] || (i + 1) + 'th'} ${seg}`,
     v: s.time,
   }));
+}
+
+// ---- Column toggles ---------------------------------------------------------------------
+// One key per section of the race. A cell shows when ANY of its keys is on; a key is on when
+// the coach has set it, and otherwise when the cell's own default says so. So with nothing
+// set, the table is exactly the default one.
+const TP_COL_KEYS = ['q1', 'q2', 'qL', 'h1', 'h2', 'h3', 'h4', 't1', 'tL', 'c1', 'cL', 'mid', 'imp'];
+const TP_COL_LABEL = { q1: '1st 25', q2: '2nd 25', qL: 'Last 25', h1: '1st 50', h2: '2nd 50', h3: '3rd 50',
+  h4: 'Last 50', t1: '1st 75', tL: 'Last 75', c1: '1st 100', cL: 'Last 100', mid: '25–125', imp: 'IM pairs' };
+const TP_COLS_KEY = 'sc_tp_cols';
+function tpColsState() {
+  if (!state.tpCols) {
+    let o = {};
+    try { o = JSON.parse(localStorage.getItem(TP_COLS_KEY) || '{}') || {}; } catch (e) { o = {}; }
+    state.tpCols = (o && typeof o === 'object' && !Array.isArray(o)) ? o : {};
+  }
+  return state.tpCols;
+}
+function saveTpCols() { try { localStorage.setItem(TP_COLS_KEY, JSON.stringify(state.tpCols || {})); } catch (e) {} }
+function tpPick(cells, over) {
+  return cells.filter((c) => !c.k || c.k.some((k) => (over && over[k] != null) ? !!over[k] : c.def !== false));
+}
+// The default set: what the swimmer's sheet shows, and what the coach sees before toggling.
+function tpCells(segs, stroke, pool, distance, splits, sex) {
+  return tpPick(tpAllCells(segs, stroke, pool, distance, splits, sex), null);
+}
+// The coach's set: the default with their toggles applied. The swimmer build has no panel,
+// and shares storage with the coach build on the same device, so it never reads them.
+function tpCellsShown(segs, stroke, pool, distance, splits, sex) {
+  return tpPick(tpAllCells(segs, stroke, pool, distance, splits, sex), SWIMMER ? null : tpColsState());
+}
+// The toggles to offer for this table: every key some stroke at this event has a cell for.
+// A chip's state is read from the stroke on screen where that stroke has the column, so the
+// chip always agrees with the table under it.
+function tpColChips(rows, f) {
+  const over = tpColsState();
+  const rep = {};
+  rows.forEach((r) => {
+    if (!rep[r.stroke] && r.segs && r.segs.length) rep[r.stroke] = tpAllCells(r.segs, r.stroke, f.pool, f.distance, r.splits, r.sex);
+  });
+  const has = (cells, k) => cells.filter((c) => c.k && c.k.indexOf(k) >= 0);
+  const cur = rep[f.stroke] || [];
+  const all = [].concat.apply([], Object.keys(rep).map((s) => rep[s]));
+  return TP_COL_KEYS.filter((k) => has(all, k).length).map((k) => {
+    const pool = has(cur, k).length ? has(cur, k) : has(all, k);
+    const on = over[k] != null ? !!over[k] : pool.some((c) => c.def !== false);
+    const label = (k === 'h2' && f.distance === 100) ? 'Last 50' : TP_COL_LABEL[k];
+    return { k, on, label };
+  });
+}
+// What the time column is called: the pace source that was picked.
+function tpBasisHead(basis) {
+  if (basis === 'recent') return 'Most recent';
+  if (isGoalBasis(basis)) return SWIMMER ? 'Goal' : 'Target';
+  return 'Best time';
 }
 
 // ===== Training Pace: PDF download =====
@@ -5957,7 +6025,175 @@ function tpPdfDoc(m) {
   });
   return doc;
 }
+// ===== Pace sheet: the coach's printable ===================================================
+// Not a copy of the screen. The screen shows one stroke at a time; the sheet a coach takes
+// to the deck wants every stroke for the distance, women and men on separate pages, and only
+// the sections of the race they are training today. Built from trainingRows() and the same
+// toggles as the table, so the numbers cannot differ from the screen's.
+function tpSheetModel() {
+  const f = state.tpForm;
+  if (!f) return null;
+  const sxf = f.sexFilter || 'all';
+  const rows = trainingRows(f.pool, f.distance, f.basis)
+    .filter((r) => r.segs && r.segs.length && (sxf === 'all' || r.sex === sxf) && tpTeamShown(r, f.teams));
+  if (!rows.length) return null;
+  const over = tpColsState();
+  const ORDER = ['Free', 'Back', 'Breast', 'Fly', 'IM'];
+  const NAMES = { Free: 'Freestyle', Back: 'Backstroke', Breast: 'Breaststroke', Fly: 'Butterfly', IM: 'Individual medley' };
+  const groups = [];
+  let fellBack = 0;
+  ['F', 'M'].forEach((sx) => {
+    const blocks = [];
+    ORDER.forEach((st) => {
+      const rs = rows.filter((r) => (r.sex === 'M' ? 'M' : 'F') === sx && r.stroke === st)
+        .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+      if (!rs.length) return;
+      const lines = rs.map((r) => {
+        if (r.fellBack) fellBack++;
+        const cells = tpPick(tpAllCells(r.segs, r.stroke, f.pool, f.distance, r.splits, r.sex), over);
+        return { name: r.name, time: formatTime(r.total) + (r.fellBack ? '*' : ''), heads: cells.map((c) => c.h), vals: cells.map((c) => formatTime(c.v)) };
+      });
+      blocks.push({ title: NAMES[st] || st, heads: lines[0].heads, rows: lines });
+    });
+    if (blocks.length) groups.push({ title: `${f.distance} m — ${sx === 'F' ? 'Women' : 'Men'}`, blocks });
+  });
+  if (!groups.length) return null;
+  const from = f.basis === 'recent' ? 'most recent swim' : (isGoalBasis(f.basis) ? 'target time' : 'best time');
+  const team = (f.teams && f.teams.length) ? ' · ' + (f.teams.length === 1 ? f.teams[0] : f.teams.length + ' teams') : '';
+  return {
+    groups, timeHead: tpBasisHead(f.basis),
+    sub: `${f.pool === 'SCM' ? 'Short course (SCM)' : (f.pool === 'LCM' ? 'Long course (LCM)' : f.pool)} · race pace from each swimmer’s ${from}${team}`,
+    foot: `Split Compass · ${new Date().toISOString().slice(0, 10)} · splits are modelled from race data, a reference not a rule.`
+      + (fellBack ? ' * no target set — paced from best time.' : ''),
+    file: `Split Compass - ${f.distance} m ${f.pool} pace sheet`,
+  };
+}
+// Geometry for one way of laying the sheet out. `up` = stroke blocks side by side.
+const TP_SHEET = { RH: 13.2, HEAD: 17, COLHEAD: 13, GAP: 12, TIMEW: 46, TOP: 90, BOTTOM: 46, GUT: 22 };
+function tpSheetGeom(orientation, up, nSplit) {
+  const W = orientation === 'landscape' ? 792 : 612, H = orientation === 'landscape' ? 612 : 792;
+  const M = orientation === 'landscape' ? 36 : 40;
+  const colW = (W - 2 * M - (up - 1) * TP_SHEET.GUT) / up;
+  const minName = up === 1 ? 120 : 96;
+  const room = colW - minName - TP_SHEET.TIMEW;
+  const fits = nSplit === 0 || room / nSplit >= 37;
+  // Splits take what they need and no more: a wide page should not push the numbers a hand's
+  // width away from the name they belong to.
+  const splitW = nSplit ? Math.max(30, Math.min(up === 1 ? 56 : 42, room / nSplit)) : 0;
+  return { orientation, up, W, H, M, colW, splitW, fits, usable: H - TP_SHEET.TOP - TP_SHEET.BOTTOM };
+}
+// Flow the blocks into columns and pages. Returns the drawing instructions, so the page count
+// used to choose a layout and the pages actually drawn can never disagree.
+function tpSheetFlow(model, g) {
+  const S = TP_SHEET, ops = [];
+  let page = -1;
+  const blockH = (b) => S.HEAD + S.COLHEAD + S.RH * b.rows.length;
+  model.groups.forEach((grp) => {
+    let col = 0, y = 0;
+    const newPage = () => { page++; col = 0; y = 0; ops.push({ t: 'page', page, title: grp.title }); };
+    const nextCol = () => { if (col + 1 < g.up) { col++; y = 0; } else newPage(); };
+    newPage();
+    // Side by side and everything fits on one page: split at a block boundary so the two
+    // columns come out as level as they can, rather than one full and one nearly empty.
+    let breakAt = -1;
+    if (g.up === 2 && grp.blocks.length > 1) {
+      const hs = grp.blocks.map((b) => blockH(b) + S.GAP);
+      let best = null;
+      for (let k = 1; k < hs.length; k++) {
+        const a = hs.slice(0, k).reduce((s, x) => s + x, 0), b = hs.slice(k).reduce((s, x) => s + x, 0);
+        if (a - S.GAP <= g.usable && b - S.GAP <= g.usable && (best === null || Math.abs(a - b) < best.d)) best = { k, d: Math.abs(a - b) };
+      }
+      if (best) breakAt = best.k;
+    }
+    grp.blocks.forEach((b, bi) => {
+      if (bi === breakAt) { col = 1; y = 0; }
+      const head = (cont) => { ops.push({ t: 'head', page, col, y, block: b, cont }); y += S.HEAD + S.COLHEAD; };
+      // Never strand a block heading at the foot of a column with fewer than two rows under it.
+      const need = S.HEAD + S.COLHEAD + S.RH * Math.min(2, b.rows.length);
+      if (y > 0 && y + need > g.usable) nextCol();
+      head(false);
+      b.rows.forEach((r) => {
+        if (y + S.RH > g.usable) { nextCol(); head(true); }
+        ops.push({ t: 'row', page, col, y, block: b, row: r }); y += S.RH;
+      });
+      y += S.GAP;
+    });
+  });
+  return { ops, pages: page + 1 };
+}
+// The layout that prints on the fewest pages. Ties go to portrait, then to side-by-side.
+function tpSheetPlan(model) {
+  const nSplit = Math.max(0, ...model.groups.map((grp) => Math.max(0, ...grp.blocks.map((b) => b.heads.length))));
+  const cands = [['portrait', 2], ['portrait', 1], ['landscape', 2], ['landscape', 1]]
+    .map(([o, up]) => tpSheetGeom(o, up, nSplit));
+  let ok = cands.filter((g) => g.fits);
+  if (!ok.length) ok = [cands[3]];            // more columns than any layout holds: widest, and shrink
+  let best = null;
+  ok.forEach((g) => { const fl = tpSheetFlow(model, g); if (!best || fl.pages < best.flow.pages) best = { g, flow: fl }; });
+  return { g: best.g, flow: best.flow, nSplit };
+}
+function tpSheetDoc(model) {
+  const S = TP_SHEET, plan = tpSheetPlan(model), g = plan.g;
+  const doc = new window.jspdf.jsPDF({ unit: 'pt', format: 'letter', orientation: g.orientation });
+  const INK = [15, 23, 42], MUTE = [100, 116, 139], ACC = [21, 94, 117];
+  const font = (style, size, rgb) => { doc.setFont('helvetica', style); doc.setFontSize(size); doc.setTextColor(rgb[0], rgb[1], rgb[2]); };
+  // Draw text no wider than maxW: shrink first, and only then cut it short.
+  const fit = (str, x, y, maxW, size, minSize, align) => {
+    let s = pdfText(str), sz = size;
+    doc.setFontSize(sz);
+    while (sz > minSize && doc.getTextWidth(s) > maxW) { sz -= 0.5; doc.setFontSize(sz); }
+    while (s.length > 3 && doc.getTextWidth(s) > maxW) s = s.slice(0, -2).replace(/\s+$/, '') + '…';
+    doc.text(s, x, y, align ? { align } : undefined);
+  };
+  const colX = (c) => g.M + c * (g.colW + S.GUT);
+  let cur = 0;
+  plan.flow.ops.forEach((op) => {
+    while (cur < op.page) { doc.addPage('letter', g.orientation); cur++; }
+    if (op.t === 'page') {
+      font('bold', 18, INK); doc.text(pdfText(op.title), g.M, 52);
+      font('normal', 9, MUTE); fit(model.sub, g.M, 67, g.W - 2 * g.M, 9, 7);
+      doc.setDrawColor(15, 23, 42); doc.setLineWidth(1); doc.line(g.M, 75, g.W - g.M, 75);
+      font('normal', 7.5, MUTE); fit(model.foot, g.M, g.H - 30, g.W - 2 * g.M, 7.5, 6);
+      return;
+    }
+    const x = colX(op.col), top = S.TOP + op.y, b = op.block, n = b.heads.length;
+    const right = x + g.colW - 6;
+    const edge = (i) => right - (n - 1 - i) * g.splitW;      // right edge of split column i
+    const timeEdge = right - n * g.splitW;                   // right edge of the time column
+    const nameW = timeEdge - S.TIMEW - (x + 6) - 4;
+    if (op.t === 'head') {
+      doc.setFillColor(241, 245, 249); doc.rect(x, top, g.colW, S.HEAD, 'F');
+      font('bold', 10, INK); doc.text(pdfText(b.title + (op.cont ? ' (cont.)' : '')), x + 6, top + S.HEAD - 5);
+      font('normal', 8, MUTE); doc.text(`${b.rows.length} swimmer${b.rows.length === 1 ? '' : 's'}`, right, top + S.HEAD - 5.5, { align: 'right' });
+      const hy = top + S.HEAD + S.COLHEAD - 4;
+      font('bold', 7, MUTE); doc.text('SWIMMER', x + 6, hy);
+      fit(model.timeHead.toUpperCase(), timeEdge, hy, S.TIMEW + 6, 7, 5.5, 'right');
+      b.heads.forEach((h, i) => { font('bold', 7, MUTE); fit(h.toUpperCase(), edge(i), hy, g.splitW - 3, 7, 4.5, 'right'); });
+      doc.setDrawColor(148, 163, 184); doc.setLineWidth(0.8);
+      doc.line(x, top + S.HEAD + S.COLHEAD, x + g.colW, top + S.HEAD + S.COLHEAD);
+      return;
+    }
+    const base = top + S.RH - 3.8, r = op.row;
+    font('normal', 9, INK); fit(r.name, x + 6, base, nameW, 9, 6);
+    font('bold', 9, ACC); doc.text(pdfText(r.time), timeEdge, base, { align: 'right' });
+    r.vals.forEach((v, i) => {
+      if (tpBold(b.heads[i])) font('bold', 9, INK); else font('normal', 9, [51, 65, 85]);
+      fit(v, edge(i), base, g.splitW - 2, 9, 6.5, 'right');
+    });
+    doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.4); doc.line(x, top + S.RH, x + g.colW, top + S.RH);
+  });
+  return doc;
+}
+
 function tpBuildPdf() {
+  // The coach's Training Pace downloads the pace sheet; every other table (the swimmer's
+  // Training splits, Team vs standards) still downloads the table as it is on screen.
+  if (!SWIMMER && state.view === 'training-pace') {
+    const sheet = tpSheetModel();
+    if (!sheet) { showToast('Nothing to download'); return; }
+    tpSheetDoc(sheet).save(sheet.file.replace(/[^\w\s-]/g, '').replace(/\s+/g, ' ').trim() + '.pdf');
+    return;
+  }
   const m = tpPdfModel();
   if (!m) { showToast('Nothing to download'); return; }
   const doc = tpPdfDoc(m);
@@ -7028,7 +7264,7 @@ function renderTrainingSplits() {
     const pad = (a) => a.concat(Array(Math.max(0, nCol - a.length)).fill(null));
     const headRow = (label, heads, cls) => `<tr class="text-[10px] uppercase tracking-wide text-faint ${cls}">
         <th class="text-left font-semibold py-1.5 pl-3 whitespace-nowrap">${label}</th>
-        <th class="text-right font-semibold px-2">Time</th>
+        <th class="text-right font-semibold px-2 whitespace-nowrap" data-tp-timehead>${tpBasisHead(f.basis)}</th>
         ${pad(heads).map((h) => `<th class="text-right font-semibold px-2 whitespace-nowrap">${h == null ? '' : h}</th>`).join('')}
       </tr>`;
     let thead = '', trs = '';
@@ -7460,7 +7696,7 @@ function renderTrainingPace() {
     const present = FORM.filter((s) => byStroke[s]);
     const shapeOf = (st) => {
       const r = byStroke[st].find((x) => x.segs && x.segs.length);
-      return r ? tpCells(r.segs, st, f.pool, f.distance, r.splits, r.sex).map((c) => c.h) : [];
+      return r ? tpCellsShown(r.segs, st, f.pool, f.distance, r.splits, r.sex).map((c) => c.h) : [];
     };
     const mainHeads = present.length ? shapeOf(present[0]) : (byStroke.IM ? shapeOf('IM') : []);
     const imHeads = byStroke.IM ? shapeOf('IM') : [];
@@ -7470,12 +7706,12 @@ function renderTrainingPace() {
 
     const headRow = (heads, cls) => `<tr class="text-[10px] uppercase tracking-wide text-faint ${cls}">
         <th class="text-left font-semibold py-1.5 pl-3">Swimmer</th>
-        <th class="text-right font-semibold px-2">Target</th>
+        <th class="text-right font-semibold px-2 whitespace-nowrap" data-tp-timehead>${tpBasisHead(f.basis)}</th>
         ${pad(heads).map((h) => `<th class="text-right font-semibold px-2 whitespace-nowrap">${h == null ? '' : h}</th>`).join('')}
       </tr>`;
 
     const rowHtml = (r, heads, opensBlock) => {
-      const cells = pad(tpCells(r.segs, r.stroke, f.pool, f.distance, r.splits, r.sex));
+      const cells = pad(tpCellsShown(r.segs, r.stroke, f.pool, f.distance, r.splits, r.sex));
       return `<tr class="tp-row ${opensBlock ? TP_BLOCK : 'border-t border-slate-100'}" data-name="${r.name}">
         <td class="py-2 pl-3">
           <div class="font-semibold text-[13px] whitespace-nowrap">${r.name}</div>
@@ -7507,6 +7743,25 @@ function renderTrainingPace() {
     ? `<button class="${chip(!f.teams)}" data-tp-team="*">All teams</button> `
       + teamsPresent.map((t) => `<button class="${chip(!!f.teams && f.teams.indexOf(t) >= 0)}" data-tp-team="${esc(t).replace(/"/g, '&quot;')}">${esc(t)}</button>`).join(' ')
     : '';
+  // Columns panel: closed by default, one chip per section of the race this event has.
+  const colChips = (rows && rows.length && !SWIMMER) ? tpColChips(rows, f) : [];
+  const colsOn = colChips.filter((c) => c.on).length;
+  const colsTouched = Object.keys(tpColsState()).length > 0;
+  const colPanel = colChips.length ? `<div class="mt-2" data-tp-cols>
+      <button class="w-full flex items-center justify-between bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:border-cyan-300 transition" data-action="tp-cols-toggle" aria-expanded="${state.tpColsOpen ? 'true' : 'false'}">
+        <span>Columns <span class="text-muted font-medium">· ${colsOn} of ${colChips.length} shown</span></span>
+        <span class="text-slate-400">${state.tpColsOpen ? '▴' : '▾'}</span>
+      </button>
+      ${state.tpColsOpen ? `<div class="bg-white border border-slate-200 rounded-xl px-3 py-3 mt-1.5">
+        <div class="flex flex-wrap gap-1.5">
+          ${colChips.map((c) => `<button class="${chip(c.on)}" data-tp-col="${c.k}" data-on="${c.on ? 1 : 0}" aria-pressed="${c.on ? 'true' : 'false'}">${c.label}</button>`).join('')}
+        </div>
+        <div class="flex items-center justify-between mt-2.5">
+          <span class="text-[10px] text-faint leading-snug">Tap to show or hide. The PDF prints the columns that are on, for every stroke.</span>
+          ${colsTouched ? `<button class="text-[11px] font-semibold text-cyan-700 hover:underline flex-shrink-0 ml-3" data-action="tp-cols-reset">Reset</button>` : ''}
+        </div>
+      </div>` : ''}
+    </div>` : '';
   const tpSearch = (rows && rows.length)
     ? `<input type="text" data-tp-search value="${f.q || ''}" placeholder="Search swimmer" class="w-full mt-2 bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-cyan-300 placeholder:text-muted" />` : '';
   const sheet = rows && rows.length ? `
@@ -7533,7 +7788,7 @@ function renderTrainingPace() {
         ${group('Pace from', [['best', 'Best time'], ['recent', 'Most recent'], ['target', 'Target']], 'basis')}
         <button class="w-full bg-cyan-600 text-white font-semibold rounded-xl py-3.5 text-sm hover:bg-cyan-700 active:scale-[0.99] transition shadow-lg shadow-cyan-600/20" data-action="tp-show">Show Training Table</button>
       </div>
-      ${rows && rows.length ? `<div class="mx-3 mt-3 no-print">${strokeChips ? `<div class="flex flex-wrap gap-1.5">${strokeChips}</div>` : ''}${sexChips ? `<div class="flex flex-wrap gap-1.5 mt-2">${sexChips}</div>` : ''}${teamChips ? `<div class="flex flex-wrap gap-1.5 mt-2">${teamChips}</div>` : ''}${tpSearch}</div>` : ''}
+      ${rows && rows.length ? `<div class="mx-3 mt-3 no-print">${strokeChips ? `<div class="flex flex-wrap gap-1.5">${strokeChips}</div>` : ''}${sexChips ? `<div class="flex flex-wrap gap-1.5 mt-2">${sexChips}</div>` : ''}${teamChips ? `<div class="flex flex-wrap gap-1.5 mt-2">${teamChips}</div>` : ''}${colPanel}${tpSearch}</div>` : ''}
       ${rows ? `<div class="m-3 bg-white rounded-2xl border border-slate-200 overflow-hidden">${sheet}</div>` : ''}
     </div>`;
 }
@@ -8116,6 +8371,11 @@ document.addEventListener('click', (e) => {
     if (tps) { state.tpForm.stroke = tps.getAttribute('data-tp-stroke'); render(); return; }
     const tpt = e.target.closest('[data-tp-team]');
     if (tpt) { tpToggleTeam(tpt.getAttribute('data-tp-team')); render(); return; }
+    const tpCol = e.target.closest('[data-tp-col]');
+    if (tpCol) {
+      tpColsState()[tpCol.getAttribute('data-tp-col')] = tpCol.getAttribute('data-on') !== '1';
+      saveTpCols(); render(); return;
+    }
     const tpx = e.target.closest('[data-tp-sex]');
     if (tpx) { state.tpForm.sexFilter = tpx.getAttribute('data-tp-sex'); render(); return; }
     const sds = e.target.closest('[data-stdsrc]');
@@ -8738,6 +8998,8 @@ function handleAction(action, el) {
     case 'other-tools': navigate('other-tools'); break;
     case 'hdr-more': state.hdrMore = !state.hdrMore; render(); break;
     case 'tp-show': state.tpShow = true; render(); break;
+    case 'tp-cols-toggle': state.tpColsOpen = !state.tpColsOpen; render(); break;
+    case 'tp-cols-reset': state.tpCols = {}; saveTpCols(); render(); break;
     case 'tp-download': {
       if (!tpPdfReady()) showToast('Preparing the PDF…');
       tpEnsurePdfLibs()
