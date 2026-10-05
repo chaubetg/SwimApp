@@ -1827,7 +1827,7 @@ function exportBackupJson() {
   downloadFile(`split_compass_backup_${stamp}.json`, JSON.stringify(payload, null, 2), 'application/json');
   markBackedUp();
   showToast(`Backed up ${state.saved.length} ${state.saved.length === 1 ? 'entry' : 'entries'}`);
-  if (state.view === 'roster') render();   // clear the nag straight away
+  if (state.view === 'roster' || state.view === 'import-menu') render();   // clear the nag / tick the step
 }
 
 // --- Import a backup JSON: merge by id (adds new, keeps existing) ---
@@ -2016,7 +2016,52 @@ function renderImportMenu() {
     <div class="scrollable px-5 py-4 space-y-3 bg-slate-50">
       ${card('import-menu-season', 'Import from a season', 'A whole season of top times from Hy-Tek Team Manager — total times only. Feeds Best times and Training Pace.')}
       ${card('import-menu-meet', 'Import from a swim meet', 'A single meet’s results, with splits where available.', 'Soon')}
+      ${SWIMMER ? '' : importStartOverHtml()}
     </div>`;
+}
+
+// Start over: export -> delete -> re-import, in the order a coach should do them. Each
+// step is an action that already exists; the block only puts them in sequence and shows
+// where things stand (how much is saved, when it was last exported).
+function importStartOverHtml() {
+  const n = state.saved.length;
+  const swimmers = new Set(state.saved.map((s) => s.sid)).size;
+  const a = backupAgeDays();
+  const days = a === null ? null : Math.floor(a);
+  const backupTxt = !n ? 'Nothing saved on this device yet.'
+    : (days === null ? 'Never exported from this device.'
+    : (days === 0 ? 'Exported today.' : `Last exported ${days} day${days === 1 ? '' : 's'} ago.`));
+  const fresh = n > 0 && days === 0;
+  const num = (k, done) => `<div class="w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold flex-shrink-0 ${done ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}">${done ? '\u2713' : k}</div>`;
+  const btn = (action, label, cls, off) => off
+    ? `<span class="flex-shrink-0 rounded-xl px-3 py-2 text-[12px] font-bold bg-slate-100 text-slate-400">${label}</span>`
+    : `<button class="flex-shrink-0 rounded-xl px-3 py-2 text-[12px] font-bold active:scale-95 transition ${cls}" data-action="${action}">${label}</button>`;
+  const step = (k, done, title, sub, right) => `
+      <div class="flex items-center gap-3 py-3 ${k > 1 ? 'border-t border-slate-100' : ''}" data-startover-step="${k}">
+        ${num(k, done)}
+        <div class="flex-1 min-w-0">
+          <div class="text-[13px] font-bold text-slate-800">${title}</div>
+          <div class="text-[11px] text-muted mt-0.5 leading-snug">${sub}</div>
+        </div>
+        ${right}
+      </div>`;
+  return `
+      <div class="pt-3" data-startover>
+        <div class="label-cap mb-2">Start over</div>
+        <div class="bg-white border border-slate-200 rounded-2xl px-4 py-1 shadow-sm">
+          ${step(1, fresh, 'Export a backup', `Saves everything to a file, just in case. ${backupTxt}`,
+            btn('backup-json', 'Export', 'bg-slate-800 text-white', !n))}
+          ${step(2, !n, 'Delete all swimmers',
+            n ? `${swimmers} swimmer${swimmers === 1 ? '' : 's'}, ${n.toLocaleString()} saved item${n === 1 ? '' : 's'} and every team. Asks you to confirm.`
+              : 'The roster is empty.',
+            btn('clear-all', 'Delete', 'bg-rose-50 text-rose-700 border border-rose-200', !n))}
+          ${step(3, false, 'Import again', 'Load a new file, or put your backup back.',
+            `<div class="flex flex-col gap-1.5 flex-shrink-0">
+              ${btn('import-menu-season', 'New file', 'bg-cyan-600 text-white')}
+              ${btn('import-json', 'My backup', 'bg-white text-slate-700 border border-slate-200')}
+            </div>`)}
+        </div>
+      </div>`;
 }
 
 function renderImportSeason() {
@@ -2179,7 +2224,7 @@ function clearAllData() {
   state.importPreview = null; state.rgOpen = {};
   if (state.form) state.form.sid = null;
   if (state.tpForm) state.tpForm.teams = null;
-  navigate('roster');
+  if (state.view === 'import-menu') render(); else navigate('roster');
   showToast(`Cleared ${n.toLocaleString()} saved item${n === 1 ? '' : 's'} \u2014 ready for a fresh import`);
 }
 
@@ -2672,15 +2717,43 @@ function render() {
   // Roster search: live-filter rows by name (token prefix), no full re-render so focus is kept.
   const search = host.querySelector('[data-search]');
   if (search) {
-    search.addEventListener('input', () => {
-      state.search = search.value;
+    const homeTop = host.querySelectorAll('[data-home-top]');
+    const clearBtn = host.querySelector('[data-action="clear-search"]');
+    const noneMsg = host.querySelector('[data-search-none]');
+    const scroller = host.querySelector('[data-home-scroll]');
+    const applySearch = () => {
       const q = search.value.trim();
+      let shown = 0;
       host.querySelectorAll('.roster-row').forEach(row => {
-        row.style.display = nameMatches(row.getAttribute('data-name') || '', q) ? '' : 'none';
+        const ok = nameMatches(row.getAttribute('data-name') || '', q);
+        row.style.display = ok ? '' : 'none';
+        // Each divider belongs to the row under it; the first visible row has none above.
+        const div = row.previousElementSibling;
+        if (div && div.classList.contains('roster-div')) div.style.display = (ok && shown > 0) ? '' : 'none';
+        if (ok) shown++;
       });
+      if (noneMsg) noneMsg.classList.toggle('hidden', !(q && shown === 0));
+      if (clearBtn) clearBtn.classList.toggle('hidden', !q);
+      // Fold the buttons and menu away while there is a query: the results then start right
+      // under the box, above the keyboard. Tied to the TEXT, not to focus, so tapping a
+      // result never moves the row out from under the finger.
+      homeTop.forEach((el) => el.classList.toggle('hidden', !!q));
+    };
+    search.addEventListener('input', () => {
+      state.search = search.value; applySearch();
+      // The list just changed length: start it from the top, under the box, not wherever
+      // the longer list had been scrolled to.
+      if (scroller && search.value.trim()) scroller.scrollTop = 0;
     });
-    // Return/"check" key: commit the search — refresh to the full current-settings list.
-    search.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); search.blur(); render(); } });
+    // Bring the box to the top of the page when it takes focus, so an empty search still has
+    // the list below it rather than the keyboard.
+    search.addEventListener('focus', () => {
+      const box = host.querySelector('[data-home-search]');
+      if (scroller && box && !search.value.trim()) setTimeout(() => { scroller.scrollTop = box.offsetTop; }, 50);
+    });
+    // Return / the blue Search key: put the keyboard away and KEEP the filter.
+    search.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); search.blur(); } });
+    applySearch();   // a re-render (a sex toggle, a team chip) must not drop the query
   }
   const selfN = host.querySelector('[data-self-name]');
   if (selfN) {
@@ -3116,7 +3189,7 @@ function renderRoster() {
     const name = evs[evs.length - 1].name || '';
     const team = swimmerTeam(sid);
     const nm = name.replace(/"/g, '&quot;');
-    const navAttrs = editing ? '' : `data-savedsid="${sid}" data-name="${nm}"`;
+    const navAttrs = `data-name="${nm}"` + (editing ? '' : ` data-savedsid="${sid}"`);
     // Small M/F toggle: tapped directly it flips the sex, and its handler runs
     // ahead of the data-savedsid branch so a tap on it never opens the swimmer.
     const sx = swimmerSex(sid);
@@ -3134,9 +3207,10 @@ function renderRoster() {
       ${sexChip}
       ${trailing}
     </div>`;
-  }).join('<div class="border-t border-slate-100 mx-3"></div>');
+  }).join('<div class="roster-div border-t border-slate-100 mx-3"></div>');
 
   const hasSaved = state.saved.length > 0;
+  const hasQuery = !!(state.search || '').trim();
   const emptyState = `
     <div class="flex flex-col items-center justify-center text-center px-8 py-20 text-slate-400">
       <div class="w-14 h-14 rounded-2xl bg-cyan-50 flex items-center justify-center text-2xl mb-3">🏊</div>
@@ -3149,6 +3223,8 @@ function renderRoster() {
     <div class="statusbar"></div>
     ${scHeaderHtml()}
     </div>
+    <div class="scrollable" data-home-scroll>
+    <div data-home-top class="${hasQuery ? 'hidden' : ''}">
     ${durabilityBanner()}
     <div class="px-5 pb-2 grid grid-cols-2 gap-2">
       <button class="bg-gradient-to-br from-cyan-500 to-cyan-700 rounded-2xl px-4 py-4 text-center hover:from-cyan-600 hover:to-cyan-800 active:scale-[0.99] transition shadow-lg shadow-cyan-600/25" data-action="training-pace">
@@ -3167,13 +3243,15 @@ function renderRoster() {
         !PUBLIC_BUILD && [ICON_TOOLS, 'Other tools', 'Converter, adjacent events, 50 m, efficiency', '', 'other-tools'],
       ])}
     </div>
-    <div class="px-5 pb-1">
+    </div>
+    <div class="px-5 pt-1 pb-1 sticky top-0 z-10 bg-white" data-home-search>
       <div class="bg-slate-100 rounded-xl px-3.5 py-3 flex items-center gap-2">
         <span class="text-muted">⌕</span>
-        <input type="text" data-search value="${state.search || ''}" placeholder="Search saved swimmers" class="bg-transparent outline-none text-sm w-full placeholder:text-muted" />
+        <input type="text" data-search value="${(state.search || '').replace(/"/g, '&quot;')}" placeholder="Search saved swimmers" class="bg-transparent outline-none text-sm w-full placeholder:text-muted" />
+        <button class="${hasQuery ? '' : 'hidden'} text-slate-400 hover:text-slate-700 text-base leading-none px-1 flex-shrink-0" data-action="clear-search" aria-label="Clear search">\u2715</button>
       </div>
     </div>
-    ${teamList.length ? `<div class="px-5 pt-2 flex flex-wrap gap-1.5">
+    ${teamList.length ? `<div class="px-5 pt-2 flex flex-wrap gap-1.5 ${tf === 'all' && hasQuery ? 'hidden' : ''}" ${tf === 'all' ? 'data-home-top' : ''}>
       <span class="pill ${tf === 'all' ? 'active' : ''}" data-teamfilter="all" style="padding:6px 12px;font-size:12px;min-height:0;">All teams</span>
       ${teamList.map(t => `<span class="pill ${tf === t ? 'active' : ''}" data-teamfilter="${t.replace(/"/g, '&quot;')}" style="padding:6px 12px;font-size:12px;min-height:0;">${t.replace(/</g, '&lt;')}</span>`).join('')}
       ${anyNoTeam ? `<span class="pill ${tf === '__none' ? 'active' : ''}" data-teamfilter="__none" style="padding:6px 12px;font-size:12px;min-height:0;">No team</span>` : ''}
@@ -3183,8 +3261,9 @@ function renderRoster() {
       <button class="text-xs font-semibold ${editing ? 'text-cyan-700' : 'text-slate-400'} hover:text-cyan-700 transition" data-action="toggle-edit">${editing ? 'Done' : 'Edit'}</button>
     </div>
 ` : ''}
-    <div class="scrollable px-3 pb-4">
-      ${hasSaved ? `<div>${savedRows}</div>` : emptyState}
+    <div class="px-3 pb-4">
+      ${hasSaved ? `<div>${savedRows}</div>
+      <div data-search-none class="hidden px-5 py-8 text-center text-sm text-muted">No swimmer matches that name.</div>` : emptyState}
       <div class="pt-3 pb-1 flex items-center justify-center gap-2 text-[11px] text-slate-400 flex-wrap">
         <button class="font-semibold hover:text-cyan-700 transition" data-action="backup-json">Back up</button>
         <span class="text-slate-200">\u00b7</span>
@@ -3196,6 +3275,7 @@ function renderRoster() {
         ${hasSaved ? `<span class="basis-full h-0"></span>
         <button class="font-semibold text-rose-500 hover:text-rose-700 transition" data-action="clear-all">Clear all data</button>` : ''}
       </div>
+    </div>
     </div>
     <div class="text-center text-[10px] text-faint py-2 flex-shrink-0">© 2026 Gaël Chaubet · All rights reserved</div>
   `;
@@ -4772,13 +4852,18 @@ const scm100Per25 = {
   Breast: { M: { p1: 0.4558, p3: 0.4928, n: 151 }, F: { p1: 0.4595, p3: 0.4933, n: 138 } },
   Fly:    { M: { p1: 0.4578, p3: 0.4916, n: 137 }, F: { p1: 0.4580, p3: 0.4916, n: 113 } },
 };
-// Median within-lap shares for a 200 SCM, from 1,004 clean races (World Cup 2025, 3 stops):
-// p1 = 1st-25 share of the DIVE 50 (opening); pLast = last-25 share of the FINAL 50 (closing).
-const scm200Per25 = {
-  Free:   { M: { p1: 0.4704, pLast: 0.4934, n: 194 }, F: { p1: 0.4739, pLast: 0.4921, n: 134 } },
-  Back:   { M: { p1: 0.4790, pLast: 0.4938, n: 112 }, F: { p1: 0.4803, pLast: 0.4930, n: 119 } },
-  Breast: { M: { p1: 0.4555, pLast: 0.5013, n: 136 }, F: { p1: 0.4570, pLast: 0.5012, n: 113 } },
-  Fly:    { M: { p1: 0.4538, pLast: 0.5026, n: 119 }, F: { p1: 0.4567, pLast: 0.5017, n: 77 } },
+// Median first-25 share of EACH 50 of a 200 SCM, from 1,262 clean races (World Cup 2025,
+// 3 stops; per-25 splits that sum to the official time within 0.06 s). One share per 50, in
+// race order, so every 25 of the race can be placed without moving a 50 off the pacing table.
+// The dive 50 front-loads (0.45-0.48); the middle 50s are near even; freestyle and backstroke
+// close faster than they turn (last share > 0.5), breaststroke and fly do not. IM's shares
+// are per stroke leg. n = races behind each row.
+const scm200Lap25 = {
+  Free:   { M: { f: [0.4704, 0.4971, 0.4965, 0.5066], n: 194 }, F: { f: [0.4739, 0.4971, 0.4969, 0.5079], n: 134 } },
+  Back:   { M: { f: [0.4790, 0.4961, 0.4975, 0.5062], n: 112 }, F: { f: [0.4803, 0.4968, 0.4975, 0.5070], n: 119 } },
+  Breast: { M: { f: [0.4555, 0.4954, 0.4969, 0.4987], n: 136 }, F: { f: [0.4570, 0.4959, 0.4976, 0.4988], n: 113 } },
+  Fly:    { M: { f: [0.4538, 0.4951, 0.4953, 0.4974], n: 119 }, F: { f: [0.4567, 0.4949, 0.4973, 0.4983], n: 77 } },
+  IM:     { M: { f: [0.4544, 0.5130, 0.4948, 0.5230], n: 141 }, F: { f: [0.4561, 0.5126, 0.4948, 0.5198], n: 117 } },
 };
 function buildDisplaySegments(r) {
   const isIM = r.stroke === 'IM';
@@ -5659,6 +5744,8 @@ function trainingRows(pool, distance, basis) {
 // Columns for one stroke at one event, in the order a coach calls the set: the 50 s first, then
 // every 25 in order. (Target is rendered separately as the first column.)
 const TP_ORD = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th'];
+// A single 25 prints grey; a 50, 75, 100 or a named leg prints bold.
+function tpBold(h) { return !!h && !/(^|\s)25$/.test(h); }
 function tpCells(segs, stroke, pool, distance, splits, sex) {
   if (!segs || !segs.length) return [];
   // A 400 IM comes back as eight 50 s; it is swum and written as four 100 s, one per stroke.
@@ -5682,37 +5769,70 @@ function tpCells(segs, stroke, pool, distance, splits, sex) {
       { h: 'Last ' + lab, v: sum(n - ends, n) },
     ];
   }
-  if (pool === 'SCM' && distance === 100 && segs.length === 4 && stroke !== 'IM') {
-    return [
-      { h: '1st 50', v: segs[0].time + segs[1].time },
-      { h: 'Mid 50', v: segs[1].time + segs[2].time },   // 25->75, excludes the dive
-      { h: '2nd 50', v: segs[2].time + segs[3].time },
-      { h: '1st 25', v: segs[0].time }, { h: '2nd 25', v: segs[1].time },
-      { h: '3rd 25', v: segs[2].time }, { h: '4th 25', v: segs[3].time },
-    ];
-  }
-  // 100 IM (SCM): the three rolling 50 combos coaches call, then the four 25 legs.
-  if (pool === 'SCM' && distance === 100 && stroke === 'IM' && segs.length === 4) {
-    return [
-      { h: 'Fly-Bk', v: segs[0].time + segs[1].time },
-      { h: 'Bk-Br', v: segs[1].time + segs[2].time },    // middle 50, excludes the dive
-      { h: 'Br-Fr', v: segs[2].time + segs[3].time },
-      { h: 'Fly', v: segs[0].time }, { h: 'Back', v: segs[1].time },
-      { h: 'Breast', v: segs[2].time }, { h: 'Free', v: segs[3].time },
-    ];
-  }
-  // SCM 200: the four 50s, then 1st 25 / 2nd 25 / last 25 modeled from real 200 SCM race medians
-  // (scm200Per25) — dive-50 first-25 share and final-50 last-25 share, per stroke/sex.
-  if (pool === 'SCM' && distance === 200 && stroke !== 'IM' && segs.length === 4) {
-    const cells = segs.map((s, i) => ({ h: `${TP_ORD[i]} 50`, v: s.time }));
-    const sp = scm200Per25[stroke] && scm200Per25[stroke][sex];
-    if (sp) {
-      const first50 = segs[0].time, last50 = segs[3].time;
-      cells.push({ h: '1st 25', v: first50 * sp.p1 });
-      cells.push({ h: '2nd 25', v: first50 * (1 - sp.p1) });
-      cells.push({ h: 'Last 25', v: last50 * sp.pLast });
+  // ---- 100 and 200: the columns a coach calls a set from --------------------------------
+  // Anything headed "1st" starts from the dive; every other column is a split inside the race.
+  // A column is only listed when it says something new: the 100 has no "Last 50" because it
+  // is the 2nd 50, and the 50 (handled below) has no "Last 25" because it is the 2nd 25.
+  const t = segs.map((s) => s.time);
+  // 100 SCM, four 25s (modelled from real 100 SCM races for the form strokes, legs for IM).
+  if (pool === 'SCM' && distance === 100 && segs.length === 4) {
+    if (stroke === 'IM') {
+      return [
+        { h: 'Fly 25', v: t[0] }, { h: 'Fly+Bk 50', v: t[0] + t[1] },
+        { h: 'Back 25', v: t[1] }, { h: 'Br+Fr 50', v: t[2] + t[3] },
+        { h: 'Free 25', v: t[3] }, { h: '1st 75', v: t[0] + t[1] + t[2] },
+        { h: 'Bk+Br 50', v: t[1] + t[2] },               // the middle 50: no dive, no finish
+      ];
     }
-    return cells;
+    return [
+      { h: '1st 25', v: t[0] }, { h: '1st 50', v: t[0] + t[1] },
+      { h: '2nd 25', v: t[1] }, { h: '2nd 50', v: t[2] + t[3] },
+      { h: 'Last 25', v: t[3] }, { h: '1st 75', v: t[0] + t[1] + t[2] },
+    ];
+  }
+  if (distance === 200 && segs.length === 4) {
+    const IM = stroke === 'IM';
+    const lap = pool === 'SCM' && scm200Lap25[stroke] && scm200Lap25[stroke][sex];
+    // Short course: split each 50 into its two 25s with the race-derived share for that 50.
+    if (lap) {
+      const f = lap.f;
+      const q1 = t.map((x, i) => x * f[i]);              // first 25 of each 50
+      const q2 = t.map((x, i) => x - q1[i]);             // second 25 of each 50
+      if (IM) {
+        return [
+          { h: '1st 25', v: q1[0] },
+          { h: 'Fly 50', v: t[0] }, { h: 'Fly 2nd 25', v: q2[0] },
+          { h: 'Back 50', v: t[1] }, { h: 'Bk 2nd 25', v: q2[1] },
+          { h: 'Breast 50', v: t[2] }, { h: 'Br 2nd 25', v: q2[2] },
+          { h: 'Free 50', v: t[3] }, { h: 'Fr 2nd 25', v: q2[3] },
+          { h: '1st 75', v: t[0] + q1[1] },
+          { h: 'Fly+Bk 100', v: t[0] + t[1] }, { h: 'Bk+Br 100', v: t[1] + t[2] },
+          { h: 'Br+Fr 100', v: t[2] + t[3] },
+        ];
+      }
+      return [
+        { h: '1st 25', v: q1[0] }, { h: '1st 50', v: t[0] },
+        { h: '2nd 25', v: q2[0] }, { h: '2nd 50', v: t[1] },
+        { h: 'Last 25', v: q2[3] }, { h: 'Last 50', v: t[3] },
+        { h: '1st 75', v: t[0] + q1[1] }, { h: '1st 100', v: t[0] + t[1] },
+        { h: '25\u2013125', v: q2[0] + t[1] + q1[2] },   // the 100 that starts at the first wall
+        { h: 'Last 100', v: t[2] + t[3] },
+      ];
+    }
+    // Long course (or no share table): races are timed every 50 m, so there is no race data
+    // for a 25 inside a 200 and none is invented. 50s and 100s only.
+    if (IM) {
+      return [
+        { h: 'Fly 50', v: t[0] }, { h: 'Back 50', v: t[1] },
+        { h: 'Breast 50', v: t[2] }, { h: 'Free 50', v: t[3] },
+        { h: 'Fly+Bk 100', v: t[0] + t[1] }, { h: 'Bk+Br 100', v: t[1] + t[2] },
+        { h: 'Br+Fr 100', v: t[2] + t[3] },
+      ];
+    }
+    return [
+      { h: '1st 50', v: t[0] }, { h: '2nd 50', v: t[1] }, { h: 'Last 50', v: t[3] },
+      { h: '1st 100', v: t[0] + t[1] }, { h: 'Last 100', v: t[2] + t[3] },
+    ];
   }
   // Uniform segments get "1st 50 / 2nd 50" style headings; collapsed 400+ rows and IM legs keep
   // the label buildDisplaySegments gave them.
@@ -5805,18 +5925,25 @@ function tpPdfModel() {
   return { title: pdfText(title.trim()), sub: pdfText(sub.trim()), head, body, rules };
 }
 
-function tpBuildPdf() {
-  const m = tpPdfModel();
-  if (!m) { showToast('Nothing to download'); return; }
-  const doc = new window.jspdf.jsPDF({ unit: 'pt', format: 'letter' });
+// Page shape for a table of nCols columns. Portrait letter holds about ten columns of
+// times at 9 pt; the 200 (12 with Swimmer and Target) and the 200 IM (15) do not fit and
+// would wrap every heading onto two lines, so they turn the page and tighten the type.
+function tpPdfLayout(nCols) {
+  if (nCols <= 10) return { orientation: 'portrait', M: 40, font: 9, pad: 4 };
+  if (nCols <= 12) return { orientation: 'landscape', M: 36, font: 9, pad: 4 };
+  return { orientation: 'landscape', M: 28, font: 8, pad: 3 };
+}
+function tpPdfDoc(m) {
+  const L = tpPdfLayout(m.head[0].length);
+  const doc = new window.jspdf.jsPDF({ unit: 'pt', format: 'letter', orientation: L.orientation });
   const W = doc.internal.pageSize.getWidth();
-  const M = 40;
+  const M = L.M;
   doc.setFontSize(14); doc.setTextColor(15, 23, 42);
   doc.text(m.title, M, 46);
   if (m.sub) { doc.setFontSize(9); doc.setTextColor(100, 116, 139); doc.text(m.sub, M, 61); }
   doc.autoTable({
     head: m.head, body: m.body, startY: 74, margin: { left: M, right: M },
-    styles: { fontSize: 9, cellPadding: 4, textColor: [51, 65, 85], lineColor: [226, 232, 240], lineWidth: 0.5 },
+    styles: { fontSize: L.font, cellPadding: L.pad, textColor: [51, 65, 85], lineColor: [226, 232, 240], lineWidth: 0.5 },
     headStyles: { fillColor: [241, 245, 249], textColor: [30, 41, 59], fontStyle: 'bold' },
     columnStyles: { 0: { halign: 'left', fontStyle: 'bold' } },
     didParseCell: (d) => { if (d.column.index > 0) d.cell.styles.halign = 'right'; },
@@ -5828,6 +5955,12 @@ function tpBuildPdf() {
       }
     },
   });
+  return doc;
+}
+function tpBuildPdf() {
+  const m = tpPdfModel();
+  if (!m) { showToast('Nothing to download'); return; }
+  const doc = tpPdfDoc(m);
   const name = ('Split Compass - ' + m.title).replace(/[^\w\s-]/g, '').replace(/\s+/g, ' ').trim();
   doc.save(name + '.pdf');
 }
@@ -6890,34 +7023,39 @@ function renderTrainingSplits() {
     const byDist = {};
     rows.forEach((r) => { (byDist[r.distance] = byDist[r.distance] || []).push(r); });
     const dists = Object.keys(byDist).map(Number).sort((a, b) => a - b);
-    const headsFor = (d) => {
-      const r = byDist[d].find((x) => x.segs && x.segs.length);
-      return r ? tpCells(r.segs, r.stroke, f.pool, d, r.splits, r.sex).map((c) => c.h) : [];
-    };
-    const nCol = Math.max(1, ...dists.map((d) => headsFor(d).length));
+    const cellsOf = (r) => tpCells(r.segs, r.stroke, f.pool, r.distance, r.splits, r.sex);
+    const nCol = Math.max(1, ...rows.map((r) => cellsOf(r).length));
     const pad = (a) => a.concat(Array(Math.max(0, nCol - a.length)).fill(null));
-    const headRow = (d, cls) => `<tr class="text-[10px] uppercase tracking-wide text-faint ${cls}">
-        <th class="text-left font-semibold py-1.5 pl-3">${d} m</th>
+    const headRow = (label, heads, cls) => `<tr class="text-[10px] uppercase tracking-wide text-faint ${cls}">
+        <th class="text-left font-semibold py-1.5 pl-3 whitespace-nowrap">${label}</th>
         <th class="text-right font-semibold px-2">Time</th>
-        ${pad(headsFor(d)).map((h) => `<th class="text-right font-semibold px-2 whitespace-nowrap">${h == null ? '' : h}</th>`).join('')}
+        ${pad(heads).map((h) => `<th class="text-right font-semibold px-2 whitespace-nowrap">${h == null ? '' : h}</th>`).join('')}
       </tr>`;
     let thead = '', trs = '';
     dists.forEach((d, di) => {
-      const heads = headsFor(d);
-      // tpPdfModel() takes the PDF's header row from `thead th`, so the first block's header
-      // has to be a real thead or the PDF is built with an empty one.
-      if (di === 0) thead = headRow(d, 'border-b-2 border-slate-400');
-      else trs += headRow(d, 'border-t-2 border-slate-400');
-      byDist[d].forEach((r) => {
+      // The four form strokes share a shape at every distance. IM's columns are its stroke
+      // legs, so when the shape changes inside a distance it gets a header row of its own.
+      let sig = null, heads = [];
+      byDist[d].forEach((r, ri) => {
+        const cs = cellsOf(r);
+        const s = cs.map((c) => c.h).join('|');
+        if (cs.length && s !== sig) {
+          heads = cs.map((c) => c.h); sig = s;
+          const label = ri === 0 ? `${d} m` : `${d} m ${r.stroke}`;
+          // tpPdfModel() takes the PDF's header row from `thead th`, so the very first header
+          // has to be a real thead or the PDF is built with an empty one.
+          if (di === 0 && ri === 0) thead = headRow(label, heads, 'border-b-2 border-slate-400');
+          else trs += headRow(label, heads, 'border-t-2 border-slate-400');
+        }
         if (r.fellBack) fellBack++;
-        const cells = pad(tpCells(r.segs, r.stroke, f.pool, d, r.splits, r.sex));
+        const cells = pad(cs);
         trs += `<tr class="border-t border-slate-100">
           <td class="py-2 pl-3">
             <div class="font-semibold text-[13px] whitespace-nowrap">${r.stroke}</div>
             ${r.date ? `<div class="text-[10px] text-faint leading-none mt-0.5 whitespace-nowrap">${r.date}</div>` : ''}
           </td>
           <td class="text-right px-2 whitespace-nowrap"><span class="mono text-[13px] font-bold text-cyan-800">${formatTime(r.total)}</span>${r.fellBack ? '<span class="text-[10px] text-amber-600">*</span>' : ''}</td>
-          ${cells.map((c, i) => `<td class="text-right px-2 mono text-[13px] ${c && /((1st|2nd|3rd|4th|First|Last|Middle|Mid) ?(50|100)|Fly-Bk|Bk-Br|Br-Fr)$/.test(heads[i] || '') ? 'text-slate-900 font-semibold' : 'text-slate-600'}">${c ? formatTime(c.v) : ''}</td>`).join('')}
+          ${cells.map((c, i) => `<td class="text-right px-2 mono text-[13px] ${c && tpBold(heads[i]) ? 'text-slate-900 font-semibold' : 'text-slate-600'}">${c ? formatTime(c.v) : ''}</td>`).join('')}
         </tr>`;
       });
     });
@@ -7344,7 +7482,7 @@ function renderTrainingPace() {
           ${r.date ? `<div class="text-[10px] text-faint leading-none mt-0.5">${r.date}</div>` : ''}
         </td>
         <td class="text-right px-2 whitespace-nowrap"><span class="mono text-[13px] font-bold text-cyan-800">${formatTime(r.total)}</span> <span class="text-[10px] font-semibold text-slate-500">(${TP_ABBR[r.stroke] || r.stroke})</span></td>
-        ${cells.map((c, i) => `<td class="text-right px-2 mono text-[13px] ${c && /((1st|2nd|3rd|4th|First|Last|Middle|Mid) ?(50|100)|Fly-Bk|Bk-Br|Br-Fr)$/.test(heads[i] || '') ? 'text-slate-900 font-semibold' : 'text-slate-600'}">${c ? formatTime(c.v) : ''}</td>`).join('')}
+        ${cells.map((c, i) => `<td class="text-right px-2 mono text-[13px] ${c && tpBold(heads[i]) ? 'text-slate-900 font-semibold' : 'text-slate-600'}">${c ? formatTime(c.v) : ''}</td>`).join('')}
       </tr>`;
     };
 
@@ -8331,6 +8469,7 @@ function handleAction(action, el) {
     case 'bt-csv': exportBestTimesCsv(); break;
     case 'csv-page': exportScreenCsv(); break;
     case 'clear-all': clearAllData(); break;
+    case 'clear-search': state.search = ''; render(); break;
     case 'backup-json': exportBackupJson(); break;
     case 'import-json': triggerImport(); break;
     case 'import-times-csv': navigate('import-menu'); break;
