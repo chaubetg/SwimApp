@@ -1416,7 +1416,7 @@ const state = {
   fiftyForm: { stroke: 'Free', sex: 'M', seconds: 0, name: '', best: {}, sr: {}, sc: {}, date: '' }, // 50m LCM split calculator
   fiftyOpen: {}, // 50m tool: which metric rows are expanded for SR/SC input
   // teams: null means every team. Otherwise the list of team labels to show.
-  tpForm: { pool: 'SCM', distance: 50, basis: 'best', stroke: 'Free', q: '', teams: null }, // Training Pace picker
+  tpForm: { pool: 'SCM', distance: 50, basis: 'best', stroke: 'Free', strokes: null, q: '', teams: null }, // Training Pace picker (strokes: null = All)
   hdrMore: false,   // the printer menu — closed by navigating, Escape, or a tap outside
   tsplForm: { pool: 'SCM', basis: 'best' },
   // Goals (swimmer build). ev stays null until an event is tapped — the bars belong to an
@@ -5620,7 +5620,9 @@ function tpColChips(rows, f) {
     if (!rep[r.stroke] && r.segs && r.segs.length) rep[r.stroke] = tpAllCells(r.segs, r.stroke, f.pool, f.distance, r.splits, r.sex);
   });
   const has = (cells, k) => cells.filter((c) => c.k && c.k.indexOf(k) >= 0);
-  const cur = rep[f.stroke] || [];
+  const shown = (f.strokes && f.strokes.length) ? f.strokes : ['Free', 'Back', 'Breast', 'Fly', 'IM'];
+  const curSt = shown.find((s) => s !== 'IM' && rep[s]) || shown.find((s) => rep[s]);
+  const cur = rep[curSt] || [];
   const all = [].concat.apply([], Object.keys(rep).map((s) => rep[s]));
   return TP_COL_KEYS.filter((k) => has(all, k).length).map((k) => {
     const pool = has(cur, k).length ? has(cur, k) : has(all, k);
@@ -5759,7 +5761,8 @@ function tpSheetModel() {
   if (!f) return null;
   const sxf = f.sexFilter || 'all';
   const rows = trainingRows(f.pool, f.distance, f.basis)
-    .filter((r) => r.segs && r.segs.length && (sxf === 'all' || r.sex === sxf) && tpTeamShown(r, f.teams));
+    .filter((r) => r.segs && r.segs.length && (sxf === 'all' || r.sex === sxf) && tpTeamShown(r, f.teams)
+      && (!f.strokes || !f.strokes.length || f.strokes.indexOf(r.stroke) >= 0));
   if (!rows.length) return null;
   const over = tpColsState();
   const ORDER = ['Free', 'Back', 'Breast', 'Fly', 'IM'];
@@ -7353,6 +7356,16 @@ function tpTeamShown(r, sel) {
 }
 // Tapping a team while "All" is on isolates that team; after that the chips toggle. Emptying
 // the selection returns to All rather than leaving a table with nothing in it.
+// Stroke chips: All (null) by default. With All on, a tap isolates that stroke; after that a
+// tap adds or removes it, and removing the last one falls back to All rather than an empty table.
+function tpToggleStroke(name) {
+  const f = state.tpForm;
+  if (name === '*') { f.strokes = null; return; }
+  if (!f.strokes) { f.strokes = [name]; return; }
+  const i = f.strokes.indexOf(name);
+  if (i >= 0) f.strokes.splice(i, 1); else f.strokes.push(name);
+  if (!f.strokes.length) f.strokes = null;
+}
 function tpToggleTeam(name) {
   const f = state.tpForm;
   if (name === '*') { f.teams = null; return; }
@@ -7388,6 +7401,13 @@ function renderTrainingPace() {
   const availStrokes = rows ? TP_STROKES.filter((st) => predict(st, 'M', f.pool, f.distance, 100) || predict(st, 'F', f.pool, f.distance, 100)) : [];
   if (availStrokes.length && availStrokes.indexOf(f.stroke) < 0) f.stroke = availStrokes[0];
   const oneStroke = availStrokes.length <= 1;
+  // A remembered stroke selection can name a stroke this event does not have (IM at a 50):
+  // drop it, and fall back to All if nothing is left.
+  if (f.strokes) {
+    f.strokes = f.strokes.filter((s) => availStrokes.indexOf(s) >= 0);
+    if (!f.strokes.length) f.strokes = null;
+  }
+  const strokeShown = (r) => oneStroke || !f.strokes || f.strokes.indexOf(r.stroke) >= 0;
   const tpQ = (f.q || '').trim();
   const sxf = f.sexFilter || 'all';
   const teamsPresent = tpTeamsIn(rows);
@@ -7397,7 +7417,7 @@ function renderTrainingPace() {
     f.teams = f.teams.filter((t) => teamsPresent.indexOf(t) >= 0);
     if (!f.teams.length) f.teams = null;
   }
-  const shownRows = rows ? rows.filter((r) => (oneStroke || r.stroke === f.stroke)
+  const shownRows = rows ? rows.filter((r) => strokeShown(r)
     && (sxf === 'all' || r.sex === sxf) && tpTeamShown(r, f.teams) && nameMatches(r.name, tpQ)) : null;
   const basisLab = f.basis === 'recent' ? 'most recent' : (f.basis === 'target' ? 'season target' : 'best');
   const TP_ABBR = { Free: 'FR', Back: 'BK', Breast: 'BR', Fly: 'FLY', IM: 'IM' };
@@ -7409,7 +7429,7 @@ function renderTrainingPace() {
   if (rows && !rows.length) {
     body = `<div class="px-4 py-8 text-center text-sm text-muted">No recorded times for ${f.distance} m ${f.pool} yet.<br><span class="text-xs">Record a race at this distance and the swimmer appears here.</span></div>`;
   } else if (rows && shownRows && !shownRows.length) {
-    body = `<div class="px-4 py-8 text-center text-sm text-muted">${tpQ ? 'No swimmer matches \u201c' + tpQ + '\u201d.' : 'No ' + f.stroke + ' times for ' + f.distance + ' m ' + f.pool + ' yet.'}</div>`;
+    body = `<div class="px-4 py-8 text-center text-sm text-muted">${tpQ ? 'No swimmer matches \u201c' + tpQ + '\u201d.' : 'No ' + (f.strokes ? f.strokes.join(' / ') + ' ' : '') + 'times for ' + f.distance + ' m ' + f.pool + (sxf === 'all' ? '' : (sxf === 'M' ? ' (men)' : ' (women)')) + ' yet.'}</div>`;
   } else if (rows) {
     const byStroke = {};
     shownRows.forEach((r) => { (byStroke[r.stroke] = byStroke[r.stroke] || []).push(r); });
@@ -7459,7 +7479,8 @@ function renderTrainingPace() {
   }
 
   const strokeChips = (rows && rows.length && !oneStroke)
-    ? availStrokes.map((st) => `<button class="${chip(f.stroke === st)}" data-tp-stroke="${st}">${st}</button>`).join(' ') : '';
+    ? `<button class="${chip(!f.strokes)}" data-tp-stroke="*">All</button> `
+      + availStrokes.map((st) => `<button class="${chip(!!f.strokes && f.strokes.indexOf(st) >= 0)}" data-tp-stroke="${st}">${st}</button>`).join(' ') : '';
   const sexesPresent = rows ? [...new Set(rows.map((r) => r.sex))] : [];
   const sexChips = (rows && rows.length && sexesPresent.length > 1)
     ? [['all', 'All'], ['M', 'Men'], ['F', 'Women']].map(([v, l]) => `<button class="${chip(sxf === v)}" data-tp-sex="${v}">${l}</button>`).join(' ') : '';
@@ -7481,7 +7502,7 @@ function renderTrainingPace() {
           ${colChips.map((c) => `<button class="${chip(c.on)}" data-tp-col="${c.k}" data-on="${c.on ? 1 : 0}" aria-pressed="${c.on ? 'true' : 'false'}">${c.label}</button>`).join('')}
         </div>
         <div class="flex items-center justify-between mt-2.5">
-          <span class="text-[10px] text-faint leading-snug">Tap to show or hide. The PDF prints the columns that are on, for every stroke.</span>
+          <span class="text-[10px] text-faint leading-snug">Tap to show or hide. The PDF prints the columns that are on, for the strokes selected above.</span>
           ${colsTouched ? `<button class="text-[11px] font-semibold text-cyan-700 hover:underline flex-shrink-0 ml-3" data-action="tp-cols-reset">Reset</button>` : ''}
         </div>
       </div>` : ''}
@@ -8025,7 +8046,7 @@ document.addEventListener('click', (e) => {
     const selfSx = e.target.closest('[data-self-sex]');
     if (selfSx) { (state.selfSetup = state.selfSetup || {}).sex = selfSx.getAttribute('data-self-sex'); render(); return; }
     const tps = e.target.closest('[data-tp-stroke]');
-    if (tps) { state.tpForm.stroke = tps.getAttribute('data-tp-stroke'); render(); return; }
+    if (tps) { tpToggleStroke(tps.getAttribute('data-tp-stroke')); render(); return; }
     const tpt = e.target.closest('[data-tp-team]');
     if (tpt) { tpToggleTeam(tpt.getAttribute('data-tp-team')); render(); return; }
     const tpCol = e.target.closest('[data-tp-col]');
