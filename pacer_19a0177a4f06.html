@@ -5784,7 +5784,7 @@ function tpAllCells(segs, stroke, pool, distance, splits, sex) {
       return [
         C('Fly 25', t[0], 'q1'), C('Fly+Bk 50', t[0] + t[1], ['h1', 'imp']),
         C('Back 25', t[1], 'q2'), C('Br+Fr 50', t[2] + t[3], ['h2', 'imp']),
-        C('Free 25', t[3], 'qL'), C('1st 75', t[0] + t[1] + t[2], 't1'),
+        C('Breast 25', t[2], 'q3', false), C('Free 25', t[3], 'qL'), C('1st 75', t[0] + t[1] + t[2], 't1'),
         C('Last 75', t[1] + t[2] + t[3], 'tL', false),
         C('Bk+Br 50', t[1] + t[2], 'imp'),                // the middle 50: no dive, no finish
       ];
@@ -5792,7 +5792,7 @@ function tpAllCells(segs, stroke, pool, distance, splits, sex) {
     return [
       C('1st 25', t[0], 'q1'), C('1st 50', t[0] + t[1], 'h1'),
       C('2nd 25', t[1], 'q2'), C('Last 50', t[2] + t[3], 'h2'),
-      C('Last 25', t[3], 'qL'), C('1st 75', t[0] + t[1] + t[2], 't1'),
+      C('3rd 25', t[2], 'q3', false), C('Last 25', t[3], 'qL'), C('1st 75', t[0] + t[1] + t[2], 't1'),
       C('Last 75', t[1] + t[2] + t[3], 'tL', false),
     ];
   }
@@ -5816,6 +5816,7 @@ function tpAllCells(segs, stroke, pool, distance, splits, sex) {
           C('Breast 50', t[2], 'h3'), C('Br 2nd 25', q2[2], 'q2'),
           C('Free 50', t[3], 'h4'), C('Fr 2nd 25', q2[3], ['q2', 'qL']),
           C('1st 75', t[0] + q1[1], 't1'), C('Last 75', q2[2] + t[3], 'tL', false),
+          C('1st 125', t[0] + t[1] + q1[2], 'f125', false), C('1st 150', t[0] + t[1] + t[2], 'f150', false),
           C('Fly+Bk 100', t[0] + t[1], ['c1', 'imp']), C('Bk+Br 100', t[1] + t[2], 'imp'),
           C('Br+Fr 100', t[2] + t[3], ['cL', 'imp']),
         ];
@@ -5827,6 +5828,7 @@ function tpAllCells(segs, stroke, pool, distance, splits, sex) {
         C('Last 25', q2[3], 'qL'), C('Last 50', t[3], 'h4'),
         C('1st 75', t[0] + q1[1], 't1'), C('Last 75', q2[2] + t[3], 'tL', false),
         C('1st 100', t[0] + t[1], 'c1'),
+        C('1st 125', t[0] + t[1] + q1[2], 'f125', false), C('1st 150', t[0] + t[1] + t[2], 'f150', false),
         C('25–125', q2[0] + t[1] + q1[2], 'mid'),     // the 100 that starts at the first wall
         C('Last 100', t[2] + t[3], 'cL'),
       ];
@@ -5837,6 +5839,7 @@ function tpAllCells(segs, stroke, pool, distance, splits, sex) {
       return [
         C('Fly 50', t[0], 'h1'), C('Back 50', t[1], 'h2'),
         C('Breast 50', t[2], 'h3'), C('Free 50', t[3], 'h4'),
+        C('1st 150', t[0] + t[1] + t[2], 'f150', false),
         C('Fly+Bk 100', t[0] + t[1], ['c1', 'imp']), C('Bk+Br 100', t[1] + t[2], 'imp'),
         C('Br+Fr 100', t[2] + t[3], ['cL', 'imp']),
       ];
@@ -5844,7 +5847,8 @@ function tpAllCells(segs, stroke, pool, distance, splits, sex) {
     return [
       C('1st 50', t[0], 'h1'), C('2nd 50', t[1], 'h2'), C('3rd 50', t[2], 'h3', false),
       C('Last 50', t[3], 'h4'),
-      C('1st 100', t[0] + t[1], 'c1'), C('Last 100', t[2] + t[3], 'cL'),
+      C('1st 100', t[0] + t[1], 'c1'), C('1st 150', t[0] + t[1] + t[2], 'f150', false),
+      C('Last 100', t[2] + t[3], 'cL'),
     ];
   }
   // Uniform segments get "1st 50 / 2nd 50" style headings; collapsed 400+ rows and IM legs keep
@@ -5861,9 +5865,9 @@ function tpAllCells(segs, stroke, pool, distance, splits, sex) {
 // One key per section of the race. A cell shows when ANY of its keys is on; a key is on when
 // the coach has set it, and otherwise when the cell's own default says so. So with nothing
 // set, the table is exactly the default one.
-const TP_COL_KEYS = ['q1', 'q2', 'qL', 'h1', 'h2', 'h3', 'h4', 't1', 'tL', 'c1', 'cL', 'mid', 'imp'];
-const TP_COL_LABEL = { q1: '1st 25', q2: '2nd 25', qL: 'Last 25', h1: '1st 50', h2: '2nd 50', h3: '3rd 50',
-  h4: 'Last 50', t1: '1st 75', tL: 'Last 75', c1: '1st 100', cL: 'Last 100', mid: '25–125', imp: 'IM pairs' };
+const TP_COL_KEYS = ['q1', 'q2', 'q3', 'qL', 'h1', 'h2', 'h3', 'h4', 't1', 'tL', 'c1', 'f125', 'f150', 'cL', 'mid', 'imp'];
+const TP_COL_LABEL = { q1: '1st 25', q2: '2nd 25', q3: '3rd 25', qL: 'Last 25', h1: '1st 50', h2: '2nd 50', h3: '3rd 50',
+  h4: 'Last 50', t1: '1st 75', tL: 'Last 75', c1: '1st 100', f125: '1st 125', f150: '1st 150', cL: 'Last 100', mid: '25–125', imp: 'IM pairs' };
 const TP_COLS_KEY = 'sc_tp_cols';
 function tpColsState() {
   if (!state.tpCols) {
