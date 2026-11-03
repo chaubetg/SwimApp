@@ -1427,7 +1427,7 @@ const state = {
   goalHint: {},     // which "how will you know" hints are open
   slForm: { sid: null, ev: null, pick: null },   // Who do you swim like?
   uspOpen: false,   // the U SPORTS ranking card is opt-in, and starts closed   // Training splits: one swimmer, every event
-  tpShow: false,  // the table appears once "Show Training Table" is pressed
+  tpShow: true,   // kept for older code paths; the table always shows now (2026-11-03)
   // Team vs standards: which cut sets are on, and the event they are read at. Canada is
   // on by default because that is the ladder most of the squad is actually on.
   tsForm: { stroke: 'Free', distance: 100, pool: 'LCM', sexFilter: 'all', q: '',
@@ -7636,6 +7636,22 @@ function tpTeamShown(r, sel) {
 }
 // Tapping a team while "All" is on isolates that team; after that the chips toggle. Emptying
 // the selection returns to All rather than leaving a table with nothing in it.
+// The pool, distance and pace source the coach used last, so Training Pace reopens where it was
+// left. Only those three: the stroke, sex, team and search filters start fresh each visit.
+const TP_FORM_KEY = 'sc_tp_form';
+function tpSaveForm() {
+  const f = state.tpForm;
+  try { localStorage.setItem(TP_FORM_KEY, JSON.stringify({ pool: f.pool, distance: f.distance, basis: f.basis })); } catch (e) {}
+}
+function tpLoadForm() {
+  let o = null;
+  try { o = JSON.parse(localStorage.getItem(TP_FORM_KEY) || 'null'); } catch (e) { o = null; }
+  if (!o || typeof o !== 'object') return;
+  const f = state.tpForm;
+  if (o.pool === 'SCM' || o.pool === 'LCM') f.pool = o.pool;
+  if ([50, 100, 200, 400, 800, 1500].indexOf(+o.distance) >= 0) f.distance = +o.distance;
+  if (['best', 'recent', 'target'].indexOf(o.basis) >= 0) f.basis = o.basis;
+}
 // Stroke chips: All (null) by default. With All on, a tap isolates that stroke; after that a
 // tap adds or removes it, and removing the last one falls back to All rather than an empty table.
 function tpToggleStroke(name) {
@@ -7676,7 +7692,7 @@ function renderTrainingPace() {
       </div>
     </div>`;
 
-  const rows = state.tpShow ? trainingRows(f.pool, f.distance, f.basis) : null;
+  const rows = trainingRows(f.pool, f.distance, f.basis);
   // Stroke tabs: only the strokes with an event at this pool+distance.
   const availStrokes = rows ? TP_STROKES.filter((st) => predict(st, 'M', f.pool, f.distance, 100) || predict(st, 'F', f.pool, f.distance, 100)) : [];
   if (availStrokes.length && availStrokes.indexOf(f.stroke) < 0) f.stroke = availStrokes[0];
@@ -7774,7 +7790,7 @@ function renderTrainingPace() {
   const colsTouched = Object.keys(tpColsState()).length > 0;
   const colPanel = colChips.length ? `<div class="mt-2" data-tp-cols>
       <button class="w-full flex items-center justify-between bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:border-cyan-300 transition" data-action="tp-cols-toggle" aria-expanded="${state.tpColsOpen ? 'true' : 'false'}">
-        <span>Columns <span class="text-muted font-medium">· ${colsOn} of ${colChips.length} shown</span></span>
+        <span>Choose splits to train <span class="text-muted font-medium">· ${colsOn} of ${colChips.length} on</span></span>
         <span class="text-slate-400">${state.tpColsOpen ? '▴' : '▾'}</span>
       </button>
       ${state.tpColsOpen ? `<div class="bg-white border border-slate-200 rounded-xl px-3 py-3 mt-1.5">
@@ -7782,7 +7798,7 @@ function renderTrainingPace() {
           ${colChips.map((c) => `<button class="${chip(c.on)}" data-tp-col="${c.k}" data-on="${c.on ? 1 : 0}" aria-pressed="${c.on ? 'true' : 'false'}">${c.label}</button>`).join('')}
         </div>
         <div class="flex items-center justify-between mt-2.5">
-          <span class="text-[10px] text-faint leading-snug">Tap to show or hide. The PDF prints the columns that are on, for the strokes selected above.</span>
+          <span class="text-[10px] text-faint leading-snug">Tap a split to add it to the table or take it off. The PDF prints the splits that are on, for the strokes selected above.</span>
           ${colsTouched ? `<button class="text-[11px] font-semibold text-cyan-700 hover:underline flex-shrink-0 ml-3" data-action="tp-cols-reset">Reset</button>` : ''}
         </div>
       </div>` : ''}
@@ -7811,7 +7827,6 @@ function renderTrainingPace() {
         ${group('Pool', pools.map((p) => [p, p]), 'pool')}
         ${group('Distance', dists.map((d) => [d, d + ' m']), 'distance')}
         ${group('Pace from', [['best', 'Best time'], ['recent', 'Most recent'], ['target', 'Target']], 'basis')}
-        <button class="w-full bg-cyan-600 text-white font-semibold rounded-xl py-3.5 text-sm hover:bg-cyan-700 active:scale-[0.99] transition shadow-lg shadow-cyan-600/20" data-action="tp-show">Show Training Table</button>
       </div>
       ${rows && rows.length ? `<div class="mx-3 mt-3 no-print">${strokeChips ? `<div class="flex flex-wrap gap-1.5">${strokeChips}</div>` : ''}${sexChips ? `<div class="flex flex-wrap gap-1.5 mt-2">${sexChips}</div>` : ''}${teamChips ? `<div class="flex flex-wrap gap-1.5 mt-2">${teamChips}</div>` : ''}${colPanel}${tpSearch}</div>` : ''}
       ${rows ? `<div class="m-3 bg-white rounded-2xl border border-slate-200 overflow-hidden">${sheet}</div>` : ''}
@@ -8388,7 +8403,7 @@ document.addEventListener('click', (e) => {
     if (tp) {
       const k = tp.getAttribute('data-tp'), v = tp.getAttribute('data-tpv');
       state.tpForm[k] = (k === 'distance') ? parseInt(v, 10) : v;
-      render(); return;
+      tpSaveForm(); render(); return;
     }
     const selfSx = e.target.closest('[data-self-sex]');
     if (selfSx) { (state.selfSetup = state.selfSetup || {}).sex = selfSx.getAttribute('data-self-sex'); render(); return; }
@@ -9004,7 +9019,7 @@ function handleAction(action, el) {
       navigate('swimmer-setup');
       break;
     }
-    case 'training-pace': state.tpShow = false; navigate('training-pace'); break;
+    case 'training-pace': tpLoadForm(); state.tpShow = true; navigate('training-pace'); break;
     case 'training-splits': navigate('training-splits'); break;
     case 'goals': navigate('goals'); break;
     case 'goal-save': goalSave(); break;
@@ -9022,7 +9037,7 @@ function handleAction(action, el) {
     case 'usp-toggle': state.uspOpen = !state.uspOpen; render(); break;
     case 'other-tools': navigate('other-tools'); break;
     case 'hdr-more': state.hdrMore = !state.hdrMore; render(); break;
-    case 'tp-show': state.tpShow = true; render(); break;
+    case 'tp-show': state.tpShow = true; render(); break;   // no button any more; harmless if called
     case 'tp-cols-toggle': state.tpColsOpen = !state.tpColsOpen; render(); break;
     case 'tp-cols-reset': state.tpCols = {}; saveTpCols(); render(); break;
     case 'tp-download': {
