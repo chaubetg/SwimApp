@@ -1819,16 +1819,87 @@ function exportScreenCsv() {
   showToast(`Exported ${m.note}`);
 }
 
-// --- Backup: lossless JSON of everything saved (exact round-trip for restore / device moves) ---
+// --- Backup: a CSV that opens in Excel AND restores exactly ---
+// The readable columns are for people; the last column holds each record exactly as saved, so a
+// Restore is lossless and an Excel re-save cannot damage it (Excel rewrites "1:02.77" and dates,
+// but leaves that text alone). Edits made in the readable columns are not read back.
+// (Named exportBackupJson for history: tests and the Start over flow call it by that name.)
+const BACKUP_DATA_COL = 'Restore data (do not edit)';
+const BACKUP_KIND_LABEL = { race: 'Race', plan: 'Target time', goal: 'Goal', fifty: '50 splits', adjacent: 'Adjacent event',
+  convert: 'Conversion', eff: 'Efficiency test', seg: 'Segment', mid: 'Middle 50', hundo: '100 splits', total: 'Total' };
+function backupCsvText() {
+  const head = ['Type', 'Swimmer', 'Sex', 'Team', 'Stroke', 'Distance', 'Pool', 'Date', 'Meet', 'Round', 'Time', 'Splits', 'Notes', BACKUP_DATA_COL];
+  const lines = [head];
+  const t = (v) => (v > 0 ? formatTime(v) : '');
+  const sorted = state.saved.slice().sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })
+    || String(a.stroke || '').localeCompare(String(b.stroke || '')) || (a.distance || 0) - (b.distance || 0) || String(a.date || '').localeCompare(String(b.date || '')));
+  sorted.forEach((s) => {
+    const kind = s.kind || 'plan';
+    let time = '', splits = '';
+    if (kind === 'race') {
+      time = t(raceActualTotal(s));
+      try { const c = buildRaceComparison(s); if (c) splits = c.rows.filter((r) => r.actual != null && !/total/i.test(r.label)).map((r) => formatTime(r.actual)).join(' / '); } catch (e) {}
+    } else time = t(s.targetSeconds || s.seconds);
+    lines.push([BACKUP_KIND_LABEL[kind] || kind, s.name || '', s.sex === 'M' ? 'M' : (s.sex ? 'W' : ''), s.team || '', s.stroke || '',
+      s.distance || '', s.pool || '', s.date || '', s.competition || '', s.round || '', time, splits,
+      String(s.notes || '').replace(/\s+/g, ' ').trim(), JSON.stringify(s)]);
+  });
+  if (!SWIMMER) {
+    const G = tpGroupsState();
+    G.groups.forEach((g) => lines.push(['Group', g.name, '', '', '', '', '', '', '', '', '', '',
+      g.members.map((m) => m.name).join(', '), JSON.stringify({ group: g })]));
+    if (G.priority.length) lines.push(['Priority list', '', '', '', '', '', '', '', '', '', '', '',
+      G.priority.map((m) => m.name).join(', '), JSON.stringify({ priority: G.priority })]);
+  }
+  return '﻿' + lines.map((row) => row.map(csvCell).join(',')).join('\r\n');   // BOM: Excel reads accents
+}
 function exportBackupJson() {
   if (!state.saved.length) { showToast('Nothing to back up'); return; }
-  const payload = { app: 'pacer', schema: 2, exported: new Date().toISOString(), saved: state.saved };
-  if (!SWIMMER) payload.groups = tpGroupsState();     // Training Pace groups + priority list
   const stamp = new Date().toISOString().slice(0, 10);
-  downloadFile(`split_compass_backup_${stamp}.json`, JSON.stringify(payload, null, 2), 'application/json');
+  downloadFile(`split_compass_backup_${stamp}.csv`, backupCsvText(), 'text/csv');
   markBackedUp();
   showToast(`Backed up ${state.saved.length} ${state.saved.length === 1 ? 'entry' : 'entries'}`);
   if (state.view === 'roster' || state.view === 'import-menu') render();   // clear the nag / tick the step
+}
+// A whole CSV file into rows: quoted cells may hold commas, quotes and line breaks. The separator is
+// read off the header line, so a file re-saved by French-locale Excel (semicolons) still restores.
+function parseCsvText(text) {
+  text = String(text).replace(/^﻿/, '');
+  const nl = text.search(/\r?\n/), first = nl < 0 ? text : text.slice(0, nl);
+  const n = (ch) => first.split(ch).length - 1;
+  const d = n(';') > n(',') && n(';') >= n('\t') ? ';' : (n('\t') > n(',') ? '\t' : ',');
+  const rows = []; let row = [], cell = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) {
+      if (ch === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += ch;
+      continue;
+    }
+    if (ch === '"') q = true;
+    else if (ch === d) { row.push(cell); cell = ''; }
+    else if (ch === '\n' || ch === '\r') { if (ch === '\r' && text[i + 1] === '\n') i++; row.push(cell); rows.push(row); row = []; cell = ''; }
+    else cell += ch;
+  }
+  if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter((r) => r.some((c) => c !== ''));
+}
+// A backup CSV back into the same shape a JSON backup has: { saved, groups }. null if it isn't one.
+function backupFromCsv(text) {
+  const rows = parseCsvText(text);
+  if (!rows.length) return null;
+  const col = rows[0].findIndex((h) => /restore data/i.test(h));
+  if (col < 0) return null;
+  const saved = [], groups = [], priority = []; let bad = 0;
+  rows.slice(1).forEach((r) => {
+    let o = null;
+    try { o = JSON.parse(r[col] || ''); } catch (e) { o = null; }
+    if (!o || typeof o !== 'object') { bad++; return; }
+    if (o.group) groups.push(o.group);
+    else if (Array.isArray(o.priority)) priority.push(...o.priority);
+    else if (o.id && o.name) saved.push(o);
+    else bad++;
+  });
+  return { saved, groups: { groups, priority }, bad };
 }
 
 // --- Import a backup JSON: merge by id (adds new, keeps existing) ---
@@ -2133,13 +2204,19 @@ function renderImportPreview() {
 }
 function triggerImport() {
   const inp = document.createElement('input');
-  inp.type = 'file'; inp.accept = '.json,application/json'; inp.style.display = 'none';
+  inp.type = 'file'; inp.accept = '.csv,.json,text/csv,application/json,text/plain'; inp.style.display = 'none';
   inp.addEventListener('change', () => {
     const file = inp.files && inp.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => importBackupData(reader.result);
-    reader.readAsText(file);
+    // UTF-8 first; if Excel re-saved the file as Windows-1252, read it as that so accents survive.
+    reader.onload = () => {
+      let txt;
+      try { txt = new TextDecoder('utf-8', { fatal: true }).decode(reader.result); }
+      catch (e) { try { txt = new TextDecoder('windows-1252').decode(reader.result); } catch (e2) { txt = ''; } }
+      importBackupData(txt);
+    };
+    reader.readAsArrayBuffer(file);
   });
   document.body.appendChild(inp);
   inp.click();
@@ -2147,7 +2224,9 @@ function triggerImport() {
 }
 function importBackupData(text) {
   let data;
-  try { data = JSON.parse(String(text).replace(/^﻿/, '')); } catch (e) { showToast('Could not read that file'); return; }
+  try { data = JSON.parse(String(text).replace(/^﻿/, '')); }
+  catch (e) { data = backupFromCsv(text); }            // the CSV backup (2026-11-04), or an older .json
+  if (!data) { showToast('Not a Split Compass backup file \u2014 results CSVs go in Import times'); return; }
   const arr = Array.isArray(data) ? data : (data && Array.isArray(data.saved) ? data.saved : null);
   if (!arr) { showToast('Not a Split Compass backup file'); return; }
   const existing = new Set(state.saved.map(s => s.id));
