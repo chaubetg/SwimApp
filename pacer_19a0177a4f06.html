@@ -2279,6 +2279,9 @@ function render() {
   // they were. Moving to a DIFFERENT screen still starts at the top, as expected.
   const prevScroller = host.querySelector('.scrollable');
   const keepScroll = (renderedView === state.view && prevScroller) ? prevScroller.scrollTop : 0;
+  // Inner scrollers (the group editor's swimmer list) keep their place on a same-screen redraw too.
+  const keepInner = {};
+  if (renderedView === state.view) host.querySelectorAll('[data-keep-scroll]').forEach((el) => { keepInner[el.getAttribute('data-keep-scroll')] = el.scrollTop; });
   // Remember which time box held the caret: every input node is about to be replaced.
   const ae = document.activeElement;
   const aeGrp = (ae && host.contains(ae) && ae.closest) ? ae.closest('[data-tkey]') : null;
@@ -2325,6 +2328,7 @@ function render() {
   host.innerHTML = html;
   renderedView = state.view;
   if (keepScroll) { const sc = host.querySelector('.scrollable'); if (sc) sc.scrollTop = keepScroll; }
+  Object.keys(keepInner).forEach((k) => { const el = host.querySelector(`[data-keep-scroll="${k}"]`); if (el) el.scrollTop = keepInner[k]; });
   if (keepFocus && keepFocus.box) {
     const g = host.querySelector(`[data-tkey="${keepFocus.key}"]`);
     const box = g && g.querySelector('.' + keepFocus.box);
@@ -7863,7 +7867,7 @@ function tpGroupsHtml(f, chip) {
         : 'Tick the swimmers in this group. With the group picked above, the table, CSV and PDF show only them.'}</div>
       <input type="text" data-tp-group-q value="${attr(q)}" placeholder="Search swimmer" class="w-full mt-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300 placeholder:text-muted" />
       <div class="text-[11px] font-semibold text-slate-600 mt-2 mb-0.5">${on.size} ticked</div>
-      <div class="overflow-y-auto" style="max-height:18rem">${list || '<div class="text-xs text-muted py-2">No swimmers on the roster yet.</div>'}</div>
+      <div class="overflow-y-auto" style="max-height:18rem" data-keep-scroll="tp-group-list">${list || '<div class="text-xs text-muted py-2">No swimmers on the roster yet.</div>'}</div>
       ${isPri ? (on.size ? '<button class="mt-3 text-[11px] font-semibold text-rose-600 hover:underline" data-action="tp-priority-clear">Clear the priority list</button>' : '')
         : '<button class="mt-3 text-[11px] font-semibold text-rose-600 hover:underline" data-action="tp-group-delete">Delete group</button>'}
     </div>`;
