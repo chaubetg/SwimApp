@@ -1803,7 +1803,7 @@ function screenCsvModel() {
     const rows = [...table.querySelectorAll('thead tr'), ...table.querySelectorAll('tbody tr')]
       .map(cells).filter((r) => r.length);
     if (rows.length < 2) return null;
-    const who = state.view === 'training-pace' ? 'training_pace' : slug(swimmerName(state.savedSid)) + '_' + slug(state.progGroup);
+    const who = state.view === 'training-pace' ? 'training_pace' + (tpGroupById(state.tpForm && state.tpForm.group) ? '_' + tpGroupById(state.tpForm.group).name : '') : slug(swimmerName(state.savedSid)) + '_' + slug(state.progGroup);
     return { name: `split_compass_${slug(who)}_${stamp}.csv`, rows, note: `${rows.length - 1} rows` };
   }
   return null;
@@ -1822,6 +1822,7 @@ function exportScreenCsv() {
 function exportBackupJson() {
   if (!state.saved.length) { showToast('Nothing to back up'); return; }
   const payload = { app: 'pacer', schema: 2, exported: new Date().toISOString(), saved: state.saved };
+  if (!SWIMMER) payload.groups = tpGroupsState();     // Training Pace groups + priority list
   const stamp = new Date().toISOString().slice(0, 10);
   downloadFile(`split_compass_backup_${stamp}.json`, JSON.stringify(payload, null, 2), 'application/json');
   markBackedUp();
@@ -2154,9 +2155,18 @@ function importBackupData(text) {
     if (e && e.id && e.name && !existing.has(e.id)) { state.saved.push(e); existing.add(e.id); added++; }
   });
   persistSaved();
+  // Groups merge the same way: a group already here (same id) is kept as it is; new ones are added.
+  let gAdded = 0;
+  if (!SWIMMER && data && data.groups && typeof data.groups === 'object') {
+    const inc = tpGroupsClean(data.groups), G = tpGroupsState();
+    inc.groups.forEach((g) => { if (!G.groups.some((x) => x.id === g.id)) { G.groups.push(g); gAdded++; } });
+    inc.priority.forEach((m) => { if (!G.priority.some((x) => (m.sid && x.sid === m.sid) || (m.name && x.name === m.name))) G.priority.push(m); });
+    saveTpGroups();
+  }
   if (added) markBackedUp();   // they hold a file that reproduces this state
   render();
-  showToast(added ? `Imported ${added} ${added === 1 ? 'entry' : 'entries'}` : 'Nothing new to import');
+  showToast(added ? `Imported ${added} ${added === 1 ? 'entry' : 'entries'}${gAdded ? ` and ${gAdded} group${gAdded === 1 ? '' : 's'}` : ''}`
+    : (gAdded ? `Imported ${gAdded} group${gAdded === 1 ? '' : 's'}` : 'Nothing new to import'));
 }
 
 // ----- Delete: one saved event (pace plan or race) -----
@@ -2755,6 +2765,29 @@ function render() {
     });
     tsq.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); tsq.blur(); render(); } });
   }
+  const tgn = host.querySelector('[data-tp-group-name]');
+  if (tgn) {
+    // Rename as they type, without a re-render (that would drop the keyboard); the chip follows.
+    const chipName = () => { const c = host.querySelector(`[data-tp-group="${state.tpGroupEdit}"] .tp-gname`); return c; };
+    tgn.addEventListener('input', () => {
+      const g = tpGroupById(state.tpGroupEdit); if (!g) return;
+      g.name = tgn.value.slice(0, 40); saveTpGroups();
+      const c = chipName(); if (c) c.textContent = g.name;
+    });
+    tgn.addEventListener('change', () => {
+      const g = tpGroupById(state.tpGroupEdit); if (!g) return;
+      if (!g.name.trim()) { g.name = 'Group'; tgn.value = g.name; saveTpGroups(); const c = chipName(); if (c) c.textContent = g.name; }
+      else g.name = g.name.trim();
+      saveTpGroups();
+    });
+  }
+  const tgq = host.querySelector('[data-tp-group-q]');
+  if (tgq) {
+    tgq.addEventListener('input', () => {
+      state.tpGroupQ = tgq.value; const q = tgq.value.trim();
+      host.querySelectorAll('.tp-gm').forEach((row) => { row.style.display = nameMatches(row.getAttribute('data-name') || '', q) ? '' : 'none'; });
+    });
+  }
   const tpq = host.querySelector('[data-tp-search]');
   if (tpq) {
     tpq.addEventListener('input', () => {
@@ -2772,7 +2805,7 @@ function render() {
   const NO_HINT = { checkbox: 1, radio: 1, date: 1, range: 1, file: 1 };
   host.querySelectorAll('input').forEach((el) => {
     if (NO_HINT[(el.getAttribute('type') || 'text').toLowerCase()]) return;
-    const isSearch = el.hasAttribute('data-search') || el.hasAttribute('data-tp-search') || el.hasAttribute('data-ts-search');
+    const isSearch = el.hasAttribute('data-search') || el.hasAttribute('data-tp-search') || el.hasAttribute('data-ts-search') || el.hasAttribute('data-tp-group-q');
     el.setAttribute('enterkeyhint', isSearch ? 'search' : 'done');
     if (isSearch) return;                      // those two already commit on Enter
     el.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); el.blur(); } });
@@ -5764,8 +5797,10 @@ function tpSheetModel() {
   const f = state.tpForm;
   if (!f) return null;
   const sxf = f.sexFilter || 'all';
+  const grpSids = tpGroupFilter(f), grp = tpGroupById(f.group), pri = tpPrioritySids();
   const rows = trainingRows(f.pool, f.distance, f.basis)
     .filter((r) => r.segs && r.segs.length && (sxf === 'all' || r.sex === sxf) && tpTeamShown(r, f.teams)
+      && (!grpSids || grpSids.has(r.sid))
       && (!f.strokes || !f.strokes.length || f.strokes.indexOf(r.stroke) >= 0));
   if (!rows.length) return null;
   const over = tpColsState();
@@ -5776,17 +5811,18 @@ function tpSheetModel() {
   ['F', 'M'].forEach((sx) => {
     const blocks = [];
     ORDER.forEach((st) => {
-      const rs = rows.filter((r) => (r.sex === 'M' ? 'M' : 'F') === sx && r.stroke === st)
-        .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+      const rs = tpOrder(rows.filter((r) => (r.sex === 'M' ? 'M' : 'F') === sx && r.stroke === st)
+        .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })), pri);
       if (!rs.length) return;
-      const lines = rs.map((r) => {
+      const lines = rs.map((r, ri) => {
         if (r.fellBack) fellBack++;
         const cells = tpPick(tpAllCells(r.segs, r.stroke, f.pool, f.distance, r.splits, r.sex), over);
-        return { name: r.name, time: formatTime(r.total) + (r.fellBack ? '*' : ''), heads: cells.map((c) => c.h), vals: cells.map((c) => formatTime(c.v)) };
+        return { name: r.name, time: formatTime(r.total) + (r.fellBack ? '*' : ''), heads: cells.map((c) => c.h), vals: cells.map((c) => formatTime(c.v)),
+          div: ri > 0 && pri.has(rs[ri - 1].sid) && !pri.has(r.sid) };
       });
       blocks.push({ title: NAMES[st] || st, heads: lines[0].heads, rows: lines });
     });
-    if (blocks.length) groups.push({ title: `${f.distance} m — ${sx === 'F' ? 'Women' : 'Men'}`, blocks });
+    if (blocks.length) groups.push({ title: `${f.distance} m — ${sx === 'F' ? 'Women' : 'Men'}${grp ? ' · ' + grp.name : ''}`, blocks });
   });
   if (!groups.length) return null;
   const from = f.basis === 'recent' ? 'most recent swim' : (isGoalBasis(f.basis) ? 'target time' : 'best time');
@@ -5796,31 +5832,38 @@ function tpSheetModel() {
     sub: `${f.pool === 'SCM' ? 'Short course (SCM)' : (f.pool === 'LCM' ? 'Long course (LCM)' : f.pool)} · race pace from each swimmer’s ${from}${team}`,
     foot: `Split Compass · ${new Date().toISOString().slice(0, 10)} · splits are modelled from race data, a reference not a rule.`
       + (fellBack ? ' * no target set — paced from best time.' : ''),
-    file: `Split Compass - ${f.distance} m ${f.pool} pace sheet`,
+    file: `Split Compass - ${f.distance} m ${f.pool} pace sheet${grp ? ' - ' + grp.name : ''}`,
   };
 }
-// Geometry for one way of laying the sheet out. `up` = stroke blocks side by side.
-const TP_SHEET = { RH: 13.2, HEAD: 17, COLHEAD: 13, GAP: 12, TIMEW: 46, TOP: 90, BOTTOM: 46, GUT: 22 };
-function tpSheetGeom(orientation, up, nSplit) {
+// Fixed page furniture (title block and footer); everything in the tables scales from RH.
+const TP_SHEET = { TOP: 90, BOTTOM: 46, GUT: 22, RH_MAX: 13, FONT_MIN: 6.5, FONT_PER_RH: 0.70 };
+// Every table size from one row height. At the 13 pt maximum the type is ~9 pt, as before.
+function tpSheetMetrics(RH) {
+  const f = RH * TP_SHEET.FONT_PER_RH;
+  return { RH, font: f, HEAD: RH * 1.29, COLHEAD: RH * 0.98, GAP: RH * 0.9,
+           TIMEW: f * 5.3, SPLIT: f * 4.3, NAME: f * 9.5, title: RH * 0.76, head: RH * 0.53 };
+}
+// One way of laying the sheet out at one size. `up` = stroke blocks side by side.
+function tpSheetGeom(orientation, up, nSplit, RH) {
+  const mx = tpSheetMetrics(RH);
   const W = orientation === 'landscape' ? 792 : 612, H = orientation === 'landscape' ? 612 : 792;
   const M = orientation === 'landscape' ? 36 : 40;
   const colW = (W - 2 * M - (up - 1) * TP_SHEET.GUT) / up;
-  const minName = up === 1 ? 120 : 96;
-  const room = colW - minName - TP_SHEET.TIMEW;
-  const fits = nSplit === 0 || room / nSplit >= 37;
-  // Splits take what they need and no more: a wide page should not push the numbers a hand's
-  // width away from the name they belong to.
-  const splitW = nSplit ? Math.max(30, Math.min(up === 1 ? 56 : 42, room / nSplit)) : 0;
-  return { orientation, up, W, H, M, colW, splitW, fits, usable: H - TP_SHEET.TOP - TP_SHEET.BOTTOM };
+  const room = colW - mx.NAME - mx.TIMEW - 12;
+  const fits = nSplit === 0 || room / nSplit >= mx.SPLIT;
+  // Splits take what they need and a little more, never a hand's width from their name.
+  const splitW = nSplit ? Math.max(mx.SPLIT * 0.82, Math.min(mx.SPLIT * 1.3, room / nSplit)) : 0;
+  return { orientation, up, W, H, M, colW, splitW, fits, mx, usable: H - TP_SHEET.TOP - TP_SHEET.BOTTOM };
 }
 // Flow the blocks into columns and pages. Returns the drawing instructions, so the page count
 // used to choose a layout and the pages actually drawn can never disagree.
 function tpSheetFlow(model, g) {
-  const S = TP_SHEET, ops = [];
+  const S = g.mx, ops = [], perGroup = [];
   let page = -1;
   const blockH = (b) => S.HEAD + S.COLHEAD + S.RH * b.rows.length;
   model.groups.forEach((grp) => {
     let col = 0, y = 0;
+    const first = page + 1;
     const newPage = () => { page++; col = 0; y = 0; ops.push({ t: 'page', page, title: grp.title }); };
     const nextCol = () => { if (col + 1 < g.up) { col++; y = 0; } else newPage(); };
     newPage();
@@ -5843,40 +5886,67 @@ function tpSheetFlow(model, g) {
       const need = S.HEAD + S.COLHEAD + S.RH * Math.min(2, b.rows.length);
       if (y > 0 && y + need > g.usable) nextCol();
       head(false);
-      b.rows.forEach((r) => {
-        if (y + S.RH > g.usable) { nextCol(); head(true); }
-        ops.push({ t: 'row', page, col, y, block: b, row: r }); y += S.RH;
+      b.rows.forEach((r, ri) => {
+        if (y + S.RH > g.usable + 0.01) { nextCol(); head(true); }
+        ops.push({ t: 'row', page, col, y, block: b, row: r, i: ri }); y += S.RH;
       });
       y += S.GAP;
     });
+    perGroup.push(page - first + 1);
   });
-  return { ops, pages: page + 1 };
+  return { ops, pages: page + 1, perGroup };
 }
-// The layout that prints on the fewest pages. Ties go to portrait, then to side-by-side.
+// The largest type at which every sex fits on exactly one page, over the four layouts. Both
+// pages share the size and orientation so the front and back of the sheet match. Below the
+// 6.5 pt floor it does not shrink further: it prints at 6.5 pt on as few pages as it can and
+// marks the plan `overflow`, which the download turns into a message.
 function tpSheetPlan(model) {
   const nSplit = Math.max(0, ...model.groups.map((grp) => Math.max(0, ...grp.blocks.map((b) => b.heads.length))));
-  const cands = [['portrait', 2], ['portrait', 1], ['landscape', 2], ['landscape', 1]]
-    .map(([o, up]) => tpSheetGeom(o, up, nSplit));
-  let ok = cands.filter((g) => g.fits);
-  if (!ok.length) ok = [cands[3]];            // more columns than any layout holds: widest, and shrink
+  const RHmin = TP_SHEET.FONT_MIN / TP_SHEET.FONT_PER_RH, RHmax = TP_SHEET.RH_MAX;
+  const LAYOUTS = [['portrait', 2], ['portrait', 1], ['landscape', 2], ['landscape', 1]];
+  const onePage = (o, up, RH) => {
+    const g = tpSheetGeom(o, up, nSplit, RH);
+    if (!g.fits) return null;
+    const fl = tpSheetFlow(model, g);
+    return fl.perGroup.every((n) => n === 1) ? { g, flow: fl } : null;
+  };
   let best = null;
-  ok.forEach((g) => { const fl = tpSheetFlow(model, g); if (!best || fl.pages < best.flow.pages) best = { g, flow: fl }; });
-  return { g: best.g, flow: best.flow, nSplit };
+  LAYOUTS.forEach(([o, up]) => {
+    if (!onePage(o, up, RHmin)) return;                     // cannot fit even at the floor
+    let lo = RHmin, hi = RHmax;
+    if (onePage(o, up, hi)) lo = hi;
+    else for (let k = 0; k < 18; k++) { const mid = (lo + hi) / 2; if (onePage(o, up, mid)) lo = mid; else hi = mid; }
+    const fit = onePage(o, up, lo);
+    // Larger type wins; at equal size keep the earlier layout (portrait, then side by side).
+    if (!best || fit.g.mx.RH > best.g.mx.RH + 0.05) best = fit;
+  });
+  if (best) return { g: best.g, flow: best.flow, nSplit, overflow: false };
+  // Does not fit one page per sex at a readable size: floor size, fewest pages.
+  let fb = null;
+  LAYOUTS.forEach(([o, up]) => {
+    const g = tpSheetGeom(o, up, nSplit, RHmin);
+    if (!g.fits) return;
+    const fl = tpSheetFlow(model, g);
+    if (!fb || fl.pages < fb.flow.pages) fb = { g, flow: fl };
+  });
+  if (!fb) { const g = tpSheetGeom('landscape', 1, nSplit, RHmin); fb = { g, flow: tpSheetFlow(model, g) }; }
+  return { g: fb.g, flow: fb.flow, nSplit, overflow: true };
 }
-function tpSheetDoc(model) {
-  const S = TP_SHEET, plan = tpSheetPlan(model), g = plan.g;
+function tpSheetDoc(model, plan) {
+  plan = plan || tpSheetPlan(model);
+  const g = plan.g, S = g.mx;
   const doc = new window.jspdf.jsPDF({ unit: 'pt', format: 'letter', orientation: g.orientation });
-  const INK = [15, 23, 42], MUTE = [100, 116, 139], ACC = [21, 94, 117];
+  const INK = [15, 23, 42], MUTE = [100, 116, 139], BLUE = [30, 58, 138], GREY25 = [100, 116, 139];
   const font = (style, size, rgb) => { doc.setFont('helvetica', style); doc.setFontSize(size); doc.setTextColor(rgb[0], rgb[1], rgb[2]); };
   // Draw text no wider than maxW: shrink first, and only then cut it short.
   const fit = (str, x, y, maxW, size, minSize, align) => {
     let s = pdfText(str), sz = size;
     doc.setFontSize(sz);
-    while (sz > minSize && doc.getTextWidth(s) > maxW) { sz -= 0.5; doc.setFontSize(sz); }
+    while (sz > minSize && doc.getTextWidth(s) > maxW) { sz -= 0.25; doc.setFontSize(sz); }
     while (s.length > 3 && doc.getTextWidth(s) > maxW) s = s.slice(0, -2).replace(/\s+$/, '') + '…';
     doc.text(s, x, y, align ? { align } : undefined);
   };
-  const colX = (c) => g.M + c * (g.colW + S.GUT);
+  const colX = (c) => g.M + c * (g.colW + TP_SHEET.GUT);
   let cur = 0;
   plan.flow.ops.forEach((op) => {
     while (cur < op.page) { doc.addPage('letter', g.orientation); cur++; }
@@ -5887,31 +5957,32 @@ function tpSheetDoc(model) {
       font('normal', 7.5, MUTE); fit(model.foot, g.M, g.H - 30, g.W - 2 * g.M, 7.5, 6);
       return;
     }
-    const x = colX(op.col), top = S.TOP + op.y, b = op.block, n = b.heads.length;
+    const x = colX(op.col), top = TP_SHEET.TOP + op.y, b = op.block, n = b.heads.length;
     const right = x + g.colW - 6;
     const edge = (i) => right - (n - 1 - i) * g.splitW;      // right edge of split column i
     const timeEdge = right - n * g.splitW;                   // right edge of the time column
     const nameW = timeEdge - S.TIMEW - (x + 6) - 4;
     if (op.t === 'head') {
       doc.setFillColor(241, 245, 249); doc.rect(x, top, g.colW, S.HEAD, 'F');
-      font('bold', 10, INK); doc.text(pdfText(b.title + (op.cont ? ' (cont.)' : '')), x + 6, top + S.HEAD - 5);
-      font('normal', 8, MUTE); doc.text(`${b.rows.length} swimmer${b.rows.length === 1 ? '' : 's'}`, right, top + S.HEAD - 5.5, { align: 'right' });
-      const hy = top + S.HEAD + S.COLHEAD - 4;
-      font('bold', 7, MUTE); doc.text('SWIMMER', x + 6, hy);
-      fit(model.timeHead.toUpperCase(), timeEdge, hy, S.TIMEW + 6, 7, 5.5, 'right');
-      b.heads.forEach((h, i) => { font('bold', 7, MUTE); fit(h.toUpperCase(), edge(i), hy, g.splitW - 3, 7, 4.5, 'right'); });
+      font('bold', S.title, INK); doc.text(pdfText(b.title + (op.cont ? ' (cont.)' : '')), x + 6, top + S.HEAD * 0.7);
+      font('normal', S.head * 1.1, MUTE); doc.text(`${b.rows.length} swimmer${b.rows.length === 1 ? '' : 's'}`, right, top + S.HEAD * 0.68, { align: 'right' });
+      const hy = top + S.HEAD + S.COLHEAD * 0.68;
+      font('bold', S.head, MUTE); doc.text('SWIMMER', x + 6, hy);
+      fit(model.timeHead.toUpperCase(), timeEdge, hy, S.TIMEW + 4, S.head, S.head * 0.7, 'right');
+      b.heads.forEach((h, i) => { font('bold', S.head, MUTE); fit(h.toUpperCase(), edge(i), hy, g.splitW - 2, S.head, S.head * 0.6, 'right'); });
       doc.setDrawColor(148, 163, 184); doc.setLineWidth(0.8);
       doc.line(x, top + S.HEAD + S.COLHEAD, x + g.colW, top + S.HEAD + S.COLHEAD);
       return;
     }
-    const base = top + S.RH - 3.8, r = op.row;
-    font('normal', 9, INK); fit(r.name, x + 6, base, nameW, 9, 6);
-    font('bold', 9, ACC); doc.text(pdfText(r.time), timeEdge, base, { align: 'right' });
+    if (op.i % 2 === 1) { doc.setFillColor(246, 248, 251); doc.rect(x, top, g.colW, S.RH, 'F'); }   // zebra
+    if (op.row.div) { doc.setDrawColor(37, 99, 235); doc.setLineWidth(0.9); doc.line(x, top, x + g.colW, top); }   // after the priority swimmers
+    const base = top + S.RH * 0.71, r = op.row, f = S.font;
+    font('normal', f, INK); fit(r.name, x + 6, base, nameW, f, Math.min(f, 6));
+    font('bold', f, BLUE); doc.text(pdfText(r.time), timeEdge, base, { align: 'right' });
     r.vals.forEach((v, i) => {
-      if (tpBold(b.heads[i])) font('bold', 9, INK); else font('normal', 9, [51, 65, 85]);
-      fit(v, edge(i), base, g.splitW - 2, 9, 6.5, 'right');
+      if (tpBold(b.heads[i])) font('bold', f, INK); else font('normal', f, GREY25);
+      fit(v, edge(i), base, g.splitW - 2, f, f * 0.8, 'right');
     });
-    doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.4); doc.line(x, top + S.RH, x + g.colW, top + S.RH);
   });
   return doc;
 }
@@ -5922,7 +5993,9 @@ function tpBuildPdf() {
   if (!SWIMMER && state.view === 'training-pace') {
     const sheet = tpSheetModel();
     if (!sheet) { showToast('Nothing to download'); return; }
-    tpSheetDoc(sheet).save(sheet.file.replace(/[^\w\s-]/g, '').replace(/\s+/g, ' ').trim() + '.pdf');
+    const plan = tpSheetPlan(sheet);
+    tpSheetDoc(sheet, plan).save(sheet.file.replace(/[^\w\s-]/g, '').replace(/\s+/g, ' ').trim() + '.pdf');
+    if (plan.overflow) showToast('Too much for one page per side at a readable size \u2014 turn off a few splits, or pick fewer strokes, to get one sheet.');
     return;
   }
   const m = tpPdfModel();
@@ -7365,7 +7438,7 @@ function tpTeamShown(r, sel) {
 const TP_FORM_KEY = 'sc_tp_form';
 function tpSaveForm() {
   const f = state.tpForm;
-  try { localStorage.setItem(TP_FORM_KEY, JSON.stringify({ pool: f.pool, distance: f.distance, basis: f.basis })); } catch (e) {}
+  try { localStorage.setItem(TP_FORM_KEY, JSON.stringify({ pool: f.pool, distance: f.distance, basis: f.basis, group: f.group || null })); } catch (e) {}
 }
 function tpLoadForm() {
   let o = null;
@@ -7375,6 +7448,8 @@ function tpLoadForm() {
   if (o.pool === 'SCM' || o.pool === 'LCM') f.pool = o.pool;
   if ([50, 100, 200, 400, 800, 1500].indexOf(+o.distance) >= 0) f.distance = +o.distance;
   if (['best', 'recent', 'target'].indexOf(o.basis) >= 0) f.basis = o.basis;
+  // The group a coach prints is the one they print every time, so it is remembered too.
+  f.group = (!SWIMMER && typeof o.group === 'string' && tpGroupById(o.group)) ? o.group : null;
 }
 // Stroke chips: All (null) by default. With All on, a tap isolates that stroke; after that a
 // tap adds or removes it, and removing the last one falls back to All rather than an empty table.
@@ -7393,6 +7468,130 @@ function tpToggleTeam(name) {
   const i = f.teams.indexOf(name);
   if (i >= 0) f.teams.splice(i, 1); else f.teams.push(name);
   if (!f.teams.length) f.teams = null;
+}
+
+// ----- Groups and the priority list (coach build) -----
+// { groups: [{ id, name, members: [{ sid, name }] }], priority: [{ sid, name }] }
+const TP_GROUPS_KEY = 'sc_groups';
+function tpGroupsClean(o) {
+  const mem = (arr) => (Array.isArray(arr) ? arr : []).filter((m) => m && (m.sid || m.name))
+    .map((m) => ({ sid: String(m.sid || ''), name: String(m.name || '') }));
+  const groups = (o && Array.isArray(o.groups) ? o.groups : []).filter((g) => g && g.id)
+    .map((g) => ({ id: String(g.id), name: String(g.name || 'Group').slice(0, 40), members: mem(g.members) }));
+  return { groups, priority: mem(o && o.priority) };
+}
+function tpGroupsState() {
+  if (!state.tpGroups) {
+    let o = null;
+    try { o = JSON.parse(localStorage.getItem(TP_GROUPS_KEY) || 'null'); } catch (e) { o = null; }
+    state.tpGroups = tpGroupsClean(o);
+  }
+  return state.tpGroups;
+}
+function saveTpGroups() { try { localStorage.setItem(TP_GROUPS_KEY, JSON.stringify(tpGroupsState())); } catch (e) {} }
+function tpGroupById(id) { return id ? tpGroupsState().groups.find((g) => g.id === id) || null : null; }
+// The swimmer ids a member list stands for today. A member is kept by id and name: the id
+// survives a rename, the name survives Clear all + re-import (every swimmer gets a new id), so a
+// member whose id has gone is re-attached by exact name, the importer's own matching rule.
+function tpMemberSids(list) {
+  const live = new Set(), byName = {};
+  state.saved.forEach((s) => { if (!s.sid) return; live.add(s.sid); if (s.name && !(s.name in byName)) byName[s.name] = s.sid; });
+  const out = new Set(); let healed = false;
+  list.forEach((m) => {
+    if (m.sid && live.has(m.sid)) {
+      out.add(m.sid);
+      const n = swimmerName(m.sid); if (n && n !== m.name) { m.name = n; healed = true; }
+      return;
+    }
+    const sid = m.name && byName[m.name];
+    if (sid) { m.sid = sid; out.add(sid); healed = true; }
+  });
+  if (healed) saveTpGroups();
+  return out;
+}
+function tpToggleMember(list, sid) {
+  const i = list.findIndex((m) => m.sid === sid);
+  if (i >= 0) list.splice(i, 1); else list.push({ sid, name: swimmerName(sid) });
+  saveTpGroups();
+}
+function tpNewGroup() {
+  const G = tpGroupsState();
+  let n = G.groups.length + 1;
+  while (G.groups.some((g) => g.name === 'Group ' + n)) n++;
+  const g = { id: 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: 'Group ' + n, members: [] };
+  G.groups.push(g); saveTpGroups();
+  state.tpForm.group = g.id; state.tpGroupEdit = g.id; state.tpGroupQ = ''; tpSaveForm();
+}
+function tpDeleteGroup(id) {
+  const G = tpGroupsState(), g = tpGroupById(id);
+  if (!g) return;
+  if (!confirm(`Delete the group “${g.name}”?\n\nThe swimmers stay on the roster — only the group goes.`)) return;
+  G.groups = G.groups.filter((x) => x.id !== id); saveTpGroups();
+  if (state.tpForm.group === id) state.tpForm.group = null;
+  state.tpGroupEdit = null; tpSaveForm();
+}
+// Who the table is limited to: a Set of swimmer ids, or null for everyone.
+function tpGroupFilter(f) {
+  if (SWIMMER || !f || !f.group) return null;
+  const g = tpGroupById(f.group);
+  if (!g) { f.group = null; return null; }
+  return tpMemberSids(g.members);
+}
+function tpPrioritySids() { return SWIMMER ? new Set() : tpMemberSids(tpGroupsState().priority); }
+// Priority swimmers first (keeping their alphabetical order), then everyone else.
+function tpOrder(rows, pri) {
+  if (!pri || !pri.size) return rows;
+  return rows.filter((r) => pri.has(r.sid)).concat(rows.filter((r) => !pri.has(r.sid)));
+}
+function tpRoster() {
+  const seen = {};
+  state.saved.forEach((s) => { if (s.sid) seen[s.sid] = 1; });
+  return Object.keys(seen).map((sid) => ({ sid, name: swimmerName(sid), sex: swimmerSex(sid), team: swimmerTeam(sid) }))
+    .filter((r) => r.name).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+}
+// The chips, the Edit / Priority links and, when open, the tick-list editor.
+function tpGroupsHtml(f, chip) {
+  if (SWIMMER) return '';
+  const G = tpGroupsState(), pri = tpPrioritySids();
+  const cur = tpGroupById(f.group);
+  const attr = (s) => esc(s).replace(/"/g, '&quot;');
+  const chips = `<button class="${chip(!cur)}" data-tp-group="*">Everyone</button> `
+    + G.groups.map((g) => `<button class="${chip(cur && cur.id === g.id)}" data-tp-group="${g.id}"><span class="tp-gname">${esc(g.name)}</span> <span class="font-medium opacity-80">${tpMemberSids(g.members).size}</span></button>`).join(' ')
+    + ` <button class="px-3 py-2 rounded-xl text-xs font-semibold border border-dashed border-slate-300 bg-white text-cyan-700 hover:border-cyan-300 transition" data-action="tp-group-new">+ New group</button>`;
+  const links = `<div class="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1.5 text-[11px] font-semibold">
+      ${cur ? `<button class="text-cyan-700 hover:underline" data-action="tp-group-edit">Edit ${esc(cur.name)}</button>` : ''}
+      <button class="text-cyan-700 hover:underline" data-action="tp-priority-edit">★ ${pri.size ? `Priority first · ${pri.size}` : 'Set priority swimmers'}</button>
+    </div>`;
+  const ed = state.tpGroupEdit;
+  const isPri = ed === 'priority';
+  const g = isPri ? null : tpGroupById(ed);
+  if (!isPri && !g) { state.tpGroupEdit = null; return `<div class="mt-2" data-tp-groups><div class="flex flex-wrap gap-1.5">${chips}</div>${links}</div>`; }
+  const on = isPri ? pri : tpMemberSids(g.members);
+  const q = state.tpGroupQ || '';
+  const list = tpRoster().map((r) => {
+    const yes = on.has(r.sid);
+    return `<button class="tp-gm w-full flex items-center gap-2.5 py-2 text-left border-t border-slate-100" data-tp-member="${r.sid}" data-name="${attr(r.name)}" aria-pressed="${yes ? 'true' : 'false'}"${nameMatches(r.name, q.trim()) ? '' : ' style="display:none"'}>
+        <span class="w-5 h-5 rounded-md border flex items-center justify-center flex-shrink-0 text-[12px] font-bold ${yes ? 'bg-cyan-600 border-cyan-600 text-white' : 'bg-white border-slate-300'}">${yes ? '✓' : ''}</span>
+        <span class="text-sm text-slate-800 flex-1 min-w-0 truncate">${esc(r.name)}</span>
+        <span class="text-[10px] text-faint flex-shrink-0">${r.sex === 'M' ? 'M' : 'W'}${r.team ? ' · ' + esc(r.team) : ''}</span>
+      </button>`;
+  }).join('');
+  const editor = `<div class="bg-white border border-cyan-200 rounded-xl px-3 py-3 mt-2" data-tp-group-editor="${isPri ? 'priority' : g.id}">
+      <div class="flex items-center gap-2">
+        ${isPri ? '<div class="text-sm font-bold text-slate-900 flex-1">★ Priority swimmers</div>'
+          : `<input type="text" data-tp-group-name value="${attr(g.name)}" maxlength="40" aria-label="Group name" class="flex-1 min-w-0 bg-slate-100 rounded-lg px-2.5 py-1.5 text-sm font-semibold outline-none focus:ring-2 focus:ring-cyan-300" />`}
+        <button class="px-3 py-1.5 rounded-lg bg-cyan-600 text-white text-xs font-semibold flex-shrink-0" data-action="tp-group-done">Done</button>
+      </div>
+      <div class="text-[10px] text-faint leading-snug mt-1.5">${isPri
+        ? 'Ticked swimmers come first in every table, then a blue line, then everyone else — on screen and in the PDF.'
+        : 'Tick the swimmers in this group. With the group picked above, the table, CSV and PDF show only them.'}</div>
+      <input type="text" data-tp-group-q value="${attr(q)}" placeholder="Search swimmer" class="w-full mt-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300 placeholder:text-muted" />
+      <div class="text-[11px] font-semibold text-slate-600 mt-2 mb-0.5">${on.size} ticked</div>
+      <div class="overflow-y-auto" style="max-height:18rem">${list || '<div class="text-xs text-muted py-2">No swimmers on the roster yet.</div>'}</div>
+      ${isPri ? (on.size ? '<button class="mt-3 text-[11px] font-semibold text-rose-600 hover:underline" data-action="tp-priority-clear">Clear the priority list</button>' : '')
+        : '<button class="mt-3 text-[11px] font-semibold text-rose-600 hover:underline" data-action="tp-group-delete">Delete group</button>'}
+    </div>`;
+  return `<div class="mt-2" data-tp-groups><div class="flex flex-wrap gap-1.5">${chips}</div>${links}${editor}</div>`;
 }
 
 // ----- Screen: Training Pace -----
@@ -7437,7 +7636,8 @@ function renderTrainingPace() {
     f.teams = f.teams.filter((t) => teamsPresent.indexOf(t) >= 0);
     if (!f.teams.length) f.teams = null;
   }
-  const shownRows = rows ? rows.filter((r) => strokeShown(r)
+  const grpSids = tpGroupFilter(f), grp = tpGroupById(f.group), pri = tpPrioritySids();
+  const shownRows = rows ? rows.filter((r) => strokeShown(r) && (!grpSids || grpSids.has(r.sid))
     && (sxf === 'all' || r.sex === sxf) && tpTeamShown(r, f.teams) && nameMatches(r.name, tpQ)) : null;
   const basisLab = f.basis === 'recent' ? 'most recent' : (f.basis === 'target' ? 'season target' : 'best');
   const TP_ABBR = { Free: 'FR', Back: 'BK', Breast: 'BR', Fly: 'FLY', IM: 'IM' };
@@ -7449,10 +7649,11 @@ function renderTrainingPace() {
   if (rows && !rows.length) {
     body = `<div class="px-4 py-8 text-center text-sm text-muted">No recorded times for ${f.distance} m ${f.pool} yet.<br><span class="text-xs">Record a race at this distance and the swimmer appears here.</span></div>`;
   } else if (rows && shownRows && !shownRows.length) {
-    body = `<div class="px-4 py-8 text-center text-sm text-muted">${tpQ ? 'No swimmer matches \u201c' + tpQ + '\u201d.' : 'No ' + (f.strokes ? f.strokes.join(' / ') + ' ' : '') + 'times for ' + f.distance + ' m ' + f.pool + (sxf === 'all' ? '' : (sxf === 'M' ? ' (men)' : ' (women)')) + ' yet.'}</div>`;
+    body = `<div class="px-4 py-8 text-center text-sm text-muted">${grp && !grpSids.size ? esc(grp.name) + ' has no swimmers yet \u2014 tap \u201cEdit ' + esc(grp.name) + '\u201d to tick some.' : tpQ ? 'No swimmer matches \u201c' + tpQ + '\u201d.' : grp ? 'No one in ' + esc(grp.name) + ' has a ' + (f.strokes ? f.strokes.join(' / ') + ' ' : '') + f.distance + ' m ' + f.pool + ' time' + (sxf === 'all' ? '' : (sxf === 'M' ? ' (men)' : ' (women)')) + ' yet.' : 'No ' + (f.strokes ? f.strokes.join(' / ') + ' ' : '') + 'times for ' + f.distance + ' m ' + f.pool + (sxf === 'all' ? '' : (sxf === 'M' ? ' (men)' : ' (women)')) + ' yet.'}</div>`;
   } else if (rows) {
     const byStroke = {};
     shownRows.forEach((r) => { (byStroke[r.stroke] = byStroke[r.stroke] || []).push(r); });
+    Object.keys(byStroke).forEach((st) => { byStroke[st] = tpOrder(byStroke[st], pri); });
     // The four form strokes share a column shape at every event, so they share one header.
     // IM's splits are its stroke legs (a 400 IM is 4 legs, not First/Middle/Last), so if its
     // shape differs it gets its own header row inside the same table.
@@ -7474,9 +7675,11 @@ function renderTrainingPace() {
         ${pad(heads).map((h) => `<th class="text-right font-semibold px-2 whitespace-nowrap">${h == null ? '' : h}</th>`).join('')}
       </tr>`;
 
-    const rowHtml = (r, heads, opensBlock) => {
+    // The blue line under the priority swimmers, as on the PDF.
+    const afterPri = (list, ri) => ri > 0 && pri.has(list[ri - 1].sid) && !pri.has(list[ri].sid);
+    const rowHtml = (r, heads, opensBlock, divider) => {
       const cells = pad(tpCellsShown(r.segs, r.stroke, f.pool, f.distance, r.splits, r.sex));
-      return `<tr class="tp-row ${opensBlock ? TP_BLOCK : 'border-t border-slate-100'}" data-name="${r.name}">
+      return `<tr class="tp-row ${opensBlock ? TP_BLOCK : 'border-t border-slate-100'}" data-name="${r.name}"${divider ? ' data-tp-divider style="border-top:2px solid #3b82f6"' : ''}>
         <td class="py-2 pl-3">
           <div class="font-semibold text-[13px] whitespace-nowrap">${r.name}</div>
           ${r.date ? `<div class="text-[10px] text-faint leading-none mt-0.5">${r.date}</div>` : ''}
@@ -7488,12 +7691,12 @@ function renderTrainingPace() {
 
     let trs = '';
     present.forEach((st, bi) => {
-      byStroke[st].forEach((r, ri) => { trs += rowHtml(r, mainHeads, ri === 0 && bi > 0); });
+      byStroke[st].forEach((r, ri) => { trs += rowHtml(r, mainHeads, ri === 0 && bi > 0, afterPri(byStroke[st], ri)); });
     });
     if (byStroke.IM) {
       const sameShape = JSON.stringify(imHeads) === JSON.stringify(mainHeads);
       if (!sameShape && present.length) trs += headRow(imHeads, TP_BLOCK);
-      byStroke.IM.forEach((r, ri) => { trs += rowHtml(r, imHeads, ri === 0 && present.length > 0 && sameShape); });
+      byStroke.IM.forEach((r, ri) => { trs += rowHtml(r, imHeads, ri === 0 && present.length > 0 && sameShape, afterPri(byStroke.IM, ri)); });
     }
     body = `<div class="overflow-x-auto"><table class="w-full tp-table"><thead>${headRow(mainHeads, 'border-b-2 border-slate-400')}</thead><tbody>${trs}</tbody></table></div>`;
   }
@@ -7532,7 +7735,7 @@ function renderTrainingPace() {
   const sheet = rows && rows.length ? `
     <div id="tp-print" class="bg-white">
       <div class="px-3 pt-3 pb-1">
-        <div data-tp-title class="text-[15px] font-bold text-slate-900">${f.distance} m ${f.pool} — training pace</div>
+        <div data-tp-title class="text-[15px] font-bold text-slate-900">${f.distance} m ${f.pool} — training pace${grp ? ' · ' + esc(grp.name) : ''}</div>
       </div>
       ${body}
     </div>` : body;
@@ -7541,7 +7744,7 @@ function renderTrainingPace() {
     <div class="statusbar"></div>
     ${screenHeader({
       title: `Training Pace`,
-      sub: `${f.distance} m · ${f.pool} · ${f.basis === 'recent' ? 'most recent' : (f.basis === 'target' ? 'target' : 'best time')}${
+      sub: `${f.distance} m · ${f.pool} · ${f.basis === 'recent' ? 'most recent' : (f.basis === 'target' ? 'target' : 'best time')}${grp ? ' · ' + esc(grp.name) : ''}${
         f.teams && f.teams.length ? ' · ' + (f.teams.length === 1 ? f.teams[0] : f.teams.length + ' teams') : ''}`,
       exports: (rows && rows.length) ? [['csv-page', 'Download CSV'], ['tp-download', 'Download PDF']] : [],
       cls: 'bg-white no-print',
@@ -7552,7 +7755,7 @@ function renderTrainingPace() {
         ${group('Distance', dists.map((d) => [d, d + ' m']), 'distance')}
         ${group('Pace from', [['best', 'Best time'], ['recent', 'Most recent'], ['target', 'Target']], 'basis')}
       </div>
-      ${rows && rows.length ? `<div class="mx-3 mt-3 no-print">${strokeChips ? `<div class="flex flex-wrap gap-1.5">${strokeChips}</div>` : ''}${sexChips ? `<div class="flex flex-wrap gap-1.5 mt-2">${sexChips}</div>` : ''}${teamChips ? `<div class="flex flex-wrap gap-1.5 mt-2">${teamChips}</div>` : ''}${colPanel}${tpSearch}</div>` : ''}
+      ${rows && rows.length ? `<div class="mx-3 mt-3 no-print">${strokeChips ? `<div class="flex flex-wrap gap-1.5">${strokeChips}</div>` : ''}${sexChips ? `<div class="flex flex-wrap gap-1.5 mt-2">${sexChips}</div>` : ''}${tpGroupsHtml(f, chip)}${teamChips ? `<div class="flex flex-wrap gap-1.5 mt-2">${teamChips}</div>` : ''}${colPanel}${tpSearch}</div>` : ''}
       ${rows ? `<div class="m-3 bg-white rounded-2xl border border-slate-200 overflow-hidden">${sheet}</div>` : ''}
     </div>`;
 }
@@ -8066,6 +8269,20 @@ document.addEventListener('click', (e) => {
     if (selfSx) { (state.selfSetup = state.selfSetup || {}).sex = selfSx.getAttribute('data-self-sex'); render(); return; }
     const tps = e.target.closest('[data-tp-stroke]');
     if (tps) { tpToggleStroke(tps.getAttribute('data-tp-stroke')); render(); return; }
+    const tpg = e.target.closest('[data-tp-group]');
+    if (tpg) {
+      const v = tpg.getAttribute('data-tp-group');
+      state.tpForm.group = v === '*' ? null : v;
+      if (state.tpGroupEdit !== 'priority') state.tpGroupEdit = null;
+      tpSaveForm(); render(); return;
+    }
+    const tpm = e.target.closest('[data-tp-member]');
+    if (tpm) {
+      const ed = state.tpGroupEdit, gg = ed === 'priority' ? null : tpGroupById(ed);
+      const list = ed === 'priority' ? tpGroupsState().priority : (gg && gg.members);
+      if (list) { tpToggleMember(list, tpm.getAttribute('data-tp-member')); render(); }
+      return;
+    }
     const tpt = e.target.closest('[data-tp-team]');
     if (tpt) { tpToggleTeam(tpt.getAttribute('data-tp-team')); render(); return; }
     const tpCol = e.target.closest('[data-tp-col]');
@@ -8691,6 +8908,14 @@ function handleAction(action, el) {
     case 'hdr-more': state.hdrMore = !state.hdrMore; render(); break;
     case 'tp-show': state.tpShow = true; render(); break;   // no button any more; harmless if called
     case 'tp-cols-toggle': state.tpColsOpen = !state.tpColsOpen; render(); break;
+    case 'tp-group-new': tpNewGroup(); render(); break;
+    case 'tp-group-edit': state.tpGroupEdit = state.tpForm.group || null; state.tpGroupQ = ''; render(); break;
+    case 'tp-priority-edit': state.tpGroupEdit = state.tpGroupEdit === 'priority' ? null : 'priority'; state.tpGroupQ = ''; render(); break;
+    case 'tp-group-done': state.tpGroupEdit = null; state.tpGroupQ = ''; render(); break;
+    case 'tp-group-delete': tpDeleteGroup(state.tpGroupEdit); render(); break;
+    case 'tp-priority-clear':
+      if (confirm('Clear the priority list?\n\nEveryone goes back to plain alphabetical order.')) { tpGroupsState().priority = []; saveTpGroups(); render(); }
+      break;
     case 'tp-cols-reset': state.tpCols = {}; saveTpCols(); render(); break;
     case 'tp-download': {
       if (!tpPdfReady()) showToast('Preparing the PDF…');
