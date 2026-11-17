@@ -1803,8 +1803,23 @@ function screenCsvModel() {
     const table = host && host.querySelector('table');
     if (!table) return null;
     const cells = (tr) => [...tr.querySelectorAll('th,td')].map((c) => c.textContent.replace(/\s+/g, ' ').trim());
-    const rows = [...table.querySelectorAll('thead tr'), ...table.querySelectorAll('tbody tr')]
+    let rows = [...table.querySelectorAll('thead tr'), ...table.querySelectorAll('tbody tr')]
       .map(cells).filter((r) => r.length);
+    // Training Pace with % paces on: one CSV row per pace, with a Pace column, not stacked text.
+    if (state.view === 'training-pace' && table.querySelector('[data-lv]')) {
+      const T = (el) => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
+      rows = [];
+      [...table.querySelectorAll('thead tr'), ...table.querySelectorAll('tbody tr')].forEach((tr) => {
+        const tds = [...tr.querySelectorAll('th,td')];
+        if (!tds.length) return;
+        const n = tds[0].querySelectorAll('[data-lv]').length;
+        if (!n) { const c = cells(tr); rows.push([c[0], tr.closest('thead') ? 'Pace' : ''].concat(c.slice(1))); return; }
+        for (let i = 0; i < n; i++) {
+          const lab = i === 0 ? 'Race' : T(tds[0].querySelector(`[data-lv="${i}"]`));
+          rows.push([T(tds[0].querySelector('[data-lv="0"]')), lab].concat(tds.slice(1).map((td) => T(td.querySelector(`[data-lv="${i}"]`)))));
+        }
+      });
+    }
     if (rows.length < 2) return null;
     const who = state.view === 'training-pace' ? 'training_pace' + (tpGroupById(state.tpForm && state.tpForm.group) ? '_' + tpGroupById(state.tpForm.group).name : '') : slug(swimmerName(state.savedSid)) + '_' + slug(state.progGroup);
     return { name: `split_compass_${slug(who)}_${stamp}.csv`, rows, note: `${rows.length - 1} rows` };
@@ -6005,17 +6020,18 @@ function tpCells(segs, stroke, pool, distance, splits, sex) {
 }
 // The coach's set: the default with their toggles applied. The swimmer build has no panel,
 // and shares storage with the coach build on the same device, so it never reads them.
-function tpCellsShown(segs, stroke, pool, distance, splits, sex, total) {
-  return tpPctCells(total).concat(tpPick(tpAllCells(segs, stroke, pool, distance, splits, sex), SWIMMER ? null : tpColsState()));
+function tpCellsShown(segs, stroke, pool, distance, splits, sex) {
+  return tpPick(tpAllCells(segs, stroke, pool, distance, splits, sex), SWIMMER ? null : tpColsState());
 }
-// The whole-race time at a percentage of the pace source: -3% is 3% faster, +2% is 2% slower.
-// One column per chip that is on, right after the time column. Coach build only, off by default.
+// Paces at a percentage of the pace source: -3% is 3% faster, +2% is 2% slower. Each one that is on
+// adds a line under every swimmer with the time and EVERY split at that % (2026-11-17, replacing the
+// single whole-race column of v81). Coach build only, off by default. Returns [[key, pct], ...].
 const TP_PCT = [['pm3', -3], ['pm2', -2], ['pm1', -1], ['pp1', 1], ['pp2', 2], ['pp3', 3]];
 const tpPctLabel = (p) => (p > 0 ? '+' : '\u2212') + Math.abs(p) + '%';
-function tpPctCells(total) {
-  if (SWIMMER || !(total > 0)) return [];
+function tpPctLevels() {
+  if (SWIMMER) return [];
   const o = tpColsState();
-  return TP_PCT.filter(([k]) => o[k] === true).map(([k, p]) => ({ h: tpPctLabel(p), v: total * (1 + p / 100), k: [k], def: false }));
+  return TP_PCT.filter(([k]) => o[k] === true);
 }
 // The toggles to offer for this table: every key some stroke at this event has a cell for.
 // A chip's state is read from the stroke on screen where that stroke has the column, so the
@@ -6174,6 +6190,7 @@ function tpSheetModel() {
       && (!f.strokes || !f.strokes.length || f.strokes.indexOf(r.stroke) >= 0));
   if (!rows.length) return null;
   const over = tpColsState();
+  const lvls = tpPctLevels();
   const ORDER = ['Free', 'Back', 'Breast', 'Fly', 'IM'];
   const NAMES = { Free: 'Freestyle', Back: 'Backstroke', Breast: 'Breaststroke', Fly: 'Butterfly', IM: 'Individual medley' };
   const groups = [];
@@ -6186,9 +6203,10 @@ function tpSheetModel() {
       if (!rs.length) return;
       const lines = rs.map((r, ri) => {
         if (r.fellBack) fellBack++;
-        const cells = tpPctCells(r.total).concat(tpPick(tpAllCells(r.segs, r.stroke, f.pool, f.distance, r.splits, r.sex), over));
+        const cells = tpPick(tpAllCells(r.segs, r.stroke, f.pool, f.distance, r.splits, r.sex), over);
         return { name: r.name, time: formatTime(r.total) + (r.fellBack ? '*' : ''), heads: cells.map((c) => c.h), vals: cells.map((c) => formatTime(c.v)),
-          div: ri > 0 && pri.has(rs[ri - 1].sid) && !pri.has(r.sid) };
+          div: ri > 0 && pri.has(rs[ri - 1].sid) && !pri.has(r.sid),
+          lv: lvls.map(([, p]) => ({ lab: tpPctLabel(p), time: formatTime(r.total * (1 + p / 100)), vals: cells.map((c) => formatTime(c.v * (1 + p / 100))) })) };
       });
       blocks.push({ title: NAMES[st] || st, heads: lines[0].heads, rows: lines });
     });
@@ -6199,7 +6217,7 @@ function tpSheetModel() {
   const team = (f.teams && f.teams.length) ? ' · ' + (f.teams.length === 1 ? f.teams[0] : f.teams.length + ' teams') : '';
   return {
     groups, timeHead: tpBasisHead(f.basis),
-    sub: `${f.pool === 'SCM' ? 'Short course (SCM)' : (f.pool === 'LCM' ? 'Long course (LCM)' : f.pool)} · race pace from each swimmer’s ${from}${team}`,
+    sub: `${f.pool === 'SCM' ? 'Short course (SCM)' : (f.pool === 'LCM' ? 'Long course (LCM)' : f.pool)} · race pace from each swimmer’s ${from}${team}${lvls.length ? ' · each swimmer: race pace, then ' + lvls.map(([, p]) => tpPctLabel(p)).join(', ') : ''}`,
     foot: `Split Compass · ${new Date().toISOString().slice(0, 10)} · splits are modelled from race data, a reference not a rule.`
       + (fellBack ? ' * no target set — paced from best time.' : ''),
     file: `Split Compass - ${f.distance} m ${f.pool} pace sheet${grp ? ' - ' + grp.name : ''}`,
@@ -6230,7 +6248,8 @@ function tpSheetGeom(orientation, up, nSplit, RH) {
 function tpSheetFlow(model, g) {
   const S = g.mx, ops = [], perGroup = [];
   let page = -1;
-  const blockH = (b) => S.HEAD + S.COLHEAD + S.RH * b.rows.length;
+  const rowH = (r) => S.RH * (1 + ((r && r.lv) ? r.lv.length : 0));
+  const blockH = (b) => S.HEAD + S.COLHEAD + b.rows.reduce((s, r) => s + rowH(r), 0);
   model.groups.forEach((grp) => {
     let col = 0, y = 0;
     const first = page + 1;
@@ -6253,12 +6272,12 @@ function tpSheetFlow(model, g) {
       if (bi === breakAt) { col = 1; y = 0; }
       const head = (cont) => { ops.push({ t: 'head', page, col, y, block: b, cont }); y += S.HEAD + S.COLHEAD; };
       // Never strand a block heading at the foot of a column with fewer than two rows under it.
-      const need = S.HEAD + S.COLHEAD + S.RH * Math.min(2, b.rows.length);
+      const need = S.HEAD + S.COLHEAD + b.rows.slice(0, 2).reduce((s, r) => s + rowH(r), 0);
       if (y > 0 && y + need > g.usable) nextCol();
       head(false);
       b.rows.forEach((r, ri) => {
-        if (y + S.RH > g.usable + 0.01) { nextCol(); head(true); }
-        ops.push({ t: 'row', page, col, y, block: b, row: r, i: ri }); y += S.RH;
+        if (y + rowH(r) > g.usable + 0.01) { nextCol(); head(true); }
+        ops.push({ t: 'row', page, col, y, block: b, row: r, i: ri }); y += rowH(r);
       });
       y += S.GAP;
     });
@@ -6344,7 +6363,8 @@ function tpSheetDoc(model, plan) {
       doc.line(x, top + S.HEAD + S.COLHEAD, x + g.colW, top + S.HEAD + S.COLHEAD);
       return;
     }
-    if (op.i % 2 === 1) { doc.setFillColor(246, 248, 251); doc.rect(x, top, g.colW, S.RH, 'F'); }   // zebra
+    const nL = 1 + ((op.row.lv && op.row.lv.length) || 0);
+    if (op.i % 2 === 1) { doc.setFillColor(246, 248, 251); doc.rect(x, top, g.colW, S.RH * nL, 'F'); }   // zebra
     if (op.row.div) { doc.setDrawColor(37, 99, 235); doc.setLineWidth(0.9); doc.line(x, top, x + g.colW, top); }   // after the priority swimmers
     const base = top + S.RH * 0.71, r = op.row, f = S.font;
     font('normal', f, INK); fit(r.name, x + 6, base, nameW, f, Math.min(f, 6));
@@ -6352,6 +6372,16 @@ function tpSheetDoc(model, plan) {
     r.vals.forEach((v, i) => {
       if (tpBold(b.heads[i])) font('bold', f, INK); else font('normal', f, GREY25);
       fit(v, edge(i), base, g.splitW - 2, f, f * 0.8, 'right');
+    });
+    // % paces: a line each, labelled where the name would be.
+    (r.lv || []).forEach((L, k) => {
+      const yb = base + S.RH * (k + 1);
+      font('bold', f * 0.92, MUTE); fit(L.lab, x + 14, yb, nameW - 8, f * 0.92, f * 0.7);
+      font('bold', f, BLUE); doc.text(pdfText(L.time), timeEdge, yb, { align: 'right' });
+      L.vals.forEach((v, i) => {
+        if (tpBold(b.heads[i])) font('bold', f, INK); else font('normal', f, GREY25);
+        fit(v, edge(i), yb, g.splitW - 2, f, f * 0.8, 'right');
+      });
     });
   });
   return doc;
@@ -6557,8 +6587,6 @@ const STD_DEFS = [
   // Swim Ontario (2026-11-17). Same course only, never converted; OJI counts a dated window.
   { k: 'ojiS', label: 'OJI',       course: 'SCM', org: 'Swim Ontario', src: 'ontario', noConvert: true, from: '2025-02-27', to: '2026-11-30', note: '18 & under \u00b7 swims 27 Feb 2025\u201330 Nov 2026' },
   { k: 'ojiL', label: 'OJI',       course: 'LCM', org: 'Swim Ontario', src: 'ontario', noConvert: true, from: '2025-02-27', to: '2026-11-30', note: 'accepted for the SCM meet \u00b7 18 & under \u00b7 swims 27 Feb 2025\u201330 Nov 2026' },
-  { k: 'ojbS', label: 'OJI bonus', course: 'SCM', org: 'Swim Ontario', src: 'ontario', noConvert: true, from: '2025-02-27', to: '2026-11-30', note: 'qualifying + 5% \u00b7 needs one OJI cut first \u00b7 entry not guaranteed' },
-  { k: 'ojbL', label: 'OJI bonus', course: 'LCM', org: 'Swim Ontario', src: 'ontario', noConvert: true, from: '2025-02-27', to: '2026-11-30', note: 'qualifying + 5% \u00b7 needs one OJI cut first \u00b7 entry not guaranteed' },
   { k: 'oscS', label: 'OSC 17&O',  course: 'SCM', org: 'Swim Ontario', src: 'ontario', noConvert: true, note: 'July 2027 \u00b7 17 & over only \u00b7 2027 window not yet published' },
   { k: 'oscL', label: 'OSC 17&O',  course: 'LCM', org: 'Swim Ontario', src: 'ontario', noConvert: true, note: 'July 2027 \u00b7 17 & over only \u00b7 2027 window not yet published' },
 ];
@@ -6589,7 +6617,7 @@ function stdPct(gap, target) {
 // Swim Ontario times (OJI 2026, OSC 2027 17 & over), from the official PDFs via the file Gael
 // supplied 2026-11-17 (outputs/swim_ontario_standards_OJI2026_OSC2027.csv). Merged into stdTimes.
 const STD_ONT_AS_OF = 'Swim Ontario OJI 2026 (updated June 2026) and OSC 2026\u20132027, read 17 Nov 2026. OSC course/sex columns were inferred from the PDF \u2014 check the official sheet before entries.';
-const STD_ONT = {"F":{"Free":{"50":{"ojiS":26.78,"ojiL":27.68,"ojbS":28.12,"ojbL":29.06,"oscS":27.15,"oscL":27.69},"100":{"ojiS":57.79,"ojiL":58.96,"ojbS":60.68,"ojbL":61.91,"oscS":58.72,"oscL":59.89},"200":{"ojiS":124.66,"ojiL":128.23,"ojbS":130.89,"ojbL":134.64,"oscS":128.11,"oscL":131.95},"400":{"ojiS":264.04,"ojiL":271.2,"ojbS":277.24,"ojbL":284.76,"oscS":270.41,"oscL":275.82},"800":{"ojiS":552.7,"ojiL":566.01,"oscS":564.7,"oscL":575.99},"1500":{"ojiS":1057.98,"ojiL":1079.14,"oscS":1095.26,"oscL":1117.17}},"Back":{"50":{"ojiS":30.07,"ojiL":31.43,"ojbS":31.57,"ojbL":33.0,"oscS":30.84,"oscL":31.46},"100":{"ojiS":64.22,"ojiL":66.78,"ojbS":67.43,"ojbL":70.12,"oscS":66.66,"oscL":67.99},"200":{"ojiS":137.75,"ojiL":144.6,"ojbS":144.64,"ojbL":151.83,"oscS":144.22,"oscL":148.55}},"Breast":{"50":{"ojiS":33.75,"ojiL":34.66,"ojbS":35.44,"ojbL":36.39,"oscS":34.45,"oscL":35.14},"100":{"ojiS":73.02,"ojiL":75.06,"ojbS":76.67,"ojbL":78.81,"oscS":76.18,"oscL":77.7},"200":{"ojiS":157.68,"ojiL":162.6,"ojbS":165.56,"ojbL":170.73,"oscS":165.21,"oscL":170.17}},"Fly":{"50":{"ojiS":28.76,"ojiL":29.27,"ojbS":30.2,"ojbL":30.73,"oscS":28.63,"oscL":29.2},"100":{"ojiS":63.38,"ojiL":64.73,"ojbS":66.55,"ojbL":67.97,"oscS":65.0,"oscL":66.3},"200":{"ojiS":141.02,"ojiL":145.11,"ojbS":148.07,"ojbL":152.37,"oscS":149.06,"oscL":153.53}},"IM":{"200":{"ojiS":141.22,"ojiL":146.03,"ojbS":148.28,"ojbL":153.33,"oscS":144.83,"oscL":149.18},"400":{"ojiS":298.81,"ojiL":311.29,"ojbS":313.75,"ojbL":326.85,"oscS":311.62,"oscL":317.85}}},"M":{"Free":{"50":{"ojiS":23.93,"ojiL":24.84,"ojbS":25.13,"ojbL":26.08,"oscS":24.36,"oscL":24.85},"100":{"ojiS":52.36,"ojiL":53.71,"ojbS":54.98,"ojbL":56.4,"oscS":53.31,"oscL":54.38},"200":{"ojiS":114.56,"ojiL":118.27,"ojbS":120.29,"ojbL":124.18,"oscS":116.74,"oscL":120.24},"400":{"ojiS":244.99,"ojiL":253.64,"ojbS":257.24,"ojbL":266.32,"oscS":250.65,"oscL":255.66},"800":{"ojiS":512.36,"ojiL":526.61,"oscS":528.21,"oscL":538.77},"1500":{"ojiS":969.14,"ojiL":988.52,"oscS":1016.86,"oscL":1037.2}},"Back":{"50":{"ojiS":26.58,"ojiL":28.32,"ojbS":27.91,"ojbL":29.74,"oscS":27.8,"oscL":28.36},"100":{"ojiS":58.12,"ojiL":61.18,"ojbS":61.03,"ojbL":64.24,"oscS":60.66,"oscL":61.87},"200":{"ojiS":126.21,"ojiL":133.01,"ojbS":132.52,"ojbL":139.66,"oscS":133.29,"oscL":137.29}},"Breast":{"50":{"ojiS":30.0,"ojiL":31.15,"ojbS":31.5,"ojbL":32.71,"oscS":30.53,"oscL":31.14},"100":{"ojiS":65.83,"ojiL":68.2,"ojbS":69.12,"ojbL":71.61,"oscS":68.59,"oscL":69.96},"200":{"ojiS":142.99,"ojiL":148.97,"ojbS":150.14,"ojbL":156.42,"oscS":150.38,"oscL":154.54}},"Fly":{"50":{"ojiS":25.63,"ojiL":26.76,"ojbS":26.91,"ojbL":28.1,"oscS":25.92,"oscL":26.44},"100":{"ojiS":57.37,"ojiL":58.5,"ojbS":60.24,"ojbL":61.43,"oscS":58.25,"oscL":59.42},"200":{"ojiS":128.47,"ojiL":132.49,"ojbS":134.89,"ojbL":139.11,"oscS":131.97,"oscL":135.93}},"IM":{"200":{"ojiS":129.29,"ojiL":134.55,"ojbS":135.75,"ojbL":141.28,"oscS":131.02,"oscL":134.95},"400":{"ojiS":277.44,"ojiL":287.54,"ojbS":291.31,"ojbL":301.92,"oscS":283.26,"oscL":288.93}}}};
+const STD_ONT = {"F":{"Free":{"50":{"ojiS":26.78,"ojiL":27.68,"oscS":27.15,"oscL":27.69},"100":{"ojiS":57.79,"ojiL":58.96,"oscS":58.72,"oscL":59.89},"200":{"ojiS":124.66,"ojiL":128.23,"oscS":128.11,"oscL":131.95},"400":{"ojiS":264.04,"ojiL":271.2,"oscS":270.41,"oscL":275.82},"800":{"ojiS":552.7,"ojiL":566.01,"oscS":564.7,"oscL":575.99},"1500":{"ojiS":1057.98,"ojiL":1079.14,"oscS":1095.26,"oscL":1117.17}},"Back":{"50":{"ojiS":30.07,"ojiL":31.43,"oscS":30.84,"oscL":31.46},"100":{"ojiS":64.22,"ojiL":66.78,"oscS":66.66,"oscL":67.99},"200":{"ojiS":137.75,"ojiL":144.6,"oscS":144.22,"oscL":148.55}},"Breast":{"50":{"ojiS":33.75,"ojiL":34.66,"oscS":34.45,"oscL":35.14},"100":{"ojiS":73.02,"ojiL":75.06,"oscS":76.18,"oscL":77.7},"200":{"ojiS":157.68,"ojiL":162.6,"oscS":165.21,"oscL":170.17}},"Fly":{"50":{"ojiS":28.76,"ojiL":29.27,"oscS":28.63,"oscL":29.2},"100":{"ojiS":63.38,"ojiL":64.73,"oscS":65.0,"oscL":66.3},"200":{"ojiS":141.02,"ojiL":145.11,"oscS":149.06,"oscL":153.53}},"IM":{"200":{"ojiS":141.22,"ojiL":146.03,"oscS":144.83,"oscL":149.18},"400":{"ojiS":298.81,"ojiL":311.29,"oscS":311.62,"oscL":317.85}}},"M":{"Free":{"50":{"ojiS":23.93,"ojiL":24.84,"oscS":24.36,"oscL":24.85},"100":{"ojiS":52.36,"ojiL":53.71,"oscS":53.31,"oscL":54.38},"200":{"ojiS":114.56,"ojiL":118.27,"oscS":116.74,"oscL":120.24},"400":{"ojiS":244.99,"ojiL":253.64,"oscS":250.65,"oscL":255.66},"800":{"ojiS":512.36,"ojiL":526.61,"oscS":528.21,"oscL":538.77},"1500":{"ojiS":969.14,"ojiL":988.52,"oscS":1016.86,"oscL":1037.2}},"Back":{"50":{"ojiS":26.58,"ojiL":28.32,"oscS":27.8,"oscL":28.36},"100":{"ojiS":58.12,"ojiL":61.18,"oscS":60.66,"oscL":61.87},"200":{"ojiS":126.21,"ojiL":133.01,"oscS":133.29,"oscL":137.29}},"Breast":{"50":{"ojiS":30.0,"ojiL":31.15,"oscS":30.53,"oscL":31.14},"100":{"ojiS":65.83,"ojiL":68.2,"oscS":68.59,"oscL":69.96},"200":{"ojiS":142.99,"ojiL":148.97,"oscS":150.38,"oscL":154.54}},"Fly":{"50":{"ojiS":25.63,"ojiL":26.76,"oscS":25.92,"oscL":26.44},"100":{"ojiS":57.37,"ojiL":58.5,"oscS":58.25,"oscL":59.42},"200":{"ojiS":128.47,"ojiL":132.49,"oscS":131.97,"oscL":135.93}},"IM":{"200":{"ojiS":129.29,"ojiL":134.55,"oscS":131.02,"oscL":134.95},"400":{"ojiS":277.44,"ojiL":287.54,"oscS":283.26,"oscL":288.93}}}};
 Object.keys(STD_ONT).forEach((sx) => Object.keys(STD_ONT[sx]).forEach((st) => Object.keys(STD_ONT[sx][st]).forEach((d) => {
   const ev = ((stdTimes[sx] = stdTimes[sx] || {})[st] = stdTimes[sx][st] || {});
   ev[d] = Object.assign(ev[d] || {}, STD_ONT[sx][st][d]);
@@ -6926,7 +6954,7 @@ function renderTeamStandards() {
   if (m.cols.length) notes.push('Each gap is also shown as a % of the cut \u2014 (time \u2212 cut) \u00f7 cut \u2014 so events of different lengths compare. Standards as published: ' + STD_AS_OF + '. Junior eligibility depends on birth years set each year.');
   const ontShown = m.cols.filter((d) => d.src === 'ontario');
   if (ontShown.length) notes.push('Swim Ontario cuts are compared only in the course swum \u2014 a time from the other course shows \u2014. '
-    + (ontShown.some((d) => d.from) ? 'OJI uses each swimmer\u2019s best swim from 27 Feb 2025 to 30 Nov 2026' + (outWin ? ' (\u201cno swim in window\u201d: none in that period)' : '') + '; OJI is 18 & under on 10 Dec 2026, and the bonus +5% times need one OJI cut first. ' : '')
+    + (ontShown.some((d) => d.from) ? 'OJI uses each swimmer\u2019s best swim from 27 Feb 2025 to 30 Nov 2026' + (outWin ? ' (\u201cno swim in window\u201d: none in that period)' : '') + '; OJI is 18 & under on 10 Dec 2026. ' : '')
     + (ontShown.some((d) => /^osc/.test(d.k)) ? 'OSC times are the 17 & over group only. ' : '') + STD_ONT_AS_OF);
   if (m.rud) notes.push(RUD_AS_OF + '. 20 is world-class for that age; age is the age reached in the calendar year of the swim. The table is long course.');
 
@@ -8059,6 +8087,13 @@ function tpGroupsHtml(f, chip) {
       <div class="text-[10px] text-faint leading-snug mt-1.5">${isPri
         ? 'Ticked swimmers come first in every table, then a blue line, then everyone else — on screen and in the PDF.'
         : 'Tick the swimmers in this group. With the group picked above, the table, CSV and PDF show only them.'}</div>
+      ${isPri && G.groups.length ? `<div class="mt-2.5" data-tp-pri-groups>
+        <div class="text-[11px] font-semibold text-slate-600 mb-1">Make a whole group priority</div>
+        <div class="flex flex-wrap gap-1.5">${G.groups.map((gg) => { const ms = tpMemberSids(gg.members);
+          const all = ms.size > 0 && [...ms].every((s) => on.has(s));
+          return `<button class="${chip(all)}" data-tp-pri-group="${gg.id}" aria-pressed="${all ? 'true' : 'false'}">${esc(gg.name)} <span class="font-medium opacity-80">${ms.size}</span></button>`; }).join('')}</div>
+        <div class="text-[10px] text-faint leading-snug mt-1">Tap to tick everyone in it; tap again to untick them. Later changes to the group don\u2019t carry over.</div>
+      </div>` : ''}
       <input type="text" data-tp-group-q value="${attr(q)}" placeholder="Search swimmer" class="w-full mt-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300 placeholder:text-muted" />
       <div class="text-[11px] font-semibold text-slate-600 mt-2 mb-0.5">${on.size} ticked</div>
       <div class="overflow-y-auto" style="max-height:18rem" data-keep-scroll="tp-group-list">${list || '<div class="text-xs text-muted py-2">No swimmers on the roster yet.</div>'}</div>
@@ -8135,7 +8170,7 @@ function renderTrainingPace() {
     const present = FORM.filter((s) => byStroke[s]);
     const shapeOf = (st) => {
       const r = byStroke[st].find((x) => x.segs && x.segs.length);
-      return r ? tpCellsShown(r.segs, st, f.pool, f.distance, r.splits, r.sex, r.total).map((c) => c.h) : [];
+      return r ? tpCellsShown(r.segs, st, f.pool, f.distance, r.splits, r.sex).map((c) => c.h) : [];
     };
     const mainHeads = present.length ? shapeOf(present[0]) : (byStroke.IM ? shapeOf('IM') : []);
     const imHeads = byStroke.IM ? shapeOf('IM') : [];
@@ -8151,15 +8186,24 @@ function renderTrainingPace() {
 
     // The blue line under the priority swimmers, as on the PDF.
     const afterPri = (list, ri) => ri > 0 && pri.has(list[ri - 1].sid) && !pri.has(list[ri].sid);
+    // % paces: one extra line per % that is on, every line 20 px so the columns stay level.
+    const lv = tpPctLevels();
+    const LN = 'style="line-height:20px"';
+    const stack = (v) => !lv.length ? (v == null ? '' : formatTime(v))
+      : `<div data-lv="0" ${LN}>${v == null ? '' : formatTime(v)}</div>` + lv.map(([, p], i) => `<div data-lv="${i + 1}" ${LN}>${v == null ? '' : formatTime(v * (1 + p / 100))}</div>`).join('');
     const rowHtml = (r, heads, opensBlock, divider) => {
-      const cells = pad(tpCellsShown(r.segs, r.stroke, f.pool, f.distance, r.splits, r.sex, r.total));
+      const cells = pad(tpCellsShown(r.segs, r.stroke, f.pool, f.distance, r.splits, r.sex));
+      const abbr = `<span class="text-[10px] font-semibold text-slate-500">(${TP_ABBR[r.stroke] || r.stroke})</span>`;
       return `<tr class="tp-row ${opensBlock ? TP_BLOCK : 'border-t border-slate-100'}" data-name="${r.name}"${divider ? ' data-tp-divider style="border-top:2px solid #3b82f6"' : ''}>
-        <td class="py-2 pl-3">
-          <div class="font-semibold text-[13px] whitespace-nowrap">${r.name}</div>
-          ${r.date ? `<div class="text-[10px] text-faint leading-none mt-0.5">${r.date}</div>` : ''}
+        <td class="py-2 pl-3">${lv.length
+          ? `<div data-lv="0" class="font-semibold text-[13px] whitespace-nowrap" ${LN}>${r.name}</div>` + lv.map(([, p], i) => `<div data-lv="${i + 1}" class="text-[11px] font-semibold text-slate-500 pl-2" ${LN}>${tpPctLabel(p)}</div>`).join('')
+          : `<div class="font-semibold text-[13px] whitespace-nowrap">${r.name}</div>
+          ${r.date ? `<div class="text-[10px] text-faint leading-none mt-0.5">${r.date}</div>` : ''}`}
         </td>
-        <td class="text-right px-2 whitespace-nowrap"><span class="mono text-[13px] font-bold text-cyan-800">${formatTime(r.total)}</span> <span class="text-[10px] font-semibold text-slate-500">(${TP_ABBR[r.stroke] || r.stroke})</span></td>
-        ${cells.map((c, i) => `<td class="text-right px-2 mono text-[13px] ${c && tpBold(heads[i]) ? 'text-slate-900 font-semibold' : 'text-slate-600'}">${c ? formatTime(c.v) : ''}</td>`).join('')}
+        <td class="text-right px-2 whitespace-nowrap mono text-[13px] font-bold text-cyan-800">${lv.length
+          ? `<div data-lv="0" ${LN}>${formatTime(r.total)} ${abbr}</div>` + lv.map(([, p], i) => `<div data-lv="${i + 1}" ${LN}>${formatTime(r.total * (1 + p / 100))}</div>`).join('')
+          : `<span>${formatTime(r.total)}</span> ${abbr}`}</td>
+        ${cells.map((c, i) => `<td class="text-right px-2 mono text-[13px] ${c && tpBold(heads[i]) ? 'text-slate-900 font-semibold' : 'text-slate-600'}">${c ? stack(c.v) : ''}</td>`).join('')}
       </tr>`;
     };
 
@@ -8197,7 +8241,7 @@ function renderTrainingPace() {
             ${TP_PCT.map(([k, p]) => { const on = tpColsState()[k] === true;
               return `<button class="${chip(on)}" data-tp-col="${k}" data-on="${on ? 1 : 0}" aria-pressed="${on ? 'true' : 'false'}">${tpPctLabel(p)}</button>`; }).join('')}
           </div>
-          <div class="text-[10px] text-faint leading-snug mt-1.5">\u2212 is faster, + is slower. Each one on adds a column: the whole-race time at that %.</div>
+          <div class="text-[10px] text-faint leading-snug mt-1.5">\u2212 is faster, + is slower. Each one on adds a line under every swimmer: their time and every split at that %.</div>
         </div>` : '';
   const colPanel = (colChips.length || pctOk) ? `<div class="mt-2" data-tp-cols>
       <button class="w-full flex items-center justify-between bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:border-cyan-300 transition" data-action="tp-cols-toggle" aria-expanded="${state.tpColsOpen ? 'true' : 'false'}">
@@ -8827,6 +8871,17 @@ document.addEventListener('click', (e) => {
       state.tpForm.group = v === '*' ? null : v;
       if (state.tpGroupEdit !== 'priority') state.tpGroupEdit = null;
       tpSaveForm(); render(); return;
+    }
+    const tpg2 = e.target.closest('[data-tp-pri-group]');
+    if (tpg2) {
+      const gg = tpGroupById(tpg2.getAttribute('data-tp-pri-group')), P = tpGroupsState().priority;
+      if (gg) {
+        const ms = [...tpMemberSids(gg.members)], cur = tpMemberSids(P);
+        if (ms.length && ms.every((s) => cur.has(s))) tpGroupsState().priority = P.filter((m) => ms.indexOf(m.sid) < 0);
+        else ms.forEach((s) => { if (!cur.has(s)) P.push({ sid: s, name: swimmerName(s) }); });
+        saveTpGroups(); render();
+      }
+      return;
     }
     const tpm = e.target.closest('[data-tp-member]');
     if (tpm) {
