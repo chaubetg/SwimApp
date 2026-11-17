@@ -1430,7 +1430,7 @@ const state = {
   // Team vs standards: which cut sets are on, and the event they are read at. Canada is
   // on by default because that is the ladder most of the squad is actually on.
   tsForm: { stroke: 'Free', distance: 100, pool: 'LCM', sexFilter: 'all', q: '',
-            src: { canada: true, world: false, rudolph: false },
+            src: { canada: true, ontario: false, world: false, rudolph: false },
             // Trials Senior only, by default: the column a university coach actually wants
             // open. Everything else is opt-in, and the choice is remembered.
             cols: { trSen: true } },
@@ -1679,18 +1679,19 @@ function screenCsvModel() {
 
   if (state.view === 'standards') {
     const f = state.stdForm;
-    const rows = standardRows(f);
+    const rows = stdRowsShown(f);
     if (!rows.length) return null;
     const ev = `${f.distance} ${f.stroke}`;
     const out = [['swimmer', 'event', 'sex', 'your_pool', 'your_time', 'your_time_s', 'standard',
                   'organisation', 'standard_course', 'standard_time', 'standard_time_s',
-                  'your_time_in_that_course_s', 'converted_estimate', 'gap_s']];
+                  'your_time_in_that_course_s', 'converted_estimate', 'gap_s', 'gap_pct']];
     rows.forEach((r) => out.push([
       f.name || '', ev, f.sex, f.pool,
       f.seconds > 0 ? formatTime(f.seconds) : '', f.seconds > 0 ? num(f.seconds) : '',
       r.d.label, r.d.org, r.d.course, formatTime(r.target), num(r.target),
       r.mine == null ? '' : num(r.mine), r.est ? 'yes' : 'no',
       r.gap == null ? '' : (r.gap >= 0 ? '+' : '') + r.gap.toFixed(2),
+      r.gap == null ? '' : (r.gap >= 0 ? '+' : '-') + (Math.abs(r.gap) / r.target * 100).toFixed(2),
     ]));
     return { name: `split_compass_standards_${slug(ev)}_${stamp}.csv`, rows: out,
              note: `${rows.length} standards` };
@@ -1705,7 +1706,7 @@ function screenCsvModel() {
     m.cols.forEach((d) => {
       const tag = slug(d.label) + '_' + d.course.toLowerCase();
       const conv = d.course === f.pool ? '' : '_converted_estimate';
-      head.push(tag + '_cut_s', tag + '_gap_s' + conv);
+      head.push(tag + '_cut_s', tag + '_gap_s' + conv, tag + '_gap_pct' + conv);
     });
     if (m.usp) head.push('usports_2026_rank', 'usports_2026_field');
     if (m.rud) head.push('rudolph_points' + (f.pool === 'LCM' ? '' : '_converted_estimate'));
@@ -1715,7 +1716,8 @@ function screenCsvModel() {
       m.cols.forEach((d) => {
         const t = teamStdTarget(r.sex, f, d.k), c = teamStdCell(r, d, f);
         line.push(t == null ? '' : num(t),
-          (c && c.gap != null) ? (c.gap >= 0 ? '+' : '') + c.gap.toFixed(2) : '');
+          (c && c.gap != null) ? (c.gap >= 0 ? '+' : '') + c.gap.toFixed(2) : '',
+          (c && c.gap != null) ? (c.gap >= 0 ? '+' : '-') + (Math.abs(c.gap) / c.target * 100).toFixed(2) : '');
       });
       if (m.usp) {
         const rk = uspRank({ pool: f.pool, sex: r.sex, distance: f.distance, stroke: f.stroke }, r.t);
@@ -5727,8 +5729,17 @@ function tpCells(segs, stroke, pool, distance, splits, sex) {
 }
 // The coach's set: the default with their toggles applied. The swimmer build has no panel,
 // and shares storage with the coach build on the same device, so it never reads them.
-function tpCellsShown(segs, stroke, pool, distance, splits, sex) {
-  return tpPick(tpAllCells(segs, stroke, pool, distance, splits, sex), SWIMMER ? null : tpColsState());
+function tpCellsShown(segs, stroke, pool, distance, splits, sex, total) {
+  return tpPctCells(total).concat(tpPick(tpAllCells(segs, stroke, pool, distance, splits, sex), SWIMMER ? null : tpColsState()));
+}
+// The whole-race time at a percentage of the pace source: -3% is 3% faster, +2% is 2% slower.
+// One column per chip that is on, right after the time column. Coach build only, off by default.
+const TP_PCT = [['pm3', -3], ['pm2', -2], ['pm1', -1], ['pp1', 1], ['pp2', 2], ['pp3', 3]];
+const tpPctLabel = (p) => (p > 0 ? '+' : '\u2212') + Math.abs(p) + '%';
+function tpPctCells(total) {
+  if (SWIMMER || !(total > 0)) return [];
+  const o = tpColsState();
+  return TP_PCT.filter(([k]) => o[k] === true).map(([k, p]) => ({ h: tpPctLabel(p), v: total * (1 + p / 100), k: [k], def: false }));
 }
 // The toggles to offer for this table: every key some stroke at this event has a cell for.
 // A chip's state is read from the stroke on screen where that stroke has the column, so the
@@ -5899,7 +5910,7 @@ function tpSheetModel() {
       if (!rs.length) return;
       const lines = rs.map((r, ri) => {
         if (r.fellBack) fellBack++;
-        const cells = tpPick(tpAllCells(r.segs, r.stroke, f.pool, f.distance, r.splits, r.sex), over);
+        const cells = tpPctCells(r.total).concat(tpPick(tpAllCells(r.segs, r.stroke, f.pool, f.distance, r.splits, r.sex), over));
         return { name: r.name, time: formatTime(r.total) + (r.fellBack ? '*' : ''), heads: cells.map((c) => c.h), vals: cells.map((c) => formatTime(c.v)),
           div: ri > 0 && pri.has(rs[ri - 1].sid) && !pri.has(r.sid) };
       });
@@ -6196,6 +6207,67 @@ function saveTsCols() {
   } catch (e) {}
 }
 
+// ---- The coach's standards choice (2026-11-17) ----
+// One choice for both standards screens, kept in tsForm.src / tsForm.cols (sc_ts_cols) so the
+// team table reads it exactly as before. A group (Canada / World) is on when any of its standards
+// is. sc_std_pick only records that the choice has been made: until it exists, both screens open
+// on the picker - pre-ticked with whatever was stored - instead of the table.
+const STD_PICK_KEY = 'sc_std_pick';
+function stdPickMade() { try { return !!localStorage.getItem(STD_PICK_KEY); } catch (e) { return true; } }
+function stdPicks() {
+  const f = state.tsForm, on = {};
+  STD_DEFS.forEach((d) => { if (f.src[d.src] && f.cols[d.k]) on[d.k] = true; });
+  if (f.src.canada && f.cols.uspRank) on.uspRank = true;
+  if (f.src.rudolph) on.rudolph = true;
+  return on;
+}
+function stdTogglePick(k) {
+  const f = state.tsForm, on = stdPicks();
+  if (on[k] && Object.keys(on).length === 1) { showToast('Keep at least one standard on'); return; }
+  if (k === 'rudolph') f.src.rudolph = !on.rudolph;
+  else {
+    f.cols[k] = !on[k];
+    if (f.cols[k]) f.src[k === 'uspRank' ? 'canada' : (STD_DEFS.find((d) => d.k === k) || {}).src] = true;
+  }
+  // A group stays on only while something in it is.
+  f.src.canada = STD_DEFS.some((d) => d.src === 'canada' && f.cols[d.k]) || !!f.cols.uspRank;
+  f.src.world = STD_DEFS.some((d) => d.src === 'world' && f.cols[d.k]);
+  f.src.ontario = STD_DEFS.some((d) => d.src === 'ontario' && f.cols[d.k]);
+  saveTsCols();
+}
+const STD_PICK_ITEMS = () => [
+  ['Canada', STD_DEFS.filter((d) => d.src === 'canada').map((d) => [d.k, d.label + ' ' + d.course]).concat([['uspRank', 'U SPORTS rank']])],
+  ['Ontario', STD_DEFS.filter((d) => d.src === 'ontario').map((d) => [d.k, d.label + ' ' + d.course])],
+  ['World', STD_DEFS.filter((d) => d.src === 'world').map((d) => [d.k, d.label + ' ' + d.course])],
+  ['Age-graded', [['rudolph', 'Rudolph points']]],
+];
+function stdPickNames() {
+  const on = stdPicks();
+  return [].concat(...STD_PICK_ITEMS().map(([, items]) => items)).filter(([k]) => on[k]).map(([, l]) => l);
+}
+// The picker (first visit, or Change) or the one-line summary of what is shown.
+function stdPickHtml() {
+  if (SWIMMER) return '';
+  const first = !stdPickMade();
+  if (!first && !state.stdPickOpen) {
+    return `<div class="bg-white border border-slate-200 rounded-2xl px-4 py-3 flex items-center gap-3" data-std-summary>
+        <div class="flex-1 min-w-0"><div class="label-cap mb-0.5">Standards shown</div>
+          <div class="text-[12px] font-semibold text-slate-700 leading-snug">${stdPickNames().join(' · ')}</div></div>
+        <button class="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-cyan-700 hover:border-cyan-300 flex-shrink-0" data-action="std-pick-change">Change</button>
+      </div>`;
+  }
+  const on = stdPicks();
+  const box = (k, l) => `<button class="w-full flex items-center gap-2.5 py-2 text-left border-t border-slate-100" data-stdpick="${k}" aria-pressed="${on[k] ? 'true' : 'false'}">
+        <span class="w-5 h-5 rounded-md border flex items-center justify-center flex-shrink-0 text-[12px] font-bold ${on[k] ? 'bg-cyan-600 border-cyan-600 text-white' : 'bg-white border-slate-300'}">${on[k] ? '✓' : ''}</span>
+        <span class="text-sm text-slate-800">${l}</span></button>`;
+  return `<div class="bg-white border border-cyan-200 rounded-2xl px-4 py-3" data-std-picker>
+      <div class="font-semibold text-[15px] text-slate-900">${first ? 'Which standards do you want to see?' : 'Standards shown'}</div>
+      <div class="text-[11px] text-muted leading-snug mt-0.5 mb-1">${first ? 'Pick the ones your swimmers race for. They become your default on both standards screens (the team table and one swimmer) — change them any time.' : 'Applies to both standards screens: the team table and one swimmer.'}</div>
+      ${STD_PICK_ITEMS().map(([g, items]) => `<div class="label-cap mt-2.5 mb-0.5">${g}</div>${items.map(([k, l]) => box(k, l)).join('')}`).join('')}
+      <button class="w-full mt-3 py-2.5 rounded-xl bg-cyan-600 text-white text-sm font-semibold hover:bg-cyan-700 transition" data-action="std-pick-done">${first ? 'Show these' : 'Done'}</button>
+    </div>`;
+}
+
 const STD_AS_OF = 'World Aquatics Dec 2025 \u00b7 Swimming Canada Sept 2025';
 const STD_DEFS = [
   { k: 'olyA',  label: 'Olympic A',      course: 'LCM', org: 'LA28', src: 'world' },
@@ -6206,6 +6278,13 @@ const STD_DEFS = [
   { k: 'trUS',  label: 'U SPORTS',       course: 'SCM', org: 'Swimming Canada', src: 'canada' },
   { k: 'coSCM', label: 'Canadian Open',  course: 'SCM', org: 'Swimming Canada', src: 'canada' },
   { k: 'coLCM', label: 'Canadian Open',  course: 'LCM', org: 'Swimming Canada', src: 'canada' },
+  // Swim Ontario (2026-11-17). Same course only, never converted; OJI counts a dated window.
+  { k: 'ojiS', label: 'OJI',       course: 'SCM', org: 'Swim Ontario', src: 'ontario', noConvert: true, from: '2025-02-27', to: '2026-11-30', note: '18 & under \u00b7 swims 27 Feb 2025\u201330 Nov 2026' },
+  { k: 'ojiL', label: 'OJI',       course: 'LCM', org: 'Swim Ontario', src: 'ontario', noConvert: true, from: '2025-02-27', to: '2026-11-30', note: 'accepted for the SCM meet \u00b7 18 & under \u00b7 swims 27 Feb 2025\u201330 Nov 2026' },
+  { k: 'ojbS', label: 'OJI bonus', course: 'SCM', org: 'Swim Ontario', src: 'ontario', noConvert: true, from: '2025-02-27', to: '2026-11-30', note: 'qualifying + 5% \u00b7 needs one OJI cut first \u00b7 entry not guaranteed' },
+  { k: 'ojbL', label: 'OJI bonus', course: 'LCM', org: 'Swim Ontario', src: 'ontario', noConvert: true, from: '2025-02-27', to: '2026-11-30', note: 'qualifying + 5% \u00b7 needs one OJI cut first \u00b7 entry not guaranteed' },
+  { k: 'oscS', label: 'OSC 17&O',  course: 'SCM', org: 'Swim Ontario', src: 'ontario', noConvert: true, note: 'July 2027 \u00b7 17 & over only \u00b7 2027 window not yet published' },
+  { k: 'oscL', label: 'OSC 17&O',  course: 'LCM', org: 'Swim Ontario', src: 'ontario', noConvert: true, note: 'July 2027 \u00b7 17 & over only \u00b7 2027 window not yet published' },
 ];
 const stdTimes = {
   M: {
@@ -6224,6 +6303,22 @@ const stdTimes = {
   },
 };
 
+// A gap as a share of the cut, so a 50 and a 1500 read on the same scale: (time - cut) / cut.
+function stdPct(gap, target) {
+  if (gap == null || !(target > 0)) return '';
+  const p = Math.abs(gap) / target * 100;
+  return (p > 0 && p < 0.05 ? '<0.1' : p.toFixed(1)) + '%';
+}
+
+// Swim Ontario times (OJI 2026, OSC 2027 17 & over), from the official PDFs via the file Gael
+// supplied 2026-11-17 (outputs/swim_ontario_standards_OJI2026_OSC2027.csv). Merged into stdTimes.
+const STD_ONT_AS_OF = 'Swim Ontario OJI 2026 (updated June 2026) and OSC 2026\u20132027, read 17 Nov 2026. OSC course/sex columns were inferred from the PDF \u2014 check the official sheet before entries.';
+const STD_ONT = {"F":{"Free":{"50":{"ojiS":26.78,"ojiL":27.68,"ojbS":28.12,"ojbL":29.06,"oscS":27.15,"oscL":27.69},"100":{"ojiS":57.79,"ojiL":58.96,"ojbS":60.68,"ojbL":61.91,"oscS":58.72,"oscL":59.89},"200":{"ojiS":124.66,"ojiL":128.23,"ojbS":130.89,"ojbL":134.64,"oscS":128.11,"oscL":131.95},"400":{"ojiS":264.04,"ojiL":271.2,"ojbS":277.24,"ojbL":284.76,"oscS":270.41,"oscL":275.82},"800":{"ojiS":552.7,"ojiL":566.01,"oscS":564.7,"oscL":575.99},"1500":{"ojiS":1057.98,"ojiL":1079.14,"oscS":1095.26,"oscL":1117.17}},"Back":{"50":{"ojiS":30.07,"ojiL":31.43,"ojbS":31.57,"ojbL":33.0,"oscS":30.84,"oscL":31.46},"100":{"ojiS":64.22,"ojiL":66.78,"ojbS":67.43,"ojbL":70.12,"oscS":66.66,"oscL":67.99},"200":{"ojiS":137.75,"ojiL":144.6,"ojbS":144.64,"ojbL":151.83,"oscS":144.22,"oscL":148.55}},"Breast":{"50":{"ojiS":33.75,"ojiL":34.66,"ojbS":35.44,"ojbL":36.39,"oscS":34.45,"oscL":35.14},"100":{"ojiS":73.02,"ojiL":75.06,"ojbS":76.67,"ojbL":78.81,"oscS":76.18,"oscL":77.7},"200":{"ojiS":157.68,"ojiL":162.6,"ojbS":165.56,"ojbL":170.73,"oscS":165.21,"oscL":170.17}},"Fly":{"50":{"ojiS":28.76,"ojiL":29.27,"ojbS":30.2,"ojbL":30.73,"oscS":28.63,"oscL":29.2},"100":{"ojiS":63.38,"ojiL":64.73,"ojbS":66.55,"ojbL":67.97,"oscS":65.0,"oscL":66.3},"200":{"ojiS":141.02,"ojiL":145.11,"ojbS":148.07,"ojbL":152.37,"oscS":149.06,"oscL":153.53}},"IM":{"200":{"ojiS":141.22,"ojiL":146.03,"ojbS":148.28,"ojbL":153.33,"oscS":144.83,"oscL":149.18},"400":{"ojiS":298.81,"ojiL":311.29,"ojbS":313.75,"ojbL":326.85,"oscS":311.62,"oscL":317.85}}},"M":{"Free":{"50":{"ojiS":23.93,"ojiL":24.84,"ojbS":25.13,"ojbL":26.08,"oscS":24.36,"oscL":24.85},"100":{"ojiS":52.36,"ojiL":53.71,"ojbS":54.98,"ojbL":56.4,"oscS":53.31,"oscL":54.38},"200":{"ojiS":114.56,"ojiL":118.27,"ojbS":120.29,"ojbL":124.18,"oscS":116.74,"oscL":120.24},"400":{"ojiS":244.99,"ojiL":253.64,"ojbS":257.24,"ojbL":266.32,"oscS":250.65,"oscL":255.66},"800":{"ojiS":512.36,"ojiL":526.61,"oscS":528.21,"oscL":538.77},"1500":{"ojiS":969.14,"ojiL":988.52,"oscS":1016.86,"oscL":1037.2}},"Back":{"50":{"ojiS":26.58,"ojiL":28.32,"ojbS":27.91,"ojbL":29.74,"oscS":27.8,"oscL":28.36},"100":{"ojiS":58.12,"ojiL":61.18,"ojbS":61.03,"ojbL":64.24,"oscS":60.66,"oscL":61.87},"200":{"ojiS":126.21,"ojiL":133.01,"ojbS":132.52,"ojbL":139.66,"oscS":133.29,"oscL":137.29}},"Breast":{"50":{"ojiS":30.0,"ojiL":31.15,"ojbS":31.5,"ojbL":32.71,"oscS":30.53,"oscL":31.14},"100":{"ojiS":65.83,"ojiL":68.2,"ojbS":69.12,"ojbL":71.61,"oscS":68.59,"oscL":69.96},"200":{"ojiS":142.99,"ojiL":148.97,"ojbS":150.14,"ojbL":156.42,"oscS":150.38,"oscL":154.54}},"Fly":{"50":{"ojiS":25.63,"ojiL":26.76,"ojbS":26.91,"ojbL":28.1,"oscS":25.92,"oscL":26.44},"100":{"ojiS":57.37,"ojiL":58.5,"ojbS":60.24,"ojbL":61.43,"oscS":58.25,"oscL":59.42},"200":{"ojiS":128.47,"ojiL":132.49,"ojbS":134.89,"ojbL":139.11,"oscS":131.97,"oscL":135.93}},"IM":{"200":{"ojiS":129.29,"ojiL":134.55,"ojbS":135.75,"ojbL":141.28,"oscS":131.02,"oscL":134.95},"400":{"ojiS":277.44,"ojiL":287.54,"ojbS":291.31,"ojbL":301.92,"oscS":283.26,"oscL":288.93}}}};
+Object.keys(STD_ONT).forEach((sx) => Object.keys(STD_ONT[sx]).forEach((st) => Object.keys(STD_ONT[sx][st]).forEach((d) => {
+  const ev = ((stdTimes[sx] = stdTimes[sx] || {})[st] = stdTimes[sx][st] || {});
+  ev[d] = Object.assign(ev[d] || {}, STD_ONT[sx][st][d]);
+})));
+
 // convRatios is LCM/SCM, so SCM -> LCM multiplies and LCM -> SCM divides. Returns null when
 // no paired-athlete ratio exists for that event rather than inventing one.
 function convertCourse(sec, stroke, sex, dist, from, to) {
@@ -6240,10 +6335,11 @@ function convertCourse(sec, stroke, sex, dist, from, to) {
 function standardRows(f) {
   const all = (stdTimes[f.sex] && stdTimes[f.sex][f.stroke] && stdTimes[f.sex][f.stroke][f.distance]) || {};
   const out = [];
-  STD_DEFS.filter((d) => !f.src || f.src === 'all' || d.src === f.src).forEach((d) => {
+  STD_DEFS.filter((d) => (f.keys ? !!f.keys[d.k] : (!f.src || f.src === 'all' || d.src === f.src || (f.src === 'canada' && d.src === 'ontario')))).forEach((d) => {
     const target = all[d.k];
     if (target == null) return;
-    const mine = f.seconds > 0 ? convertCourse(f.seconds, f.stroke, f.sex, f.distance, f.pool, d.course) : null;
+    const mine = !(f.seconds > 0) || (d.noConvert && f.pool !== d.course) ? null
+      : convertCourse(f.seconds, f.stroke, f.sex, f.distance, f.pool, d.course);
     out.push({ d, target, mine: mine ? mine.s : null, est: mine ? mine.est : false,
                gap: mine ? mine.s - target : null });
   });
@@ -6347,7 +6443,9 @@ function teamStdRows(f) {
     const t = c ? c.actualTotal : 0;
     if (!(t > 0)) return;
     const cur = by[s.sid];
-    if (!cur || t < cur.t) by[s.sid] = { sid: s.sid, t, date: s.date || '', sex: s.sex === 'F' ? 'F' : 'M' };
+    const swims = cur ? cur.swims : [];
+    swims.push({ t, date: s.date || '' });
+    if (!cur || t < cur.t) by[s.sid] = { sid: s.sid, t, date: s.date || '', sex: s.sex === 'F' ? 'F' : 'M', swims };
   });
   return Object.keys(by).map((sid) => Object.assign(by[sid], { name: swimmerName(sid) || '—' }))
     .sort((a, b) => a.t - b.t);
@@ -6364,7 +6462,7 @@ function teamStdCols(f, sexes) {
   });
   // In the order the chips are read, not the order STD_DEFS happens to be declared: with
   // Canada selected, a coach should not have to scroll past three Olympic columns to reach it.
-  const order = { canada: 0, world: 1 };
+  const order = { canada: 0, ontario: 1, world: 2 };
   return STD_DEFS.filter((d) => f.src[d.src] && f.cols[d.k] && has[d.k])
     .map((d, i) => ({ d, i }))
     .sort((a, b) => (order[a.d.src] - order[b.d.src]) || (a.i - b.i))
@@ -6382,9 +6480,17 @@ function teamStdTarget(sex, f, k) {
 function teamStdCell(r, d, f) {
   const target = teamStdTarget(r.sex, f, d.k);
   if (target == null) return null;
-  const mine = convertCourse(r.t, f.stroke, r.sex, f.distance, f.pool, d.course);
+  if (d.noConvert && f.pool !== d.course) return { blocked: true };
+  // A cut with a qualifying window is measured from the best swim inside it.
+  let t = r.t;
+  if (d.from) {
+    const inWin = (r.swims || []).filter((x) => x.date && x.date >= d.from && x.date <= d.to).map((x) => x.t);
+    if (!inWin.length) return { outWin: true };
+    t = Math.min.apply(null, inWin);
+  }
+  const mine = convertCourse(t, f.stroke, r.sex, f.distance, f.pool, d.course);
   if (!mine) return { blocked: true };
-  return { gap: mine.s - target, est: mine.est };
+  return { gap: mine.s - target, est: mine.est, target };
 }
 
 // Rudolph is a score out of 20, not a gap, so it is its own column. It needs a birth year and a
@@ -6412,7 +6518,7 @@ function teamStdModel() {
   if (f.pool === 'SCY') f.pool = 'SCM';
   // Anything that replaces tsForm wholesale — a stored selection, a test, an older build's
   // state — must not be able to take the screen down.
-  if (!f.src) f.src = { canada: true, world: false, rudolph: false };
+  if (!f.src) f.src = { canada: true, ontario: false, world: false, rudolph: false };
   if (!f.cols) f.cols = { trSen: true };
   const dists = teamStdDistances(f);
   if (dists.length && dists.indexOf(f.distance) < 0) f.distance = dists[0];
@@ -6438,7 +6544,7 @@ function renderTeamStandards() {
     ? 'bg-cyan-600 text-white border-cyan-600'
     : 'bg-white text-slate-700 border-slate-200 hover:border-cyan-300'}`;
 
-  let anyEst = false, noYear = 0;
+  let anyEst = false, noYear = 0, outWin = false;
   let body = '';
   if (!m.all.length) {
     body = `<div class="px-4 py-10 text-center text-sm text-muted">No recorded ${f.distance} m ${f.stroke} ${f.pool} times yet.<br><span class="text-xs">Record a race at this event and the swimmer appears here.</span></div>`;
@@ -6471,9 +6577,10 @@ function renderTeamStandards() {
         const c = teamStdCell(r, d, f);
         if (!c) return '<td class="px-2"></td>';
         if (c.blocked) return '<td class="text-right px-2 text-[12px] text-slate-300">—</td>';
+        if (c.outWin) { outWin = true; return '<td class="text-right px-2 text-[10px] leading-tight text-slate-400 whitespace-nowrap">no swim <br>in window</td>'; }
         if (c.est) anyEst = true;
         const met = c.gap <= 0;
-        return `<td class="text-right px-2 mono text-[13px] whitespace-nowrap ${met ? 'text-emerald-700 font-bold' : 'text-rose-600'}">${c.est ? '~' : ''}${met ? '−' : '+'}${formatTime(Math.abs(c.gap))}</td>`;
+        return `<td class="text-right px-2 mono text-[13px] whitespace-nowrap ${met ? 'text-emerald-700 font-bold' : 'text-rose-600'}">${c.est ? '~' : ''}${met ? '−' : '+'}${formatTime(Math.abs(c.gap))}<div class="text-[10px] font-semibold leading-none mt-0.5 opacity-80" data-ts-pct> (${stdPct(c.gap, c.target)})</div></td>`;
       }).join('');
       let uc = '';
       if (m.usp) {
@@ -6540,7 +6647,11 @@ function renderTeamStandards() {
   const notes = [];
   if (anyEst) notes.push('A <span class="mono">~</span> means the comparison crossed courses — that swimmer’s ' + f.pool + ' time converted to the standard’s course. It is an estimate; the official time is the one swum in that course.');
   if (noYear) notes.push(noYear + ' swimmer' + (noYear === 1 ? ' has' : 's have') + ' no birth year, so there is no Rudolph score. Tap the row to set it.');
-  if (m.cols.length) notes.push('Standards as published: ' + STD_AS_OF + '. Junior eligibility depends on birth years set each year.');
+  if (m.cols.length) notes.push('Each gap is also shown as a % of the cut \u2014 (time \u2212 cut) \u00f7 cut \u2014 so events of different lengths compare. Standards as published: ' + STD_AS_OF + '. Junior eligibility depends on birth years set each year.');
+  const ontShown = m.cols.filter((d) => d.src === 'ontario');
+  if (ontShown.length) notes.push('Swim Ontario cuts are compared only in the course swum \u2014 a time from the other course shows \u2014. '
+    + (ontShown.some((d) => d.from) ? 'OJI uses each swimmer\u2019s best swim from 27 Feb 2025 to 30 Nov 2026' + (outWin ? ' (\u201cno swim in window\u201d: none in that period)' : '') + '; OJI is 18 & under on 10 Dec 2026, and the bonus +5% times need one OJI cut first. ' : '')
+    + (ontShown.some((d) => /^osc/.test(d.k)) ? 'OSC times are the 17 & over group only. ' : '') + STD_ONT_AS_OF);
   if (m.rud) notes.push(RUD_AS_OF + '. 20 is world-class for that age; age is the age reached in the calendar year of the swim. The table is long course.');
 
   return `
@@ -6548,16 +6659,12 @@ function renderTeamStandards() {
     ${screenHeader({
       title: `Team vs standards`,
       sub: `${f.distance} m ${f.stroke} · ${f.pool}`,
-      exports: (m.rows.length && (m.cols.length || m.rud || m.usp)) ? [['csv-page', 'Download CSV'], ['tp-download', 'Download PDF']] : [],
+      exports: (stdPickMade() && m.rows.length && (m.cols.length || m.rud || m.usp)) ? [['csv-page', 'Download CSV'], ['tp-download', 'Download PDF']] : [],
       cls: 'bg-white',
     })}
     <div class="scrollable bg-slate-50">
       <div class="mx-3 mt-3 bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
-        <div>
-          <div class="label-cap mb-2">Standards <span class="font-normal text-faint normal-case tracking-normal">· tap to add or remove columns</span></div>
-          <div class="flex flex-wrap gap-1.5">${srcChips}</div>
-          ${groupSub('canada')}${groupSub('world')}
-        </div>
+        ${stdPickHtml()}
         <div>
           <div class="label-cap mb-2">Stroke</div>
           <div class="flex gap-1.5 flex-wrap">${strokes.map((s) => `<span class="pill pill-sm ${f.stroke === s ? 'active' : ''}" data-tsstroke="${s}">${s}</span>`).join('')}</div>
@@ -6575,7 +6682,7 @@ function renderTeamStandards() {
         </div>
         ${search}
       </div>
-      <div class="m-3 bg-white rounded-2xl border border-slate-200 overflow-hidden">
+      ${!stdPickMade() ? '' : `<div class="m-3 bg-white rounded-2xl border border-slate-200 overflow-hidden">
         ${m.rows.length && (m.cols.length || m.rud || m.usp) ? `<div id="tp-print" class="bg-white">
           <div class="px-3 pt-3 pb-1">
             <div data-tp-title class="text-[15px] font-bold text-slate-900">${f.distance} m ${f.stroke} ${f.pool} — ${m.cols.length ? 'gap to the cut' : 'Rudolph points'}</div>
@@ -6583,7 +6690,7 @@ function renderTeamStandards() {
           </div>
           ${body}
         </div>` : body}
-      </div>
+      </div>`}
       <div class="px-4 pb-5 space-y-1.5">${notes.map((n) => `<div class="text-[10px] text-faint leading-snug">${n}</div>`).join('')}</div>
     </div>`;
 }
@@ -6631,6 +6738,10 @@ function uspStandardsHtml(f) {
     </div>`;
 }
 
+// What the single-swimmer screen lists: the coach's picks; the swimmer build keeps its tabs.
+function stdRowsShown(f) {
+  return SWIMMER ? standardRows(f) : standardRows(Object.assign({}, f, { keys: stdPicks() }));
+}
 function renderStandards() {
   const f = state.stdForm;
   if (f.pool === 'SCY') f.pool = 'SCM';
@@ -6638,7 +6749,9 @@ function renderStandards() {
   const dists = [50, 100, 200, 400, 800, 1500].filter((d) =>
     (stdTimes[f.sex] && stdTimes[f.sex][f.stroke] && stdTimes[f.sex][f.stroke][d] != null));
   if (dists.length && dists.indexOf(f.distance) < 0) { f.distance = dists[0]; stdSyncBest(); }
-  const rows = standardRows(f);
+  const rows = stdRowsShown(f);
+  const picks = SWIMMER ? null : stdPicks();
+  const pickOpen = !SWIMMER && (!stdPickMade() || state.stdPickOpen);
   const next = rows.find((r) => r.gap != null && r.gap > 0);
   const cleared = rows.filter((r) => r.gap != null && r.gap <= 0).length;
 
@@ -6646,7 +6759,7 @@ function renderStandards() {
     ? `<div class="bg-gradient-to-br from-cyan-50 to-white border border-cyan-200 rounded-2xl px-4 py-4 text-center">
          <div class="label-cap text-cyan-800">Next standard</div>
          <div class="hero-time text-4xl mt-1 text-cyan-900">${formatTime(next.gap)}</div>
-         <div class="text-[12px] text-cyan-800 mt-1">off ${next.d.label} <span class="text-muted">(${next.d.course})</span></div>
+         <div class="text-[12px] text-cyan-800 mt-1"><span class="font-bold">${stdPct(next.gap, next.target)}</span> off ${next.d.label} <span class="text-muted">(${next.d.course})</span></div>
          ${cleared ? `<div class="text-[11px] text-emerald-700 font-semibold mt-1.5">${cleared} standard${cleared === 1 ? '' : 's'} already met</div>` : ''}
        </div>`
     : f.seconds > 0
@@ -6657,12 +6770,12 @@ function renderStandards() {
 
   const rowHtml = rows.map((r) => {
     const met = r.gap != null && r.gap <= 0;
-    const gapTxt = r.gap == null ? '' : (met ? '\u2212' + formatTime(-r.gap) : '+' + formatTime(r.gap));
+    const gapTxt = r.gap == null ? '' : (met ? '\u2212' + formatTime(-r.gap) : '+' + formatTime(r.gap)) + ' \u00b7 ' + stdPct(r.gap, r.target);
     return `<div class="px-4 py-3 flex items-center gap-3 border-b border-slate-100 last:border-0">
       <div class="flex-1 min-w-0">
         <div class="font-semibold text-[14px] ${met ? 'text-emerald-800' : 'text-slate-800'}">${r.d.label}
           <span class="text-[11px] font-normal text-muted">${r.d.course}</span></div>
-        <div class="text-[11px] text-muted mt-0.5">${r.d.org}${r.d.note ? ' \u00b7 ' + r.d.note : ''}${r.est ? ' \u00b7 <span class="text-amber-700">your time converted, estimate</span>' : ''}</div>
+        <div class="text-[11px] text-muted mt-0.5">${r.d.org}${r.d.note ? ' \u00b7 ' + r.d.note : ''}${r.est ? ' \u00b7 <span class="text-amber-700">your time converted, estimate</span>' : ''}${r.d.noConvert && f.seconds > 0 && f.pool !== r.d.course ? ' \u00b7 <span class="text-slate-500">only a ' + r.d.course + ' swim counts</span>' : ''}</div>
       </div>
       <div class="text-right flex-shrink-0">
         <div class="mono font-bold text-[15px] ${met ? 'text-emerald-700' : 'text-slate-700'}">${formatTime(r.target)}</div>
@@ -6676,11 +6789,11 @@ function renderStandards() {
     <div class="statusbar"></div>
     ${screenHeader({ title: `Compare to standards`, sub: `${f.name}`, exports: [['csv-page', 'Download CSV']] })}
     <div class="scrollable px-5 py-3 space-y-4 bg-slate-50">
-      <div class="seg-group">
+      ${SWIMMER ? `<div class="seg-group">
         <button class="seg ${f.src === 'canada' ? 'active' : ''}" data-stdsrc="canada">Canada</button>
         <button class="seg ${f.src === 'world' ? 'active' : ''}" data-stdsrc="world">World</button>
         <button class="seg ${f.src === 'rudolph' ? 'active' : ''}" data-stdsrc="rudolph">Rudolph</button>
-      </div>
+      </div>` : stdPickHtml()}
       <div class="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
         <div>
           <div class="label-cap mb-2">Stroke</div>
@@ -6704,11 +6817,13 @@ function renderStandards() {
           ? `<div class="text-[11px] text-cyan-800 leading-snug -mt-1">Your best ${f.distance} ${f.stroke} ${f.pool}${f.best.date ? ' \u00b7 ' + f.best.date : ''}${f.best.meet ? ' \u00b7 ' + f.best.meet : ''}. Type over it to try another time.</div>`
           : (stdBestFor(f) ? '' : `<div class="text-[11px] text-muted leading-snug -mt-1">No recorded ${f.distance} ${f.stroke} ${f.pool} \u2014 type a time to compare.</div>`)}
       </div>
-      ${f.src === 'rudolph' ? rudolphCardHtml(f) : `
-      ${head}
-      ${f.src === 'canada' ? uspStandardsHtml(f) : ''}
+      ${SWIMMER && f.src === 'rudolph' ? rudolphCardHtml(f) : pickOpen && !stdPickMade() ? '' : `
+      ${rows.length || SWIMMER ? head : ''}
+      ${(SWIMMER ? f.src === 'canada' : picks.uspRank) ? uspStandardsHtml(f) : ''}
       ${rows.length ? `<div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">${rowHtml}</div>`
-        : `<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-6 text-center text-sm text-muted">No published standard for this event.</div>`}
+        : (SWIMMER || STD_DEFS.some((d) => picks[d.k])) ? `<div class="bg-white border border-dashed border-slate-200 rounded-2xl p-6 text-center text-sm text-muted">None of ${SWIMMER ? 'these standards' : 'your chosen standards'} is published for ${f.distance} ${f.stroke}.</div>` : ''}
+      ${!SWIMMER && picks.rudolph ? rudolphCardHtml(f) : ''}
+      ${rows.some((r) => r.d.src === 'ontario') ? `<div class="text-[10px] text-faint leading-snug px-1">${STD_ONT_AS_OF}</div>` : ''}
       <div class="text-[10px] text-faint leading-snug px-1">Standards as published: ${STD_AS_OF}. Times in a different course to the standard are converted from paired-athlete ratios and are estimates \u2014 the official time is the one swum in that course. Junior eligibility depends on birth years set each year; this app does not know your age.</div>`}
     </div>`;
 }
@@ -7744,7 +7859,7 @@ function renderTrainingPace() {
     const present = FORM.filter((s) => byStroke[s]);
     const shapeOf = (st) => {
       const r = byStroke[st].find((x) => x.segs && x.segs.length);
-      return r ? tpCellsShown(r.segs, st, f.pool, f.distance, r.splits, r.sex).map((c) => c.h) : [];
+      return r ? tpCellsShown(r.segs, st, f.pool, f.distance, r.splits, r.sex, r.total).map((c) => c.h) : [];
     };
     const mainHeads = present.length ? shapeOf(present[0]) : (byStroke.IM ? shapeOf('IM') : []);
     const imHeads = byStroke.IM ? shapeOf('IM') : [];
@@ -7761,7 +7876,7 @@ function renderTrainingPace() {
     // The blue line under the priority swimmers, as on the PDF.
     const afterPri = (list, ri) => ri > 0 && pri.has(list[ri - 1].sid) && !pri.has(list[ri].sid);
     const rowHtml = (r, heads, opensBlock, divider) => {
-      const cells = pad(tpCellsShown(r.segs, r.stroke, f.pool, f.distance, r.splits, r.sex));
+      const cells = pad(tpCellsShown(r.segs, r.stroke, f.pool, f.distance, r.splits, r.sex, r.total));
       return `<tr class="tp-row ${opensBlock ? TP_BLOCK : 'border-t border-slate-100'}" data-name="${r.name}"${divider ? ' data-tp-divider style="border-top:2px solid #3b82f6"' : ''}>
         <td class="py-2 pl-3">
           <div class="font-semibold text-[13px] whitespace-nowrap">${r.name}</div>
@@ -7798,15 +7913,26 @@ function renderTrainingPace() {
   const colChips = (rows && rows.length && !SWIMMER) ? tpColChips(rows, f) : [];
   const colsOn = colChips.filter((c) => c.on).length;
   const colsTouched = Object.keys(tpColsState()).length > 0;
-  const colPanel = colChips.length ? `<div class="mt-2" data-tp-cols>
+  const pctOk = !!(rows && rows.length && !SWIMMER);
+  const pctOn = TP_PCT.filter(([k]) => tpColsState()[k] === true);
+  const pctRow = pctOk ? `<div class="${colChips.length ? 'mt-3 pt-3 border-t border-slate-100' : ''}" data-tp-pct>
+          <div class="text-[11px] font-semibold text-slate-600 mb-1.5">Time at a % of the ${tpBasisHead(f.basis).toLowerCase()}</div>
+          <div class="flex flex-wrap gap-1.5">
+            ${TP_PCT.map(([k, p]) => { const on = tpColsState()[k] === true;
+              return `<button class="${chip(on)}" data-tp-col="${k}" data-on="${on ? 1 : 0}" aria-pressed="${on ? 'true' : 'false'}">${tpPctLabel(p)}</button>`; }).join('')}
+          </div>
+          <div class="text-[10px] text-faint leading-snug mt-1.5">\u2212 is faster, + is slower. Each one on adds a column: the whole-race time at that %.</div>
+        </div>` : '';
+  const colPanel = (colChips.length || pctOk) ? `<div class="mt-2" data-tp-cols>
       <button class="w-full flex items-center justify-between bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:border-cyan-300 transition" data-action="tp-cols-toggle" aria-expanded="${state.tpColsOpen ? 'true' : 'false'}">
-        <span>Choose splits to train <span class="text-muted font-medium">· ${colsOn} of ${colChips.length} on</span></span>
+        <span>Choose splits to train <span class="text-muted font-medium">${colChips.length ? `· ${colsOn} of ${colChips.length} on` : ''}${pctOn.length ? ' · ' + pctOn.map(([, p]) => tpPctLabel(p)).join(' ') : ''}</span></span>
         <span class="text-slate-400">${state.tpColsOpen ? '▴' : '▾'}</span>
       </button>
       ${state.tpColsOpen ? `<div class="bg-white border border-slate-200 rounded-xl px-3 py-3 mt-1.5">
-        <div class="flex flex-wrap gap-1.5">
+        ${colChips.length ? `<div class="flex flex-wrap gap-1.5">
           ${colChips.map((c) => `<button class="${chip(c.on)}" data-tp-col="${c.k}" data-on="${c.on ? 1 : 0}" aria-pressed="${c.on ? 'true' : 'false'}">${c.label}</button>`).join('')}
-        </div>
+        </div>` : ''}
+        ${pctRow}
         <div class="flex items-center justify-between mt-2.5">
           <span class="text-[10px] text-faint leading-snug">Tap a split to add it to the table or take it off. The PDF prints the splits that are on, for the strokes selected above.</span>
           ${colsTouched ? `<button class="text-[11px] font-semibold text-cyan-700 hover:underline flex-shrink-0 ml-3" data-action="tp-cols-reset">Reset</button>` : ''}
@@ -8388,6 +8514,8 @@ document.addEventListener('click', (e) => {
     // Team vs standards pickers. The source chips toggle rather than switch — one, two or all
     // three sets of columns at once — but the last one on cannot be turned off, because an
     // empty table is never what the tap meant.
+    const stp = e.target.closest('[data-stdpick]');
+    if (stp) { stdTogglePick(stp.getAttribute('data-stdpick')); render(); return; }
     const tss = e.target.closest('[data-tssrc]');
     if (tss) {
       const k = tss.getAttribute('data-tssrc'), sset = state.tsForm.src;
@@ -8911,7 +9039,7 @@ function handleAction(action, el) {
       if (top) { const p = top.split('|');
         state.tsForm.stroke = p[0]; state.tsForm.distance = +p[1]; state.tsForm.pool = p[2]; }
       state.tsForm.q = '';
-      loadTsCols();
+      loadTsCols(); state.stdPickOpen = false;
       navigate('team-standards');
       break;
     }
@@ -8930,6 +9058,7 @@ function handleAction(action, el) {
         if (last) { f.stroke = last.stroke; f.distance = last.distance; f.pool = last.pool; f.sex = last.sex; }
       }
       if (SWIMMER) f.sex = selfSex() || f.sex;
+      else { loadTsCols(); state.stdPickOpen = false; }
       stdSyncBest();
       navigate('standards');
       break;
@@ -8991,6 +9120,10 @@ function handleAction(action, el) {
     case 'hdr-more': state.hdrMore = !state.hdrMore; render(); break;
     case 'tp-show': state.tpShow = true; render(); break;   // no button any more; harmless if called
     case 'tp-cols-toggle': state.tpColsOpen = !state.tpColsOpen; render(); break;
+    case 'std-pick-change': state.stdPickOpen = true; render(); break;
+    case 'std-pick-done':
+      try { localStorage.setItem(STD_PICK_KEY, '1'); } catch (e) {}
+      saveTsCols(); state.stdPickOpen = false; render(); break;
     case 'tp-group-new': tpNewGroup(); render(); break;
     case 'tp-group-edit': state.tpGroupEdit = state.tpForm.group || null; state.tpGroupQ = ''; render(); break;
     case 'tp-priority-edit': state.tpGroupEdit = state.tpGroupEdit === 'priority' ? null : 'priority'; state.tpGroupQ = ''; render(); break;
