@@ -2022,6 +2022,115 @@ function triggerImportCsv() {
   document.body.appendChild(inp); inp.click();
   setTimeout(() => inp.remove(), 1000);
 }
+
+// ===== Import from a swim meet (2026-11-25) =================================================
+// A meet-results CSV, one row per swim, read by its column headings (Meet, Gender, Event, Type,
+// Swimmer, Status, Final Time / Final (s); Date and Course if present). Usually made from a results
+// PDF with the prompt below. Asks the date (when the file has none), course, team and exhibitions,
+// and checks names against the roster before anything is saved.
+const MEET_NICK = { jess: ['jessica', 'jessie'], dan: ['daniel'], danny: ['daniel'], ben: ['benjamin'], benji: ['benjamin'],
+  katie: ['kaitlyn', 'katherine', 'kathryn', 'caitlin'], kate: ['katherine', 'kathryn', 'kaitlyn'], nick: ['nicholas'], matt: ['matthew'],
+  alex: ['alexander', 'alexandra', 'alexis'], sam: ['samuel', 'samantha'], will: ['william'], bill: ['william'], mike: ['michael'],
+  chris: ['christopher', 'christina', 'christine'], tom: ['thomas'], jon: ['jonathan'], liz: ['elizabeth'], abby: ['abigail'],
+  josh: ['joshua'], zach: ['zachary'], andy: ['andrew'], drew: ['andrew'], tony: ['anthony'], rob: ['robert'], bob: ['robert'],
+  jim: ['james'], joe: ['joseph'], dave: ['david'], steve: ['stephen', 'steven'], greg: ['gregory'], nate: ['nathan', 'nathaniel'],
+  theo: ['theodore'], ally: ['allison', 'alexandra'], maddie: ['madison', 'madeline'], becca: ['rebecca'], vicky: ['victoria'] };
+const MEET_PROMPT = 'Convert the attached swim meet results into a CSV, one row per swim, with these columns in this order: '
+  + 'Meet, Date, Course, Gender, Event, Type, Swimmer, Status, Final Time. Meet = the meet name. Date = the day of the swim as '
+  + 'YYYY-MM-DD (leave blank if the results do not say). Course = SCM or LCM. Gender = Women or Men. Event = distance and stroke, '
+  + 'e.g. "100 Free", "200 IM" (Free, Back, Breast, Fly, IM). Type = Individual or Relay. Swimmer = "Last, First" exactly as in the '
+  + 'results. Status = Scored, Exhibition, No Show or DQ. Final Time = m:ss.hh or ss.hh. Include only my team: ______. '
+  + 'Check that every row has a time unless it is a No Show or DQ, and give me the file to download.';
+function meetParseCsv(text) {
+  const rows = parseCsvText(text);
+  if (rows.length < 2) return { error: 'The file is empty.' };
+  const H = rows[0].map((h) => h.trim().toLowerCase());
+  const col = (...names) => { for (const n of names) { const i = H.findIndex((h) => h === n || h.indexOf(n) === 0); if (i >= 0) return i; } return -1; };
+  const C = { meet: col('meet'), date: col('date'), course: col('course', 'pool'), gender: col('gender', 'sex'), event: col('event'),
+    type: col('type'), name: col('swimmer', 'name', 'athlete'), status: col('status'), time: col('final time', 'time'), secs: col('final (s)') };
+  if (C.event >= 0 && H[C.event] !== 'event') { const exact = H.indexOf('event'); if (exact >= 0) C.event = exact; }
+  const missing = [['Gender', C.gender], ['Event', C.event], ['Swimmer', C.name], ['Final Time', C.time < 0 && C.secs < 0 ? -1 : 0]].filter((x) => x[1] < 0).map((x) => x[0]);
+  if (missing.length) return { error: `Not a meet-results file: no ${missing.join(', ')} column. (Hy-Tek top-times exports go in Import from a season.)` };
+  const STROKE = { free: 'Free', freestyle: 'Free', back: 'Back', backstroke: 'Back', breast: 'Breast', breaststroke: 'Breast',
+    fly: 'Fly', butterfly: 'Fly', im: 'IM', 'individual medley': 'IM', medley: 'IM' };
+  const swims = [], skip = { relay: 0, noTime: 0, status: 0, unread: 0 };
+  let meet = '', dated = 0, course = '';
+  rows.slice(1).forEach((r) => {
+    const g = (i) => (i >= 0 ? String(r[i] || '').trim() : '');
+    const ev = g(C.event), type = g(C.type).toLowerCase(), st = g(C.status).toLowerCase();
+    if (/relay/i.test(ev) || type === 'relay') { skip.relay++; return; }
+    if (st && !/^(scored|exhibition|exh|ok|official|swum)$/.test(st)) { skip.status++; return; }
+    const m = /^(\d{2,4})\s*(?:m\s*)?(free(?:style)?|back(?:stroke)?|breast(?:stroke)?|fly|butterfly|im|individual medley|medley)\b/i.exec(ev);
+    let sec = parseHytekTime(g(C.time));
+    if (!sec && C.secs >= 0) sec = parseFloat(g(C.secs)) || null;
+    const gn = g(C.gender).toLowerCase();
+    const sex = /^(w|f|women|woman|female|girls?)/.test(gn) ? 'F' : (/^(m|men|man|male|boys?)/.test(gn) ? 'M' : '');
+    const raw = g(C.name);
+    if (!sec) { skip.noTime++; return; }
+    if (!m || !sex || !raw) { skip.unread++; return; }
+    const parts = raw.split(',');
+    const name = (parts.length === 2 ? parts[1].trim() + ' ' + parts[0].trim() : raw).replace(/\s+/g, ' ');
+    const d = g(C.date); const iso = /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : '';
+    if (iso) dated++;
+    if (!meet && g(C.meet)) meet = g(C.meet);
+    const cr = g(C.course).toUpperCase(); if (!course && (cr === 'SCM' || cr === 'LCM')) course = cr;
+    swims.push({ name, sex, distance: +m[1], stroke: STROKE[m[2].toLowerCase()], seconds: sec, date: iso, exhibition: /^exh/.test(st), competition: g(C.meet) });
+  });
+  if (!swims.length) return { error: 'No individual swims with a time in this file.' };
+  return { swims, skip, meet, allDated: dated === swims.length, course };
+}
+// Roster name for a file name: exact, else one swimmer with that surname whose first name is the
+// short form (Jess -> Jessica) or starts with it. null = not matched.
+function meetMatchName(name, roster) {
+  if (roster.indexOf(name) >= 0) return { to: name, how: 'exact' };
+  const p = name.split(' '), first = p[0].toLowerCase(), last = p.slice(1).join(' ').toLowerCase();
+  if (!last) return null;
+  const same = roster.filter((r) => r.toLowerCase().endsWith(' ' + last));
+  const ok = same.filter((r) => { const f = r.split(' ')[0].toLowerCase();
+    return (MEET_NICK[first] || []).indexOf(f) >= 0 || (MEET_NICK[f] || []).indexOf(first) >= 0
+      || (first.length >= 3 && f.indexOf(first) === 0) || (f.length >= 3 && first.indexOf(f) === 0); });
+  return ok.length === 1 ? { to: ok[0], how: 'short' } : null;
+}
+function meetStart(text) {
+  const P = meetParseCsv(text);
+  if (P.error) { showToast(P.error); return; }
+  const roster = [...new Set(state.saved.filter((s) => s.name).map((s) => s.name))].sort((a, b) => a.localeCompare(b));
+  const teams = {}; state.saved.forEach((s) => { const t = (s.team || '').trim(); if (t) teams[t] = (teams[t] || 0) + 1; });
+  const names = [...new Set(P.swims.map((s) => s.name))].sort((a, b) => a.localeCompare(b));
+  const map = {}, how = {};
+  names.forEach((n) => { const m = meetMatchName(n, roster); map[n] = m ? m.to : ''; how[n] = m ? m.how : 'new'; });
+  state.meetImport = { swims: P.swims, skip: P.skip, meet: P.meet, needDate: !P.allDated, date: '', pool: P.course || 'SCM',
+    team: Object.keys(teams).sort((a, b) => teams[b] - teams[a])[0] || '', exh: true, map, how, roster };
+  navigate('import-meet');
+}
+function triggerImportMeet() {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.csv,text/csv,text/plain'; inp.style.display = 'none';
+  inp.addEventListener('change', () => {
+    const file = inp.files && inp.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      let txt; try { txt = new TextDecoder('utf-8', { fatal: true }).decode(reader.result); }
+      catch (e) { try { txt = new TextDecoder('windows-1252').decode(reader.result); } catch (e2) { txt = ''; } }
+      meetStart(txt);
+    };
+    reader.readAsArrayBuffer(file);
+  });
+  document.body.appendChild(inp); inp.click();
+  setTimeout(() => inp.remove(), 1000);
+}
+// The checked choices -> the shared preview.
+function meetToPreview() {
+  const M = state.meetImport;
+  if (!M) return;
+  if (M.needDate && !/^\d{4}-\d{2}-\d{2}$/.test(M.date)) { showToast('Set the meet date first'); return; }
+  const cands = M.swims.filter((s) => M.exh || !s.exhibition).map((s) => ({
+    name: M.map[s.name] || s.name, sex: s.sex, seconds: s.seconds, pool: M.pool, distance: s.distance, stroke: s.stroke,
+    round: 'Final', date: s.date || M.date, team: (M.team || '').trim(), competition: s.competition || M.meet || 'Meet', splitCells: [] }));
+  prepareImportFromParsed({ cands, scy: [], malformed: 0 });
+  navigate('import-preview');
+}
+
 // The swum total of a saved race: its actual time, NOT the (goal) targetSeconds.
 function raceActualTotal(e) {
   const t = (e && e.times) || {};
@@ -2036,7 +2145,9 @@ function raceMatchSig(sid, date, dist, stroke, pool, total) {
 }
 // Split candidates into importable / already-recorded / no-pacing-table.
 function prepareImportPreview(text) {
-  const parsed = parseHytekTopTimes(text);
+  return prepareImportFromParsed(parseHytekTopTimes(text));
+}
+function prepareImportFromParsed(parsed) {
   const nameToSid = {};
   state.saved.forEach((s) => { if (s.name && !(s.name in nameToSid)) nameToSid[s.name] = s.sid; });
   const existing = new Set(state.saved.filter((s) => s.kind === 'race')
@@ -2104,7 +2215,7 @@ function renderImportMenu() {
     ${screenHeader({ title: `Import times`, sub: `Where are the times coming from?` })}
     <div class="scrollable px-5 py-4 space-y-3 bg-slate-50">
       ${card('import-menu-season', 'Import from a season', 'A whole season of top times from Hy-Tek Team Manager — total times only. Feeds Best times and Training Pace.')}
-      ${card('import-menu-meet', 'Import from a swim meet', 'A single meet’s results, with splits where available.', 'Soon')}
+      ${card('import-menu-meet', 'Import from a swim meet', 'One meet\u2019s results (CSV, one row per swim). You set the date and check the names before anything is saved.')}
       ${SWIMMER ? '' : importStartOverHtml()}
     </div>`;
 }
@@ -2182,15 +2293,68 @@ function renderImportSeason() {
 }
 
 function renderImportMeet() {
-  return `
+  const M = state.meetImport;
+  const attr = (s) => esc(s).replace(/"/g, '&quot;');
+  const seg = (val, cur, a, label) => `<div class="seg ${cur === val ? 'active' : ''}" data-${a}="${val}">${label}</div>`;
+  const promptBox = `<details class="bg-white border border-slate-200 rounded-2xl p-4"${M ? '' : ' open'}>
+      <summary class="font-semibold text-[14px] text-slate-800 cursor-pointer">Getting the file from a results PDF</summary>
+      <div class="text-[12px] text-muted leading-snug mt-2">Give the results PDF to Claude with this prompt (fill in your team), then pick the CSV it makes.</div>
+      <div class="text-[11px] text-slate-700 bg-slate-50 border border-slate-200 rounded-lg p-2.5 mt-2 leading-snug" data-meet-prompt>${esc(MEET_PROMPT)}</div>
+      <button class="mt-2 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-cyan-700 hover:border-cyan-300" data-action="meet-copy-prompt">Copy prompt</button>
+    </details>`;
+  if (!M) return `
     <div class="statusbar"></div>
-    ${screenHeader({ title: `Import from a swim meet`, sub: `Coming soon` })}
+    ${screenHeader({ title: `Import from a swim meet`, sub: `One meet’s results` })}
     <div class="scrollable px-5 py-4 space-y-4 bg-slate-50">
       <div class="bg-white border border-slate-200 rounded-2xl p-4">
-        <div class="text-[13px] text-slate-600 leading-relaxed">This will import the results of a single meet — including per-lap splits where the results file has them — so a race comes in with its full shape, not just the total time.</div>
-        <div class="text-[12px] text-muted leading-snug mt-3">We’ll add the file format and steps here once we’ve mapped out the meet-results export.</div>
+        <div class="text-[13px] text-slate-600 leading-relaxed">A meet’s results as a CSV, one row per swim (Meet, Gender, Event, Type, Swimmer, Status, Final Time). You’ll set the date and check the names before anything is saved. Relays and no-shows are skipped.</div>
+        <button class="w-full mt-3 py-3 rounded-xl bg-cyan-600 text-white text-sm font-semibold hover:bg-cyan-700 active:scale-[0.99] transition" data-action="meet-pick">Choose the results CSV</button>
       </div>
-      <button class="w-full text-sm text-muted py-2" data-action="back">Back</button>
+      ${promptBox}
+    </div>`;
+  const nEx = M.swims.filter((s) => s.exhibition).length;
+  const swimsIn = M.swims.filter((s) => M.exh || !s.exhibition).length;
+  const names = Object.keys(M.map).sort((a, b) => a.localeCompare(b));
+  const exact = names.filter((n) => M.how[n] === 'exact').length;
+  const short = names.filter((n) => M.how[n] === 'short');
+  const rest = names.filter((n) => M.how[n] === 'new' || M.how[n] === 'linked');
+  const sk = M.skip, skipped = [[sk.relay, 'relay'], [sk.status, 'no-show / DQ / scratch'], [sk.noTime, 'without a time'], [sk.unread, 'unreadable']]
+    .filter((x) => x[0]).map((x) => `${x[0]} ${x[1]}`).join(' · ');
+  const nameRow = (n) => `<div class="flex items-center gap-2 py-2 border-t border-slate-100">
+      <div class="flex-1 min-w-0"><div class="text-sm font-semibold text-slate-800 truncate">${esc(n)}</div>
+        <div class="text-[10px] text-faint">${M.map[n] ? 'will be recorded as ' + esc(M.map[n]) : 'will be added as a new swimmer'}</div></div>
+      <select class="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-[12px] max-w-[46%]" data-meet-link="${attr(n)}">
+        <option value=""${M.map[n] ? '' : ' selected'}>Add as new</option>
+        <optgroup label="Already on the roster:">${M.roster.map((r) => `<option value="${attr(r)}"${M.map[n] === r ? ' selected' : ''}>${esc(r)}</option>`).join('')}</optgroup>
+      </select>
+    </div>`;
+  return `
+    <div class="statusbar"></div>
+    ${screenHeader({ title: `Import from a swim meet`, sub: esc(M.meet || 'Meet results') })}
+    <div class="scrollable px-5 py-4 space-y-4 bg-slate-50" data-meet>
+      <div class="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+        <div class="text-[13px] text-slate-700"><span class="font-bold">${M.swims.length}</span> individual swims · <span class="font-bold">${names.length}</span> swimmers${skipped ? `<div class="text-[11px] text-muted mt-0.5">Skipped: ${skipped}</div>` : ''}</div>
+        ${M.needDate ? `<div><div class="label-cap mb-1.5">Meet date <span class="text-rose-600 normal-case tracking-normal font-semibold">· the file has none</span></div>
+          <input type="date" data-meet-date value="${attr(M.date)}" class="bg-slate-100 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-cyan-300" />
+          <div class="text-[10px] text-faint leading-snug mt-1">Every swim gets this date. Get it right: importing the same meet again with a different date would add every swim twice.</div></div>` : ''}
+        <div class="flex gap-3">
+          <div><div class="label-cap mb-1.5">Course</div><div class="seg-group">${seg('SCM', M.pool, 'meet-pool', 'SCM')}${seg('LCM', M.pool, 'meet-pool', 'LCM')}</div></div>
+          <div class="flex-1 min-w-0"><div class="label-cap mb-1.5">Team</div><input type="text" data-meet-team value="${attr(M.team)}" maxlength="20" class="w-full bg-slate-100 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-cyan-300" /></div>
+        </div>
+        ${nEx ? `<button class="w-full flex items-center justify-between text-left" data-action="meet-exh">
+          <span class="text-[13px] text-slate-700">Include exhibition swims <span class="text-muted">(${nEx})</span></span>
+          <span class="w-10 h-6 rounded-full ${M.exh ? 'bg-cyan-600' : 'bg-slate-300'} relative transition"><span class="absolute top-0.5 ${M.exh ? 'left-[18px]' : 'left-0.5'} w-5 h-5 rounded-full bg-white shadow"></span></span>
+        </button>` : ''}
+      </div>
+      <div class="bg-white border border-slate-200 rounded-2xl p-4">
+        <div class="font-semibold text-[14px] text-slate-800">Names</div>
+        <div class="text-[12px] text-muted mt-0.5">${exact} already on your roster.${short.length ? ` ${short.length} matched from a short name:` : ''}</div>
+        ${short.length ? `<div class="mt-1">${short.map(nameRow).join('')}</div>` : ''}
+        ${rest.length ? `<div class="text-[12px] text-slate-700 font-semibold mt-3">${rest.length} not on your roster — new swimmer, or someone already there under another spelling?</div><div class="mt-1">${rest.map(nameRow).join('')}</div>` : ''}
+      </div>
+      <button class="w-full py-3 rounded-2xl bg-gradient-to-br from-cyan-500 to-cyan-700 text-white font-bold text-[15px] shadow-lg shadow-cyan-600/25 active:scale-[0.99] transition${M.needDate && !M.date ? ' opacity-50' : ''}" data-action="meet-continue">Continue — ${swimsIn} swims</button>
+      <button class="w-full text-sm text-muted py-1" data-action="meet-reset">Choose a different file</button>
+      ${promptBox}
     </div>`;
 }
 
@@ -2345,6 +2509,7 @@ const screenLabels = {
   'race-analysis': { num: 4, label: 'Race analysis' },
   'squad-targets': { num: 5, label: 'Squad targets' },
   'training-pace': { num: null, label: 'Training Pace' },
+  'recording': { num: null, label: 'Recording sheets' },
   'other-tools': { num: null, label: 'Other tools' },
   'swimmer-detail': { num: null, label: 'Swimmer detail' },
 };
@@ -2413,6 +2578,7 @@ function render() {
     case 'import-meet': html = renderImportMeet(); break;
     case 'import-preview': html = renderImportPreview(); break;
     case 'training-pace': html = renderTrainingPace(); break;
+    case 'recording': html = SWIMMER ? '' : renderRecording(); break;
     case 'training-splits': html = renderTrainingSplits(); break;
     case 'goals': html = renderGoals(); break;
     case 'swim-like': html = renderSwimLike(); break;
@@ -2897,6 +3063,24 @@ function render() {
       saveTpGroups();
     });
   }
+  // Import from a swim meet: date, team and the name links (no re-render while typing).
+  const md = host.querySelector('[data-meet-date]');
+  if (md) md.addEventListener('change', () => { if (state.meetImport) { state.meetImport.date = md.value; render(); } });
+  const mt = host.querySelector('[data-meet-team]');
+  if (mt) mt.addEventListener('input', () => { if (state.meetImport) state.meetImport.team = mt.value; });
+  host.querySelectorAll('[data-meet-link]').forEach((sel) => sel.addEventListener('change', () => {
+    const M = state.meetImport, n = sel.getAttribute('data-meet-link');
+    if (!M) return;
+    M.map[n] = sel.value; if (M.how[n] !== 'short') M.how[n] = sel.value ? 'linked' : 'new';
+    render();
+  }));
+  const rq = host.querySelector('[data-rec-q]');
+  if (rq) {
+    rq.addEventListener('input', () => {
+      state.recQ = rq.value; const q = rq.value.trim();
+      host.querySelectorAll('.rec-sw').forEach((row) => { row.style.display = nameMatches(row.getAttribute('data-name') || '', q) ? '' : 'none'; });
+    });
+  }
   const tgq = host.querySelector('[data-tp-group-q]');
   if (tgq) {
     tgq.addEventListener('input', () => {
@@ -2921,7 +3105,7 @@ function render() {
   const NO_HINT = { checkbox: 1, radio: 1, date: 1, range: 1, file: 1 };
   host.querySelectorAll('input').forEach((el) => {
     if (NO_HINT[(el.getAttribute('type') || 'text').toLowerCase()]) return;
-    const isSearch = el.hasAttribute('data-search') || el.hasAttribute('data-tp-search') || el.hasAttribute('data-ts-search') || el.hasAttribute('data-tp-group-q');
+    const isSearch = el.hasAttribute('data-search') || el.hasAttribute('data-tp-search') || el.hasAttribute('data-ts-search') || el.hasAttribute('data-tp-group-q') || el.hasAttribute('data-rec-q');
     el.setAttribute('enterkeyhint', isSearch ? 'search' : 'done');
     if (isSearch) return;                      // those two already commit on Enter
     el.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); el.blur(); } });
@@ -2950,6 +3134,8 @@ const ICON_GOAL = ICO('<circle cx="11" cy="13" r="7.5"/><circle cx="11" cy="13" 
 // Training splits gets its own icon rather than sharing the coach's table icon — the two are
 // different screens and used to look identical in the list.
 const ICON_SPLITS = ICO('<circle cx="12" cy="13.5" r="7.5"/><path d="M9.5 2.5h5"/><path d="M12 9.5v4h3.4"/><path d="M18.6 8.2 20.8 6"/>');
+// A clipboard: the sheet a coach holds on deck to time a set.
+const ICON_CLIP = ICO('<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 2.8h6v3H9z"/><path d="M8.5 10.5h7M8.5 14h7M8.5 17.5h4"/>');
 const ICON_TOOLS = ICO('<circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.2 5.2l2.1 2.1M16.7 16.7l2.1 2.1M18.8 5.2l-2.1 2.1M7.3 16.7l-2.1 2.1"/>');
 
 // One card, hairline dividers, no border on the last row. Rows are built here rather
@@ -3371,6 +3557,7 @@ function renderRoster() {
       ${navCard([
         [ICON_IMPORT, 'Import times', 'Load a meet CSV \u2014 updates best times', '', 'import-times-csv'],
         [ICON_TIMER, 'Set target time', 'Split targets for a target time', '', 'quick-calc'],
+        [ICON_CLIP, 'Recording sheets', 'Print a deck sheet to time a set', '', 'recording'],
         [ICON_TABLE, 'Team vs standards', 'Every swimmer, gap to each cut', '', 'team-standards'],
         [ICON_LIKE, 'Who do you swim like?', 'A swimmer against the world finalist who races their way', '', 'swim-like'],
         !PUBLIC_BUILD && [ICON_TOOLS, 'Other tools', 'Converter, adjacent events, 50 m, efficiency', '', 'other-tools'],
@@ -5881,26 +6068,57 @@ const TP_ORD = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th'];
 function tpBold(h) { return !!h && !/(^|\s)25$/.test(h); }
 function tpAllCells(segs, stroke, pool, distance, splits, sex) {
   if (!segs || !segs.length) return [];
+  const Cd = (h, v, k, def) => ({ h, v, k: [k], def: def !== false });
+  // A 25 inside a 50 of a 400, placed with the 200 SCM's measured lap shares (short course only:
+  // a long-course race is timed per 50, so there is no race data for a mid-length point).
+  const lap25 = (st, i) => {
+    if (pool !== 'SCM') return null;
+    const L = scm200Lap25[st] && scm200Lap25[st][sex === 'F' ? 'F' : 'M'];
+    return L ? L.f[i] : null;
+  };
   // A 400 IM comes back as eight 50 s; it is swum and written as four 100 s, one per stroke.
+  // Options (2026-11-21): first 200 / 300 / 325 / 350 and the back+breast, breast+free 200s.
   if (stroke === 'IM' && splits && splits.length === 8) {
-    return ['Fly 100', 'Back 100', 'Breast 100', 'Free 100'].map((h, k) => ({
-      h, v: splits[2 * k] + splits[2 * k + 1],
-    }));
+    const s = splits, sum = (a, b) => s.slice(a, b).reduce((x, y) => x + y, 0);
+    const out = [Cd('Fly 100', sum(0, 2), 'iFly'), Cd('Back 100', sum(2, 4), 'iBk'),
+                 Cd('Breast 100', sum(4, 6), 'iBr'), Cd('Free 100', sum(6, 8), 'iFr'),
+                 Cd('First 200', sum(0, 4), 'dF200', false), Cd('First 300', sum(0, 6), 'dF300', false)];
+    const sh = lap25('IM', 3);                     // free leg's first 25, after the breast turn
+    if (sh != null) out.push(Cd('First 325', sum(0, 6) + sh * s[6], 'dF325', false));
+    out.push(Cd('First 350', sum(0, 7), 'dF350', false),
+             Cd('Bk+Br 200', sum(2, 6), 'iBkBr', false), Cd('Br+Fr 200', sum(4, 8), 'iBrFr', false));
+    return out;
   }
-  // Distance events: an opening block, the average middle 50 and its doubled 100, and a closing
+  // Distance events: an opening block, the average middle 50 and its multiples, and a closing
   // block. Built from the per-50 splits, since buildDisplaySegments collapses without the 100.
+  // The four columns shown before 2026-11-21 stay on by default; the rest are options.
   if (stroke !== 'IM' && splits && distance >= 400 && splits.length >= 8) {
     const n = splits.length;
     const ends = distance === 400 ? 1 : 2;                 // 400 opens/closes on a 50, 800+ on a 100
     const sum = (a, b) => splits.slice(a, b).reduce((s, x) => s + x, 0);
     const mid = sum(ends, n - ends) / (n - 2 * ends);      // mean of every 50 in between
-    const lab = ends === 1 ? '50' : '100';
-    return [
-      { h: 'First ' + lab, v: sum(0, ends) },
-      { h: 'Middle 50', v: mid },
-      { h: 'Middle 100', v: mid * 2 },
-      { h: 'Last ' + lab, v: sum(n - ends, n) },
-    ];
+    const F = (m) => sum(0, m / 50), Lst = (m) => sum(n - m / 50, n);
+    const out = [];
+    if (distance === 400) {
+      out.push(Cd('First 50', sum(0, 1), 'dF50'));
+      [200, 250, 300].forEach((m) => out.push(Cd('First ' + m, F(m), 'dF' + m, false)));
+      const s7 = lap25(stroke, 2), s8 = lap25(stroke, 3);
+      if (s7 != null) out.push(Cd('First 325', F(300) + s7 * splits[6], 'dF325', false));
+      out.push(Cd('First 350', F(350), 'dF350', false));
+      if (s8 != null) out.push(Cd('First 375', F(350) + s8 * splits[7], 'dF375', false));
+      out.push(Cd('Middle 50', mid, 'dM50'), Cd('Middle 100', mid * 2, 'dM100'),
+               Cd('Middle 150', mid * 3, 'dM150', false), Cd('Middle 200', mid * 4, 'dM200', false),
+               Cd('Last 100', Lst(100), 'dL100', false), Cd('Last 50', Lst(50), 'dL50'));
+      return out;
+    }
+    out.push(Cd('First 100', F(100), 'dF100'));
+    (distance === 800 ? [200, 400, 600] : [200, 300, 500]).forEach((m) => out.push(Cd('First ' + m, F(m), 'dF' + m, false)));
+    out.push(Cd('Middle 50', mid, 'dM50'), Cd('Middle 100', mid * 2, 'dM100'));
+    (distance === 800 ? [200, 300] : [200, 300, 500]).forEach((m) => out.push(Cd('Middle ' + m, mid * m / 50, 'dM' + m, false)));
+    if (distance === 800) out.push(Cd('Last 50', Lst(50), 'dL50', false));
+    out.push(Cd('Last 100', Lst(100), 'dL100'));
+    if (distance !== 800) [200, 300, 500].forEach((m) => out.push(Cd('Last ' + m, Lst(m), 'dL' + m, false)));
+    return out;
   }
   // ---- 50, 100 and 200: every column a coach might call a set from ----------------------
   // Each cell carries the toggle key(s) that show it (k) and whether it shows before anyone
@@ -5998,9 +6216,17 @@ function tpAllCells(segs, stroke, pool, distance, splits, sex) {
 // One key per section of the race. A cell shows when ANY of its keys is on; a key is on when
 // the coach has set it, and otherwise when the cell's own default says so. So with nothing
 // set, the table is exactly the default one.
-const TP_COL_KEYS = ['q1', 'q2', 'q3', 'qL', 'h1', 'h2', 'h3', 'h4', 't1', 'tL', 'c1', 'f125', 'f150', 'cL', 'mid', 'imp'];
+const TP_COL_KEYS = ['q1', 'q2', 'q3', 'qL', 'h1', 'h2', 'h3', 'h4', 't1', 'tL', 'c1', 'f125', 'f150', 'cL', 'mid', 'imp',
+  // 400 / 800 / 1500 and the 400 IM (2026-11-21)
+  'dF50', 'dF100', 'dF200', 'dF250', 'dF300', 'dF325', 'dF350', 'dF375', 'dF400', 'dF500', 'dF600',
+  'dM50', 'dM100', 'dM150', 'dM200', 'dM300', 'dM500', 'dL50', 'dL100', 'dL200', 'dL300', 'dL500',
+  'iFly', 'iBk', 'iBr', 'iFr', 'iBkBr', 'iBrFr'];
 const TP_COL_LABEL = { q1: '1st 25', q2: '2nd 25', q3: '3rd 25', qL: 'Last 25', h1: '1st 50', h2: '2nd 50', h3: '3rd 50',
-  h4: 'Last 50', t1: '1st 75', tL: 'Last 75', c1: '1st 100', f125: '1st 125', f150: '1st 150', cL: 'Last 100', mid: '25–125', imp: 'IM pairs' };
+  h4: 'Last 50', t1: '1st 75', tL: 'Last 75', c1: '1st 100', f125: '1st 125', f150: '1st 150', cL: 'Last 100', mid: '25–125', imp: 'IM pairs',
+  iFly: 'Fly 100', iBk: 'Back 100', iBr: 'Breast 100', iFr: 'Free 100', iBkBr: 'Bk+Br 200', iBrFr: 'Br+Fr 200' };
+['50', '100', '200', '250', '300', '325', '350', '375', '400', '500', '600'].forEach((m) => { TP_COL_LABEL['dF' + m] = 'First ' + m; });
+['50', '100', '150', '200', '300', '500'].forEach((m) => { TP_COL_LABEL['dM' + m] = 'Middle ' + m; });
+['50', '100', '200', '300', '500'].forEach((m) => { TP_COL_LABEL['dL' + m] = 'Last ' + m; });
 const TP_COLS_KEY = 'sc_tp_cols';
 function tpColsState() {
   if (!state.tpCols) {
@@ -8103,6 +8329,357 @@ function tpGroupsHtml(f, chip) {
   return `<div class="mt-2" data-tp-groups><div class="flex flex-wrap gap-1.5">${chips}</div>${links}${editor}</div>`;
 }
 
+// ===== Recording sheets (coach) — 2026-11-22 =========================================
+// A deck-side sheet for timing a set: each swimmer's predicted splits from their best time (the
+// pace sheet's own numbers), with boxes to write the actual splits, stroke rate and total.
+const REC_STROKES = ['Free', 'Back', 'Breast', 'Fly', 'IM'];
+const REC_NAMES = { Free: 'Freestyle', Back: 'Backstroke', Breast: 'Breaststroke', Fly: 'Butterfly', IM: 'Individual medley' };
+const REC_FORM_KEY = 'sc_rec_form';
+function recForm() {
+  if (!state.recForm) {
+    let o = null;
+    try { o = JSON.parse(localStorage.getItem(REC_FORM_KEY) || 'null'); } catch (e) { o = null; }
+    const f = { pool: 'SCM', dists: [100], strokes: ['Free', 'Back', 'Fly', 'IM'], group: null, prio: false, paper: 'letter' };
+    if (o && typeof o === 'object') {
+      if (o.pool === 'SCM' || o.pool === 'LCM') f.pool = o.pool;
+      const d = Array.isArray(o.dists) ? o.dists.map(Number).filter((x) => [50, 100, 200].indexOf(x) >= 0) : [];
+      if (d.length) f.dists = d;
+      const s = Array.isArray(o.strokes) ? o.strokes.filter((x) => REC_STROKES.indexOf(x) >= 0) : [];
+      if (s.length) f.strokes = s;
+      if (typeof o.group === 'string' && tpGroupById(o.group)) f.group = o.group;
+      f.prio = !!o.prio; if (o.paper === 'tabloid') f.paper = 'tabloid';
+    }
+    state.recForm = f; state.recAdd = []; state.recDrop = [];
+  }
+  return state.recForm;
+}
+function recSave() {
+  const f = recForm();
+  try { localStorage.setItem(REC_FORM_KEY, JSON.stringify({ pool: f.pool, dists: f.dists, strokes: f.strokes, group: f.group, prio: f.prio, paper: f.paper })); } catch (e) {}
+}
+// Who is on the sheet: the group (or everyone), minus anyone unticked, plus anyone added.
+function recSelected() {
+  const f = recForm();
+  const g = f.group ? tpGroupById(f.group) : null;
+  if (f.group && !g) f.group = null;
+  const base = g ? tpMemberSids(g.members) : new Set(state.saved.filter((s) => s.sid).map((s) => s.sid));
+  const drop = new Set(state.recDrop || []), out = new Set();
+  base.forEach((s) => { if (!drop.has(s)) out.add(s); });
+  (state.recAdd || []).forEach((s) => out.add(s));
+  return out;
+}
+function recToggleSwimmer(sid) {
+  const on = recSelected().has(sid), add = state.recAdd, drop = state.recDrop;
+  const rm = (a) => { const i = a.indexOf(sid); if (i >= 0) a.splice(i, 1); return i >= 0; };
+  if (on) { if (!rm(add)) drop.push(sid); } else if (!rm(drop)) add.push(sid);
+}
+// One row's predicted splits, in hundredths: every split but the last is rounded, the last is the
+// remainder, so the row always adds up to its predicted total. null = nothing to predict.
+function recSplitsOf(r, d, pool) {
+  if (!r.segs || !r.segs.length) return null;
+  const c = tpAllCells(r.segs, r.stroke, pool, d, r.splits, r.sex);
+  const by = (h) => { const x = c.find((z) => z.h === h); return x ? x.v : null; };
+  let heads, vals;
+  if (d === 50) { heads = ['1st 25', '2nd 25']; vals = [by('1st 25'), by('2nd 25')]; }
+  else if (d === 100 && r.stroke === 'IM') { heads = ['Fly+Back 50', 'Br+Free 50']; vals = [by('Fly+Bk 50'), by('Br+Fr 50')]; }
+  else if (d === 100) { heads = ['1st 50', '2nd 50']; vals = [by('1st 50'), by('Last 50')]; }
+  else if (d === 200 && r.segs.length === 4) {
+    heads = r.stroke === 'IM' ? ['Fly 50', 'Back 50', 'Breast 50', 'Free 50'] : ['1st 50', '2nd 50', '3rd 50', '4th 50'];
+    vals = r.segs.map((x) => x.time);
+  } else return null;
+  if (!vals || vals.some((v) => !(v > 0))) return null;
+  const tot = Math.round(r.total * 100);
+  const hs = vals.slice(0, -1).map((v) => Math.round(v * 100));
+  hs.push(tot - hs.reduce((a, b) => a + b, 0));
+  return { heads, vals: hs.map((h) => h / 100), total: tot / 100 };
+}
+// Everything the sheet prints, in order: per distance, per sex, per stroke.
+function recModel() {
+  const f = recForm(), sel = recSelected(), pri = f.prio ? tpPrioritySids() : new Set();
+  const dists = [50, 100, 200].filter((d) => f.dists.indexOf(d) >= 0);
+  const sections = [];
+  dists.forEach((d) => {
+    const all = trainingRows(f.pool, d, 'best');
+    ['F', 'M'].forEach((sx) => REC_STROKES.filter((st) => f.strokes.indexOf(st) >= 0).forEach((st) => {
+      const rs = tpOrder(all.filter((r) => r.stroke === st && (r.sex === 'M' ? 'M' : 'F') === sx && sel.has(r.sid)), pri);
+      const rows = [];
+      rs.forEach((r) => { const sp = recSplitsOf(r, d, f.pool); if (sp) rows.push({ sid: r.sid, name: r.name, heads: sp.heads, vals: sp.vals, total: sp.total }); });
+      rows.forEach((x, i) => { x.div = i > 0 && pri.has(rows[i - 1].sid) && !pri.has(x.sid); });
+      if (rows.length) sections.push({ d, sex: sx, stroke: st, title: REC_NAMES[st], heads: rows[0].heads, rows });
+    }));
+  });
+  const grp = f.group ? tpGroupById(f.group) : null;
+  const dShown = dists.filter((d) => sections.some((s) => s.d === d));
+  const stShown = REC_STROKES.filter((st) => sections.some((s) => s.stroke === st));
+  const what = `${dShown.join(', ')} m recording sheet — ${stShown.join(', ')}${grp ? ' · ' + grp.name : ''}`;
+  return { f, sections, dists: dShown, multi: dShown.length > 1, title: what,
+    sub: `Predicted from best time${f.pool === 'LCM' ? ' (long course)' : ''} · fill in actual splits and SR (stroke rate)`,
+    foot: `Split Compass · ${new Date().toISOString().slice(0, 10)} · splits are modelled from race data, a reference not a rule.`,
+    file: `Split Compass - Recording sheet - ${dShown.join('-')} m${grp ? ' - ' + grp.name : ''}` };
+}
+
+// ---- layout: rows at least 5 mm; Women | Men halves, or Women pages then Men pages ----
+const REC = { ROW: 14.17, ROW_MAX: 17, ACT: 42.52, SR: 31.18, FONT: 8, M: 28, GUT: 20, TOP: 64, BOT: 32,
+              BLK: 13, COLH: 10, GAP: 5, SEXH: 18, DISTH: 19 };
+function recGeom(m) {
+  const tab = m.f.paper === 'tabloid';
+  const portrait = m.multi || m.sections.some((s) => s.heads.length > 2);
+  const W = portrait ? (tab ? 792 : 612) : (tab ? 1224 : 792), H = portrait ? (tab ? 1224 : 792) : (tab ? 792 : 612);
+  const cols = portrait ? 1 : 2;
+  const colW = (W - 2 * REC.M - (cols - 1) * REC.GUT) / cols;
+  return { W, H, cols, colW, portrait, tab, usable: H - REC.TOP - REC.BOT };
+}
+// Lay the items into columns at row height RH. Items: {t:'sex'|'dist', text} headings and {t:'sec'}.
+// Returns { ops, pages } or null when the one-page layout this call was asked for cannot hold it.
+function recFlow(m, g, RH, split) {
+  const ops = [];
+  const secH = (s) => REC.BLK + REC.COLH + RH * s.rows.length + REC.GAP;
+  let page = 0, col = 0, y = 0, pageTitle = '';
+  const place = (items, oneColumn) => {
+    for (let k = 0; k < items.length; k++) {
+      const it = items[k];
+      if (it.t !== 'sec') {
+        // Keep a heading with the start of what follows it.
+        const nx = items[k + 1], need = REC.SEXH + (nx && nx.t === 'sec' ? REC.BLK + REC.COLH + RH * Math.min(2, nx.sec.rows.length) : 0);
+        if (y > 0 && y + need > g.usable) { if (!next(oneColumn)) return false; }
+        ops.push({ t: it.t, page, col, y, text: it.text }); y += it.t === 'dist' ? REC.DISTH : REC.SEXH;
+        continue;
+      }
+      const s = it.sec;
+      if (y > 0 && y + REC.BLK + REC.COLH + RH * Math.min(2, s.rows.length) > g.usable) { if (!next(oneColumn)) return false; }
+      ops.push({ t: 'head', page, col, y, sec: s, cont: false, sexLabel: !!it.sexLabel }); y += REC.BLK + REC.COLH;
+      for (let i = 0; i < s.rows.length; i++) {
+        if (y + RH > g.usable + 0.01) {
+          if (!next(oneColumn)) return false;
+          ops.push({ t: 'head', page, col, y, sec: s, cont: true, sexLabel: !!it.sexLabel }); y += REC.BLK + REC.COLH;
+        }
+        ops.push({ t: 'row', page, col, y, sec: s, row: s.rows[i], i }); y += RH;
+      }
+      y += REC.GAP;
+    }
+    return true;
+  };
+  // Move on: next column, else next page (unless this layout promised one column).
+  const next = (oneColumn) => {
+    if (oneColumn) return false;
+    if (col + 1 < g.cols) { col++; y = 0; return true; }
+    page++; col = 0; y = 0; ops.push({ t: 'page', page, title: pageTitle }); return true;
+  };
+  const sexItems = (sx, withHead) => {
+    const out = [];
+    m.dists.forEach((d) => {
+      const secs = m.sections.filter((s) => s.d === d && s.sex === sx);
+      if (!secs.length) return;
+      if (m.multi) out.push({ t: 'dist', text: d + ' m' });
+      if (withHead) out.push({ t: 'sex', text: sx === 'F' ? 'WOMEN' : 'MEN' });
+      secs.forEach((s) => out.push({ t: 'sec', sec: s }));
+    });
+    return out;
+  };
+  if (!split) {
+    ops.push({ t: 'page', page: 0, title: '' });
+    if (!g.portrait) {
+      // Women in the left column, Men in the right: each must fit its own column.
+      for (const [c, sx] of [[0, 'F'], [1, 'M']]) {
+        const its = sexItems(sx, false);
+        if (!its.length) continue;
+        col = c; y = 0;
+        ops.push({ t: 'sex', page: 0, col: c, y: 0, text: sx === 'F' ? 'WOMEN' : 'MEN' }); y = REC.SEXH;
+        if (!place(its, true)) return null;
+      }
+      return { ops, pages: 1 };
+    }
+    // Portrait: one column, every distance, Women then Men within each.
+    const its = [];
+    m.dists.forEach((d) => {
+      const ws = m.sections.filter((s) => s.d === d && s.sex === 'F'), ms = m.sections.filter((s) => s.d === d && s.sex === 'M');
+      if (!ws.length && !ms.length) return;
+      its.push({ t: 'dist', text: d + ' m' });
+      ws.concat(ms).forEach((s) => its.push({ t: 'sec', sec: s, sexLabel: true }));
+    });
+    col = 0; y = 0;
+    return place(its, true) ? { ops, pages: 1 } : null;
+  }
+  // Split: Women pages, then Men pages, each flowing across the page's columns.
+  let first = true;
+  for (const sx of ['F', 'M']) {
+    const its = sexItems(sx, false);
+    if (!its.length) continue;
+    pageTitle = sx === 'F' ? 'Women' : 'Men';
+    if (first) { ops.push({ t: 'page', page: 0, title: pageTitle }); first = false; }
+    else { page++; ops.push({ t: 'page', page, title: pageTitle }); }
+    col = 0; y = 0;
+    place(its, false);
+  }
+  return { ops, pages: page + 1 };
+}
+// The largest row height (5 mm .. 6 mm) at which the sheet is one page; else Women / Men pages.
+function recPlan(m) {
+  const g = recGeom(m);
+  if (!m.sections.length) return null;
+  const one = (RH) => recFlow(m, g, RH, false);
+  if (one(REC.ROW)) {
+    let lo = REC.ROW, hi = REC.ROW_MAX;
+    if (one(hi)) lo = hi; else for (let k = 0; k < 14; k++) { const md = (lo + hi) / 2; if (one(md)) lo = md; else hi = md; }
+    return { g, RH: lo, flow: one(lo), split: false };
+  }
+  return { g, RH: REC.ROW, flow: recFlow(m, g, REC.ROW, true), split: true };
+}
+function recDoc(m, plan) {
+  plan = plan || recPlan(m);
+  const g = plan.g, RH = plan.RH;
+  const doc = new window.jspdf.jsPDF({ unit: 'pt', format: g.tab ? 'tabloid' : 'letter', orientation: g.portrait ? 'portrait' : 'landscape' });
+  const INK = [15, 23, 42], MUTE = [100, 116, 139], BLUE = [30, 64, 175], LINE = [148, 163, 184];
+  const font = (st, sz, c) => { doc.setFont('helvetica', st); doc.setFontSize(sz); doc.setTextColor(c[0], c[1], c[2]); };
+  const fit = (str, x, y, maxW, size, minSize, align) => {
+    let s = pdfText(str), sz = size; doc.setFontSize(sz);
+    while (sz > minSize && doc.getTextWidth(s) > maxW) { sz -= 0.25; doc.setFontSize(sz); }
+    while (s.length > 3 && doc.getTextWidth(s) > maxW) s = s.slice(0, -2).replace(/\s+$/, '') + '…';
+    doc.text(s, x, y, align ? { align } : undefined);
+  };
+  const colX = (c) => REC.M + c * (g.colW + REC.GUT);
+  // Per section, the column positions: name, then per split [pred | ACTUAL | SR], pred total, ACTUAL TOTAL.
+  // Boxes are 15 mm / 11 mm, shrunk in proportion only as far as the row needs to fit its column.
+  const layoutOf = (s) => {
+    if (s._lay) return s._lay;
+    font('normal', REC.FONT, INK);
+    const nameW = Math.min(120, Math.max(64, Math.max.apply(null, s.rows.map((r) => doc.getTextWidth(pdfText(r.name)))) + 6));
+    font('bold', REC.FONT, INK);
+    const P = Math.max(24, Math.max.apply(null, s.rows.map((r) => Math.max.apply(null, r.vals.map((v) => doc.getTextWidth(formatTime(v)))))) + 3);
+    const PT = Math.max(36, Math.max.apply(null, s.rows.map((r) => doc.getTextWidth(formatTime(r.total)))) + 3);
+    const pad = 3, k = s.heads.length;
+    const fixed = nameW + k * (P + 3 * pad) + PT + 2 * pad;
+    const scale = Math.max(0.45, Math.min(1, (g.colW - fixed) / (k * (REC.ACT + REC.SR) + REC.ACT)));
+    const A = REC.ACT * scale, S = REC.SR * scale;
+    const splits = []; let x = nameW;
+    for (let i = 0; i < k; i++) { const pr = x + P; splits.push({ pr, a: pr + pad, s: pr + pad + A + pad }); x = pr + pad + A + pad + S + pad; }
+    const ptR = x + PT, tot = ptR + pad;
+    s._lay = { nameW, P, PT, A, S, splits, ptR, tot, scale, width: tot + A };
+    return s._lay;
+  };
+  let cur = 0;
+  const furniture = (title) => {
+    font('bold', 15, INK); fit(m.title + (title ? ' — ' + title : ''), REC.M, 34, g.W - 2 * REC.M, 15, 10);
+    font('normal', 8, MUTE); doc.text(pdfText(m.sub), REC.M, 48);
+    font('normal', 9, INK); doc.text('Date: ________________     Set: ______________________________', g.W - REC.M, 48, { align: 'right' });
+    font('normal', 7.5, MUTE); fit(m.foot, REC.M, g.H - 20, g.W - 2 * REC.M, 7.5, 6);
+  };
+  plan.flow.ops.forEach((op) => {
+    if (op.t === 'page') { while (cur < op.page) { doc.addPage(g.tab ? 'tabloid' : 'letter', g.portrait ? 'portrait' : 'landscape'); cur++; } furniture(op.title); return; }
+    while (cur < op.page) { doc.addPage(g.tab ? 'tabloid' : 'letter', g.portrait ? 'portrait' : 'landscape'); cur++; }
+    const x = colX(op.col), top = REC.TOP + op.y;
+    if (op.t === 'sex') {
+      font('bold', 11, BLUE); doc.text(op.text, x, top + 10);
+      doc.setDrawColor(BLUE[0], BLUE[1], BLUE[2]); doc.setLineWidth(1.4); doc.line(x, top + 13.5, x + g.colW, top + 13.5);
+      return;
+    }
+    if (op.t === 'dist') {
+      font('bold', 12, INK); doc.text(op.text, x, top + 12);
+      doc.setDrawColor(INK[0], INK[1], INK[2]); doc.setLineWidth(1); doc.line(x, top + 15.5, x + g.colW, top + 15.5);
+      return;
+    }
+    const s = op.sec, L = layoutOf(s);
+    if (op.t === 'head') {
+      font('bold', 9.5, INK); doc.text(pdfText((op.sexLabel ? (s.sex === 'F' ? 'Women' : 'Men') + ' \u00b7 ' : '') + s.title + (op.cont ? ' (cont.)' : '')), x, top + 9.5);
+      doc.setDrawColor(203, 213, 225); doc.setLineWidth(0.6); doc.line(x, top + REC.BLK - 1, x + g.colW, top + REC.BLK - 1);
+      const hy = top + REC.BLK + 7, hs = 5.6;
+      font('bold', hs, MUTE); doc.text('SWIMMER', x + 3, hy);
+      s.heads.forEach((h, i) => {
+        const sp = L.splits[i];
+        font('bold', hs, MUTE); fit(h.toUpperCase(), x + sp.pr, hy, L.P + 6, hs, 4.5, 'right');
+        font('bold', hs, INK); fit('ACTUAL', x + sp.a + L.A / 2, hy, L.A - 1, hs, 4, 'center');
+        font('bold', hs, MUTE); fit('SR', x + sp.s + L.S / 2, hy, L.S - 1, hs, 4, 'center');
+      });
+      // Each label stays over its own column: shrunk to fit, never into the next one.
+      font('bold', hs, BLUE); fit('PRED TOTAL', x + L.ptR, hy, L.PT - 2, hs, 4, 'right');
+      font('bold', hs, INK); fit('ACTUAL TOTAL', x + L.tot + L.A / 2, hy, L.A - 1, hs, 4, 'center');
+      return;
+    }
+    const r = op.row;
+    if (op.i % 2 === 1) { doc.setFillColor(246, 248, 251); doc.rect(x, top, g.colW, RH, 'F'); }
+    if (r.div) { doc.setDrawColor(37, 99, 235); doc.setLineWidth(0.9); doc.line(x, top, x + g.colW, top); }
+    const base = top + RH * 0.66, bh = RH - 2.4, by = top + 1.2;
+    font('normal', REC.FONT, INK); fit(r.name, x + 3, base, L.nameW - 6, REC.FONT, 6.5);
+    r.vals.forEach((v, i) => {
+      const sp = L.splits[i];
+      font('bold', REC.FONT, INK); doc.text(formatTime(v), x + sp.pr, base, { align: 'right' });
+      doc.setDrawColor(INK[0], INK[1], INK[2]); doc.setLineWidth(0.9); doc.rect(x + sp.a, by, L.A, bh);
+      doc.setDrawColor(LINE[0], LINE[1], LINE[2]); doc.setLineWidth(0.6); doc.rect(x + sp.s, by, L.S, bh);
+    });
+    font('bold', REC.FONT, BLUE); doc.text(formatTime(r.total), x + L.ptR, base, { align: 'right' });
+    doc.setDrawColor(INK[0], INK[1], INK[2]); doc.setLineWidth(1.6); doc.rect(x + L.tot, by, L.A, bh);
+  });
+  return doc;
+}
+function recDownload() {
+  const m = recModel();
+  if (!m.sections.length) { showToast('Nothing to print — no one picked has a best time in these events'); return; }
+  if (!tpPdfReady()) showToast('Preparing the PDF…');
+  tpEnsurePdfLibs().then(() => {
+    const plan = recPlan(m);
+    recDoc(m, plan).save(m.file.replace(/[^\w\s-]/g, '').replace(/\s+/g, ' ').trim() + '.pdf');
+    if (plan.split) showToast(`Too many rows for one page at a writable size — Women and Men are on separate pages (${plan.flow.pages} pages).${plan.g.tab ? '' : ' 11×17 may fit on fewer.'}`);
+  }).catch(() => showToast('Could not load the PDF tool — try again with a connection'));
+}
+
+// ---- Screen ----
+function renderRecording() {
+  const f = recForm(), m = recModel(), plan = recPlan(m), sel = recSelected();
+  const chip = (on) => `px-3 py-2 rounded-xl text-xs font-semibold border transition ${on
+    ? 'bg-cyan-600 text-white border-cyan-600' : 'bg-white text-slate-700 border-slate-200 hover:border-cyan-300'}`;
+  const seg = (val, cur, attr, label) => `<div class="seg ${cur === val ? 'active' : ''}" data-${attr}="${val}">${label}</div>`;
+  const G = tpGroupsState(), pri = tpPrioritySids();
+  const attr = (s) => esc(s).replace(/"/g, '&quot;');
+  const q = state.recQ || '';
+  const list = tpRoster().map((r) => {
+    const yes = sel.has(r.sid);
+    return `<button class="rec-sw w-full flex items-center gap-2.5 py-2 text-left border-t border-slate-100" data-rec-sw="${r.sid}" data-name="${attr(r.name)}" aria-pressed="${yes ? 'true' : 'false'}"${nameMatches(r.name, q.trim()) ? '' : ' style="display:none"'}>
+        <span class="w-5 h-5 rounded-md border flex items-center justify-center flex-shrink-0 text-[12px] font-bold ${yes ? 'bg-cyan-600 border-cyan-600 text-white' : 'bg-white border-slate-300'}">${yes ? '✓' : ''}</span>
+        <span class="text-sm text-slate-800 flex-1 min-w-0 truncate">${esc(r.name)}</span>
+        <span class="text-[10px] text-faint flex-shrink-0">${r.sex === 'M' ? 'M' : 'W'}${r.team ? ' · ' + esc(r.team) : ''}</span>
+      </button>`;
+  }).join('');
+  const rowsBy = (d, sx) => m.sections.filter((s) => s.d === d && s.sex === sx).reduce((a, s) => a + s.rows.length, 0);
+  const summary = !m.sections.length
+    ? `<div class="text-sm text-muted">No one picked has a best time in ${f.dists.join(' / ')} m ${f.strokes.join(', ')} ${f.pool}.</div>`
+    : `${m.dists.map((d) => `<div class="flex justify-between text-[13px] py-0.5"><span class="font-semibold text-slate-700">${d} m</span><span class="text-slate-600">Women ${rowsBy(d, 'F')} · Men ${rowsBy(d, 'M')} rows</span></div>`).join('')}
+       <div class="text-[12px] mt-2 ${plan.split ? 'text-amber-700' : 'text-emerald-700'} font-semibold" data-rec-fit>${plan.split
+         ? `Too many rows for one page at 5 mm: Women and Men print on separate pages (${plan.flow.pages} pages).${f.paper === 'tabloid' ? '' : ' Try 11×17, fewer strokes or a group.'}`
+         : `Fits on one ${f.paper === 'tabloid' ? '11×17' : 'letter'} page, ${plan.g.portrait ? 'portrait' + (m.multi ? ', distances stacked' : '') : 'landscape, Women | Men'}${plan.RH > REC.ROW + 0.3 ? '' : ' at the 5 mm minimum row'}.`}</div>`;
+  return `
+    <div class="statusbar"></div>
+    ${screenHeader({ title: 'Recording sheets', sub: `${f.dists.join(', ')} m · ${f.pool}${tpGroupById(f.group) ? ' · ' + esc(tpGroupById(f.group).name) : ''}`, cls: 'bg-white' })}
+    <div class="scrollable bg-slate-50" data-rec>
+      <div class="mx-3 mt-3 bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+        <div class="text-[11px] text-muted leading-snug">A deck-side sheet to time a set: each swimmer’s predicted splits from their best time, with boxes for the actual splits, stroke rate and total.</div>
+        <div class="flex gap-3">
+          <div><div class="label-cap mb-1.5">Pool</div><div class="seg-group">${seg('SCM', f.pool, 'rec-pool', 'SCM')}${seg('LCM', f.pool, 'rec-pool', 'LCM')}</div></div>
+          <div class="flex-1"><div class="label-cap mb-1.5">Distance</div><div class="flex flex-wrap gap-1.5">${[50, 100, 200].map((d) => `<button class="${chip(f.dists.indexOf(d) >= 0)}" data-rec-dist="${d}">${d}</button>`).join('')}</div></div>
+        </div>
+        <div><div class="label-cap mb-1.5">Strokes</div><div class="flex flex-wrap gap-1.5">${REC_STROKES.map((st) => `<button class="${chip(f.strokes.indexOf(st) >= 0)}" data-rec-stroke="${st}">${st}</button>`).join('')}</div></div>
+        <div><div class="label-cap mb-1.5">Swimmers</div>
+          <div class="flex flex-wrap gap-1.5">
+            <button class="${chip(!f.group)}" data-rec-group="*">Everyone</button>
+            ${G.groups.map((g) => `<button class="${chip(f.group === g.id)}" data-rec-group="${g.id}">${esc(g.name)} <span class="font-medium opacity-80">${tpMemberSids(g.members).size}</span></button>`).join('')}
+            ${pri.size ? `<button class="${chip(!!f.prio)}" data-action="rec-prio">★ Priority first</button>` : ''}
+          </div>
+          <button class="w-full mt-2 flex items-center justify-between bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:border-cyan-300 transition" data-action="rec-sw-toggle">
+            <span>Choose swimmers <span class="text-muted font-medium">· ${sel.size} ticked</span></span><span class="text-slate-400">${state.recSwOpen ? '▴' : '▾'}</span>
+          </button>
+          ${state.recSwOpen ? `<div class="bg-white border border-slate-200 rounded-xl px-3 py-2 mt-1.5">
+            <input type="text" data-rec-q value="${attr(q)}" placeholder="Search swimmer" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-cyan-300 placeholder:text-muted" />
+            <div class="overflow-y-auto mt-1" style="max-height:18rem" data-keep-scroll="rec-list">${list}</div>
+            <div class="text-[10px] text-faint leading-snug mt-1.5">Untick anyone to leave them off, or tick anyone outside the group. A swimmer with no best time in an event gets no row for it.</div>
+          </div>` : ''}
+        </div>
+        <div><div class="label-cap mb-1.5">Paper</div><div class="seg-group">${seg('letter', f.paper, 'rec-paper', 'Letter')}${seg('tabloid', f.paper, 'rec-paper', '11×17')}</div></div>
+      </div>
+      <div class="mx-3 mt-3 bg-white border border-slate-200 rounded-2xl p-4">${summary}</div>
+      <div class="mx-3 my-3"><button class="w-full py-3 rounded-2xl bg-gradient-to-br from-cyan-500 to-cyan-700 text-white font-bold text-[15px] shadow-lg shadow-cyan-600/25 active:scale-[0.99] transition${m.sections.length ? '' : ' opacity-50'}" data-action="rec-download">Download recording sheet (PDF)</button></div>
+      <div class="px-4 pb-5 text-[10px] text-faint leading-snug">Same predictions as the Training Pace sheet, from each swimmer’s best time. Each row’s splits add up exactly to its predicted total (the last split takes the rounding).</div>
+    </div>`;
+}
+
 // ----- Screen: Training Pace -----
 function renderTrainingPace() {
   const f = state.tpForm;
@@ -8275,7 +8852,8 @@ function renderTrainingPace() {
       title: `Training Pace`,
       sub: `${f.distance} m · ${f.pool} · ${f.basis === 'recent' ? 'most recent' : (f.basis === 'target' ? 'target' : 'best time')}${grp ? ' · ' + esc(grp.name) : ''}${
         f.teams && f.teams.length ? ' · ' + (f.teams.length === 1 ? f.teams[0] : f.teams.length + ' teams') : ''}`,
-      exports: (rows && rows.length) ? [['csv-page', 'Download CSV'], ['tp-download', 'Download PDF']] : [],
+      exports: (rows && rows.length) ? [['csv-page', 'Download CSV'], ['tp-download', 'Download PDF'],
+        !SWIMMER && [50, 100, 200].indexOf(+f.distance) >= 0 && ['rec-from-tp', 'Recording sheet (PDF)']] : [],
       cls: 'bg-white no-print',
     })}
     <div class="scrollable bg-slate-50">
@@ -8872,6 +9450,29 @@ document.addEventListener('click', (e) => {
       if (state.tpGroupEdit !== 'priority') state.tpGroupEdit = null;
       tpSaveForm(); render(); return;
     }
+    // Recording sheets pickers. Distance and stroke chips toggle, but the last one stays on.
+    const mp = e.target.closest('[data-meet-pool]');
+    if (mp && state.meetImport) { state.meetImport.pool = mp.getAttribute('data-meet-pool'); render(); return; }
+    const recPl = e.target.closest('[data-rec-pool]');
+    if (recPl) { recForm().pool = recPl.getAttribute('data-rec-pool'); recSave(); render(); return; }
+    const recPa = e.target.closest('[data-rec-paper]');
+    if (recPa) { recForm().paper = recPa.getAttribute('data-rec-paper'); recSave(); render(); return; }
+    const recDi = e.target.closest('[data-rec-dist]');
+    if (recDi) {
+      const a = recForm().dists, d = +recDi.getAttribute('data-rec-dist'), i = a.indexOf(d);
+      if (i >= 0) { if (a.length === 1) { showToast('Keep at least one distance'); return; } a.splice(i, 1); } else a.push(d);
+      a.sort((x, y) => x - y); recSave(); render(); return;
+    }
+    const recSt = e.target.closest('[data-rec-stroke]');
+    if (recSt) {
+      const a = recForm().strokes, st = recSt.getAttribute('data-rec-stroke'), i = a.indexOf(st);
+      if (i >= 0) { if (a.length === 1) { showToast('Keep at least one stroke'); return; } a.splice(i, 1); } else a.push(st);
+      recForm().strokes = REC_STROKES.filter((x) => a.indexOf(x) >= 0); recSave(); render(); return;
+    }
+    const recGr = e.target.closest('[data-rec-group]');
+    if (recGr) { const v = recGr.getAttribute('data-rec-group'); recForm().group = v === '*' ? null : v; state.recAdd = []; state.recDrop = []; recSave(); render(); return; }
+    const recSw = e.target.closest('[data-rec-sw]');
+    if (recSw) { recToggleSwimmer(recSw.getAttribute('data-rec-sw')); render(); return; }
     const tpg2 = e.target.closest('[data-tp-pri-group]');
     if (tpg2) {
       const gg = tpGroupById(tpg2.getAttribute('data-tp-pri-group')), P = tpGroupsState().priority;
@@ -9257,7 +9858,15 @@ function handleAction(action, el) {
     case 'import-json': triggerImport(); break;
     case 'import-times-csv': navigate('import-menu'); break;
     case 'import-menu-season': navigate('import-season'); break;
-    case 'import-menu-meet': navigate('import-meet'); break;
+    case 'import-menu-meet': state.meetImport = null; navigate('import-meet'); break;
+    case 'meet-pick': triggerImportMeet(); break;
+    case 'meet-reset': state.meetImport = null; render(); break;
+    case 'meet-exh': if (state.meetImport) { state.meetImport.exh = !state.meetImport.exh; render(); } break;
+    case 'meet-continue': meetToPreview(); break;
+    case 'meet-copy-prompt':
+      try { navigator.clipboard.writeText(MEET_PROMPT).then(() => showToast('Prompt copied'), () => showToast('Select the text to copy it')); }
+      catch (e) { showToast('Select the text to copy it'); }
+      break;
     case 'import-season-pick': triggerImportCsv(); break;
     case 'import-times-confirm': doImportTimes(); break;
     case 'converter': navigate('converter'); break;
@@ -9504,6 +10113,22 @@ function handleAction(action, el) {
       break;
     }
     case 'training-pace': tpLoadForm(); state.tpShow = true; navigate('training-pace'); break;
+    case 'recording': if (!SWIMMER) { recForm(); navigate('recording'); } break;
+    case 'rec-from-tp': {
+      // From the Training Pace printer menu, which only ever hands over files: download the
+      // recording sheet for what is on screen (pool, distance, strokes, group). Picking
+      // individual swimmers or 11x17 is on the Recording sheets screen.
+      if (SWIMMER) break;
+      const rf = recForm(), tf = state.tpForm;
+      rf.pool = tf.pool === 'LCM' ? 'LCM' : 'SCM';
+      if ([50, 100, 200].indexOf(+tf.distance) >= 0) rf.dists = [+tf.distance];
+      rf.strokes = (tf.strokes && tf.strokes.length) ? tf.strokes.slice() : REC_STROKES.slice();
+      rf.group = tf.group || null; state.recAdd = []; state.recDrop = [];
+      recSave(); recDownload(); break;
+    }
+    case 'rec-download': recDownload(); break;
+    case 'rec-prio': recForm().prio = !recForm().prio; recSave(); render(); break;
+    case 'rec-sw-toggle': state.recSwOpen = !state.recSwOpen; render(); break;
     case 'training-splits': navigate('training-splits'); break;
     case 'goals': navigate('goals'); break;
     case 'goal-save': goalSave(); break;
